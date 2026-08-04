@@ -482,6 +482,7 @@ dependencies = [
  "serde_json",
  "url",
  "uuid",
+ "windows-sys",
 ]
 
 [[package]]

@@ -6,8 +6,12 @@ use std::net::Shutdown;
 use std::os::fd::AsFd;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 use std::process::{Child, Command, ExitStatus, Stdio};
-use std::sync::mpsc::{self, Sender};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -15,6 +19,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{anyhow, Context};
 #[cfg(unix)]
 use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::ERROR_NOT_FOUND;
+#[cfg(windows)]
+use windows_sys::Win32::System::IO::CancelSynchronousIo;
 
 use crate::correlate::Correlator;
 use crate::frame::{read_frame, Frame};
@@ -22,6 +30,19 @@ use crate::record::CallRecord;
 use crate::store::Store;
 
 const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+#[cfg(any(test, windows))]
+fn cancel_synchronous_io_until_observed(
+    mut is_finished: impl FnMut() -> bool,
+    mut cancel_once: impl FnMut() -> io::Result<bool>,
+) -> io::Result<()> {
+    loop {
+        if is_finished() || cancel_once()? {
+            return Ok(());
+        }
+        thread::yield_now();
+    }
+}
 
 #[cfg(unix)]
 struct CancelHandle {
@@ -108,6 +129,61 @@ impl<R: Read + AsFd> Read for CancellableReader<R> {
             }
         }
     }
+}
+
+#[cfg(windows)]
+struct CancelHandle {
+    cancelled: Arc<AtomicBool>,
+}
+
+#[cfg(windows)]
+fn cancellation_pair() -> io::Result<(CancelHandle, Arc<AtomicBool>)> {
+    let cancelled = Arc::new(AtomicBool::new(false));
+    Ok((
+        CancelHandle {
+            cancelled: Arc::clone(&cancelled),
+        },
+        cancelled,
+    ))
+}
+
+#[cfg(windows)]
+struct CancellableReader<R> {
+    source: R,
+    cancellation: Arc<AtomicBool>,
+}
+
+#[cfg(windows)]
+impl<R> CancellableReader<R> {
+    fn new(source: R, cancellation: Arc<AtomicBool>) -> Self {
+        Self {
+            source,
+            cancellation,
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancellation.load(Ordering::Acquire)
+    }
+}
+
+#[cfg(windows)]
+impl<R: Read> Read for CancellableReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        if self.is_cancelled() {
+            return Err(cancelled_io_error());
+        }
+        let result = self.source.read(buffer);
+        if self.is_cancelled() {
+            return Err(cancelled_io_error());
+        }
+        result
+    }
+}
+
+#[cfg(windows)]
+fn cancelled_io_error() -> io::Error {
+    io::Error::new(io::ErrorKind::ConnectionAborted, "stdio pump cancelled")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -256,18 +332,56 @@ impl EventSender {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct PumpHandle {
     thread: JoinHandle<io::Result<()>>,
     cancel: CancelHandle,
 }
 
-#[cfg(not(unix))]
-pub fn run(_server: String, _cmd: Vec<String>) -> anyhow::Result<i32> {
-    anyhow::bail!("the recording stdio shim requires cancellable Unix file descriptors")
+#[cfg(any(unix, windows))]
+struct ShutdownCancellation {
+    input: bool,
+    output: bool,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
+impl PumpHandle {
+    fn cancel(&self) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            self.cancel.cancel()
+        }
+        #[cfg(windows)]
+        {
+            self.cancel.cancelled.store(true, Ordering::Release);
+            cancel_synchronous_io_until_observed(
+                || self.thread.is_finished(),
+                || {
+                    // SAFETY: JoinHandle owns this valid thread handle for the
+                    // duration of the call, and the API only borrows it.
+                    let cancelled =
+                        unsafe { CancelSynchronousIo(self.thread.as_raw_handle() as _) };
+                    if cancelled != 0 {
+                        return Ok(true);
+                    }
+                    let error = io::Error::last_os_error();
+                    if error.raw_os_error() == Some(ERROR_NOT_FOUND as i32) {
+                        Ok(false)
+                    } else {
+                        Err(error)
+                    }
+                },
+            )
+        }
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn run(_server: String, _cmd: Vec<String>) -> anyhow::Result<i32> {
+    anyhow::bail!("the recording stdio shim is unsupported on this target")
+}
+
+#[cfg(any(unix, windows))]
 pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
     let (program, args) = cmd.split_first().context("empty server command")?;
     let mut store = Store::open(None).context("opening recording store")?;
@@ -420,14 +534,29 @@ pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
         }
     }
 
-    if !input_cancelled {
-        cancel_pump(&input_pump, "agent stdin", &mut operation_error);
-    }
-    if operation_error.is_some() && !output_cancelled {
-        cancel_pump(&output_pump, "child stdout", &mut operation_error);
-    }
-    join_finished_pump(output_pump.thread, "child stdout", &mut operation_error);
-    join_finished_pump(input_pump.thread, "agent stdin", &mut operation_error);
+    let cancel_input = !input_cancelled;
+    let cancel_output = operation_error.is_some() && !output_cancelled;
+    shutdown_pumps_and_drain(
+        input_pump,
+        output_pump,
+        events,
+        rx,
+        ShutdownCancellation {
+            input: cancel_input,
+            output: cancel_output,
+        },
+        &mut operation_error,
+        |event| {
+            handle_event(
+                event,
+                &mut frame_order,
+                &mut correlator,
+                &mut store,
+                &mut output_finished,
+                &mut recording_error,
+            )
+        },
+    );
 
     if let Some(error) = operation_error {
         return Err(error);
@@ -439,7 +568,7 @@ pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
     child_exit_code(child_status.context("child exited without a status")?)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn spawn_input_pump(
     child_stdin: std::process::ChildStdin,
     events: Arc<Mutex<EventSender>>,
@@ -469,7 +598,11 @@ fn spawn_input_pump(
                     observed_ms,
                 },
             )?;
-            forward(&mut destination, &raw, "writing child stdin")?;
+            if !forward_or_cancel(&mut destination, &raw, "writing child stdin", || {
+                source.get_ref().is_cancelled()
+            })? {
+                break;
+            }
             complete_frame(&events, sequence, started)?;
         }
         Ok(())
@@ -477,7 +610,7 @@ fn spawn_input_pump(
     Ok(PumpHandle { thread, cancel })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn spawn_output_pump(
     child_stdout: std::process::ChildStdout,
     events: Arc<Mutex<EventSender>>,
@@ -507,7 +640,11 @@ fn spawn_output_pump(
                     observed_ms,
                 },
             )?;
-            forward(&mut destination, &raw, "writing agent stdout")?;
+            if !forward_or_cancel(&mut destination, &raw, "writing agent stdout", || {
+                source.get_ref().is_cancelled()
+            })? {
+                break;
+            }
             complete_frame(&events, sequence, started)?;
         }
         Ok(())
@@ -550,6 +687,19 @@ fn forward<W: Write>(destination: &mut W, raw: &[u8], context: &str) -> io::Resu
     destination
         .flush()
         .map_err(|error| contextual_io(error, context))
+}
+
+fn forward_or_cancel<W: Write>(
+    destination: &mut W,
+    raw: &[u8],
+    context: &str,
+    cancelled: impl FnOnce() -> bool,
+) -> io::Result<bool> {
+    match forward(destination, raw, context) {
+        Ok(()) => Ok(true),
+        Err(_) if cancelled() => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn reserve_frame(events: &Mutex<EventSender>, metadata: FrameMetadata) -> io::Result<u64> {
@@ -628,13 +778,43 @@ fn pump_failure_error(failure: PumpFailure) -> anyhow::Error {
     )
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn cancel_pump(pump: &PumpHandle, label: &str, operation_error: &mut Option<anyhow::Error>) {
-    if let Err(error) = pump.cancel.cancel() {
+    if let Err(error) = pump.cancel() {
         remember_operation_error(
             operation_error,
             anyhow::Error::from(error).context(format!("cancelling {label} pump")),
         );
+    }
+}
+
+#[cfg(any(unix, windows))]
+fn shutdown_pumps_and_drain<F>(
+    input_pump: PumpHandle,
+    output_pump: PumpHandle,
+    events: Arc<Mutex<EventSender>>,
+    rx: Receiver<Event>,
+    cancellation: ShutdownCancellation,
+    operation_error: &mut Option<anyhow::Error>,
+    mut handle_remaining_event: F,
+) where
+    F: FnMut(Event) -> Option<anyhow::Error>,
+{
+    if cancellation.input {
+        cancel_pump(&input_pump, "agent stdin", operation_error);
+    }
+    if cancellation.output {
+        cancel_pump(&output_pump, "child stdout", operation_error);
+    }
+
+    join_finished_pump(output_pump.thread, "child stdout", operation_error);
+    join_finished_pump(input_pump.thread, "agent stdin", operation_error);
+
+    drop(events);
+    for event in rx {
+        if let Some(error) = handle_remaining_event(event) {
+            remember_operation_error(operation_error, error);
+        }
     }
 }
 

@@ -222,8 +222,14 @@ struct CompletedFrame {
 }
 
 struct PendingFrame {
-    metadata: FrameMetadata,
-    shim_self_us: Option<u64>,
+    metadata: Option<FrameMetadata>,
+    state: PendingFrameState,
+}
+
+enum PendingFrameState {
+    Reserved,
+    Forwarded(u64),
+    Retired,
 }
 
 #[derive(Default)]
@@ -244,8 +250,8 @@ impl FrameOrder {
         self.pending.insert(
             sequence,
             PendingFrame {
-                metadata,
-                shim_self_us: None,
+                metadata: Some(metadata),
+                state: PendingFrameState::Reserved,
             },
         );
         self.next_reservation += 1;
@@ -257,30 +263,58 @@ impl FrameOrder {
             .pending
             .get_mut(&sequence)
             .with_context(|| format!("completing unknown frame reservation {sequence}"))?;
-        if pending.shim_self_us.replace(shim_self_us).is_some() {
-            anyhow::bail!("frame reservation {sequence} completed twice");
+        match pending.state {
+            PendingFrameState::Reserved => {
+                pending.state = PendingFrameState::Forwarded(shim_self_us);
+            }
+            PendingFrameState::Forwarded(_) => {
+                anyhow::bail!("frame reservation {sequence} completed twice");
+            }
+            PendingFrameState::Retired => {
+                anyhow::bail!("frame reservation {sequence} completed after retirement");
+            }
         }
         Ok(())
     }
 
+    fn retire_unfinished(&mut self, direction: Direction) {
+        for pending in self.pending.values_mut() {
+            if matches!(pending.state, PendingFrameState::Reserved)
+                && pending
+                    .metadata
+                    .as_ref()
+                    .is_some_and(|metadata| metadata.direction == direction)
+            {
+                pending.metadata = None;
+                pending.state = PendingFrameState::Retired;
+            }
+        }
+    }
+
     fn drain_ready(&mut self) -> Vec<CompletedFrame> {
         let mut ready = Vec::new();
-        while let Some(shim_self_us) = self
-            .pending
-            .get(&self.next_ready)
-            .and_then(|pending| pending.shim_self_us)
-        {
+        while let Some(pending) = self.pending.get(&self.next_ready) {
+            let shim_self_us = match pending.state {
+                PendingFrameState::Reserved => break,
+                PendingFrameState::Forwarded(shim_self_us) => Some(shim_self_us),
+                PendingFrameState::Retired => None,
+            };
             let pending = self
                 .pending
                 .remove(&self.next_ready)
                 .expect("ready frame must remain pending");
-            ready.push(CompletedFrame {
-                direction: pending.metadata.direction,
-                value: pending.metadata.value,
-                observed_ms: pending.metadata.observed_ms,
-                shim_self_us,
-            });
             self.next_ready += 1;
+            if let Some(shim_self_us) = shim_self_us {
+                let metadata = pending
+                    .metadata
+                    .expect("forwarded frame must retain its metadata");
+                ready.push(CompletedFrame {
+                    direction: metadata.direction,
+                    value: metadata.value,
+                    observed_ms: metadata.observed_ms,
+                    shim_self_us,
+                });
+            }
         }
         ready
     }
@@ -725,6 +759,7 @@ fn handle_event(
             shim_self_us,
         } => frame_order.complete(sequence, shim_self_us).err(),
         Event::Finished { direction, failure } => {
+            frame_order.retire_unfinished(direction);
             if direction == Direction::Inbound {
                 *output_finished = true;
             }

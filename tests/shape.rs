@@ -189,3 +189,45 @@ fn literal_delimiter_names_do_not_collide_with_structural_paths() {
     assert_eq!(structural["a"]["b"], "str<32");
     assert_eq!(structural["items"]["items"], "str<32");
 }
+
+#[test]
+fn public_enum_paths_distinguish_literal_and_structural_names() {
+    let mut idx = EnumIndex::new();
+    idx.learn(
+        "tool",
+        &json!({
+            "type": "object",
+            "properties": {
+                "a.b": { "enum": ["literal-dot"] },
+                "a": { "type": "object", "properties": { "b": { "enum": ["nested"] } } },
+                "items[]": { "enum": ["literal-array"] },
+                "items": { "type": "array", "items": { "enum": ["array-item"] } }
+            }
+        }),
+    );
+
+    assert!(idx.is_enum("tool", "a.b", "literal-dot"));
+    assert!(!idx.is_enum("tool", "a.b", "nested"));
+    assert!(idx.is_enum("tool", "/k/a/k/b", "nested"));
+    assert!(idx.is_enum("tool", "/k/a.b", "literal-dot"));
+    assert!(!idx.is_enum("tool", "items[]", "array-item"));
+    assert!(idx.is_enum("tool", "/k/items/i", "array-item"));
+    assert!(idx.is_enum("tool", "/k/items[]", "literal-array"));
+}
+
+#[test]
+fn public_enum_path_supports_root_array_items() {
+    let mut idx = EnumIndex::new();
+    idx.learn(
+        "root-array",
+        &json!({ "type": "array", "items": { "enum": ["allowed"] } }),
+    );
+    assert!(idx.is_enum("root-array", "[]", "allowed"));
+    assert!(idx.is_enum("root-array", "/i", "allowed"));
+}
+
+#[test]
+fn simple_public_enum_paths_are_preserved() {
+    let idx = enums_with_wait_until();
+    assert!(idx.is_enum("navigate", "waitUntil", "networkIdle"));
+}

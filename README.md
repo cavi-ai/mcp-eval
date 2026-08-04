@@ -28,7 +28,12 @@ live verification.
 For completed JSON-RPC calls and inbound server notifications, the journal keeps
 timestamps, session and sequence identifiers, the configured server name, method
 and tool names, latency, outcome, shim overhead, and shaped `params.arguments`
-when present. It does not persist raw response bodies or raw unparsed frames.
+when present. It does not persist raw response bodies.
+
+Every invalid or otherwise unparseable frame produces a content-free record with
+only `ts`, `session`, `seq`, `server`, an `unparsed/{direction}` method, the
+`unparsed` outcome, `shim_self_us`, and `kind`. The direction is `outbound` or
+`inbound`; the frame's raw bytes are forwarded unchanged but never stored.
 
 Argument values are reduced as follows:
 

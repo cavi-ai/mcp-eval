@@ -12,3 +12,11 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
+
+[lib]
+name = "mcpeval"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mcpeval"
+path = "src/main.rs"

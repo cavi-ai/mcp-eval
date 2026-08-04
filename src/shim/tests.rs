@@ -5,11 +5,8 @@ use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(unix)]
 use std::sync::mpsc;
-#[cfg(unix)]
 use std::sync::Arc;
-#[cfg(unix)]
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -17,16 +14,13 @@ use serde_json::{json, Value};
 
 use super::{
     cancel_synchronous_io_until_observed, cancellation_pair, cleanup_after_error,
-    forward_or_cancel, join_finished_pump, terminate_and_reap_process, CancellableReader,
-    Direction, FrameMetadata, FrameOrder, ProcessControl, PumpHandle,
+    forward_or_cancel, handle_event, join_finished_pump, spawn_pump, terminate_and_reap_process,
+    CancellableReader, Direction, Event, EventSender, FrameMetadata, FrameOrder, ProcessControl,
+    PumpHandle,
 };
 #[cfg(unix)]
-use super::{
-    complete_frame, forward, handle_event, shutdown_pumps_and_drain, spawn_pump, Event,
-    EventSender, ShutdownCancellation,
-};
+use super::{complete_frame, forward, shutdown_pumps_and_drain, ShutdownCancellation};
 use crate::correlate::Correlator;
-#[cfg(unix)]
 use crate::store::Store;
 
 fn metadata(direction: Direction, value: Value, observed_ms: u64) -> FrameMetadata {
@@ -409,11 +403,175 @@ fn cancellation_suppresses_an_aborted_pump_write() {
     assert!(error.to_string().contains("WRITE-CANARY"));
 }
 
+#[test]
+fn cancelled_partial_frame_is_retired_before_later_completed_frame_is_recorded() {
+    const ABORTED_PAYLOAD: &str = "ABORTED-PAYLOAD-CANARY";
+    let root = std::env::temp_dir().join(format!(
+        "mcpeval-aborted-reservation-{}",
+        uuid::Uuid::new_v4()
+    ));
+    let mut store = Store::open(Some(root.clone())).unwrap();
+    let mut correlator = Correlator::new("demo".into(), "session".into());
+    correlator.on_outbound(
+        &json!({ "jsonrpc": "2.0", "id": 2, "method": "survivor" }),
+        20,
+    );
+    let mut frame_order = FrameOrder::default();
+    let mut output_finished = false;
+    let mut recording_error = None;
+
+    let (tx, rx) = mpsc::channel::<Event>();
+    let events = Arc::new(std::sync::Mutex::new(EventSender {
+        tx,
+        next_sequence: 0,
+    }));
+    let (reserved_tx, reserved_rx) = mpsc::channel();
+    let (abort_tx, abort_rx) = mpsc::channel();
+    let aborted_events = Arc::clone(&events);
+    let aborted_thread = spawn_pump(Direction::Outbound, Arc::clone(&events), move || {
+        super::reserve_frame(
+            &aborted_events,
+            metadata(
+                Direction::Outbound,
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "must-not-be-correlated",
+                    "params": { "secret": ABORTED_PAYLOAD }
+                }),
+                10,
+            ),
+        )?;
+        reserved_tx.send(()).unwrap();
+        abort_rx.recv().unwrap();
+
+        let forwarded = forward_or_cancel(
+            &mut PartiallyFailingWriter::default(),
+            format!("{ABORTED_PAYLOAD}\n").as_bytes(),
+            "writing injected destination",
+            || true,
+        )?;
+        assert!(!forwarded, "cancellation must abort the partial frame");
+        Ok(())
+    })
+    .unwrap();
+
+    reserved_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("the aborted frame must reserve sequence zero first");
+    let survivor_events = Arc::clone(&events);
+    let survivor_thread = spawn_pump(Direction::Inbound, Arc::clone(&events), move || {
+        let sequence = super::reserve_frame(
+            &survivor_events,
+            metadata(
+                Direction::Inbound,
+                json!({ "jsonrpc": "2.0", "id": 2, "result": { "ok": true } }),
+                30,
+            ),
+        )?;
+        super::complete_frame(&survivor_events, sequence, std::time::Instant::now())
+    })
+    .unwrap();
+    survivor_thread.join().unwrap().unwrap();
+
+    while !output_finished {
+        let event = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the completed survivor frame must reach the coordinator");
+        assert!(handle_event(
+            event,
+            &mut frame_order,
+            &mut correlator,
+            &mut store,
+            &mut output_finished,
+            &mut recording_error,
+        )
+        .is_none());
+    }
+    assert!(
+        std::fs::read_dir(root.join("store"))
+            .unwrap()
+            .next()
+            .is_none(),
+        "sequence one must wait until sequence zero is retired"
+    );
+
+    abort_tx.send(()).unwrap();
+    aborted_thread.join().unwrap().unwrap();
+    drop(events);
+    for event in rx {
+        assert!(handle_event(
+            event,
+            &mut frame_order,
+            &mut correlator,
+            &mut store,
+            &mut output_finished,
+            &mut recording_error,
+        )
+        .is_none());
+    }
+
+    assert!(recording_error.is_none());
+    assert!(
+        frame_order.pending.is_empty(),
+        "retirement must not retain the aborted payload"
+    );
+    let path = std::fs::read_dir(root.join("store"))
+        .unwrap()
+        .next()
+        .expect("the later completed frame must be recorded after retirement")
+        .unwrap()
+        .path();
+    let body = std::fs::read_to_string(path).unwrap();
+    assert!(
+        !body.contains(ABORTED_PAYLOAD),
+        "the aborted frame payload must never reach persistent records"
+    );
+    assert!(
+        !body.contains("must-not-be-correlated"),
+        "the aborted frame method must never reach persistent records"
+    );
+    let record: serde_json::Value = serde_json::from_str(body.trim_end()).unwrap();
+    assert_eq!(record["method"], "survivor");
+    assert_eq!(record["outcome"], "ok");
+    assert!(
+        correlator
+            .on_inbound(
+                &json!({ "jsonrpc": "2.0", "id": 1, "result": { "ok": true } }),
+                40,
+            )
+            .is_none(),
+        "the retired outbound frame must never enter correlation state"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 struct FailingWriter;
 
 impl io::Write for FailingWriter {
     fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
         Err(io::Error::other("WRITE-CANARY"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct PartiallyFailingWriter {
+    accepted_prefix: bool,
+}
+
+impl io::Write for PartiallyFailingWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if self.accepted_prefix {
+            Err(io::Error::other("PARTIAL-WRITE-CANARY"))
+        } else {
+            self.accepted_prefix = true;
+            Ok(buffer.len().min(4))
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {

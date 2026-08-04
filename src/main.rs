@@ -9,6 +9,11 @@ fn main() -> anyhow::Result<()> {
             let code = mcpeval::shim::run(server, cmd)?;
             std::process::exit(code);
         }
-        cli::Command::Index => anyhow::bail!("index not implemented yet"),
+        cli::Command::Index => {
+            let store = mcpeval::store::Store::open(None)?;
+            let stats = mcpeval::index::build(store.root())?;
+            println!("indexed {} calls, {} failures", stats.calls, stats.failures);
+            Ok(())
+        }
     }
 }

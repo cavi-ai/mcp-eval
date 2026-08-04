@@ -1,6 +1,8 @@
 use mcpeval::record::{error_info, CallRecord, ErrorInfo};
 use mcpeval::store::Store;
 use serde_json::json;
+use std::collections::HashSet;
+use std::sync::{Arc, Barrier};
 
 fn sample(seq: u64) -> CallRecord {
     CallRecord {
@@ -36,6 +38,50 @@ fn appends_one_json_line_per_record() {
     let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
     assert_eq!(first["seq"], 1);
     assert_eq!(first["tool"], "click");
+
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn concurrent_store_writers_produce_complete_json_lines() {
+    const WRITERS: usize = 16;
+    const RECORDS_PER_WRITER: usize = 1_000;
+
+    let dir = tempdir();
+    let barrier = Arc::new(Barrier::new(WRITERS));
+    let handles: Vec<_> = (0..WRITERS)
+        .map(|writer| {
+            let dir = dir.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                let mut store = Store::open(Some(dir)).unwrap();
+                barrier.wait();
+                for offset in 0..RECORDS_PER_WRITER {
+                    let seq = (writer * RECORDS_PER_WRITER + offset) as u64;
+                    store.append(&sample(seq)).unwrap();
+                }
+            })
+        })
+        .collect();
+
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let path = std::fs::read_dir(dir.join("store"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let body = std::fs::read_to_string(path).unwrap();
+    let records: Vec<CallRecord> = body
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(records.len(), WRITERS * RECORDS_PER_WRITER);
+    let sequences: HashSet<_> = records.into_iter().map(|record| record.seq).collect();
+    assert_eq!(sequences.len(), WRITERS * RECORDS_PER_WRITER);
 
     std::fs::remove_dir_all(dir).unwrap();
 }
@@ -93,6 +139,30 @@ fn error_info_keeps_scalar_codes_and_reduces_composites_to_container_shape() {
             "leaked composite-code canary: {canary}"
         );
     }
+}
+
+#[test]
+fn persisted_call_record_round_trip_distinguishes_null_from_missing_error_code() {
+    let dir = tempdir();
+    let mut rec = sample(5);
+    rec.error = Some(error_info(&json!({ "code": null })));
+
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store.append(&rec).unwrap();
+
+    let path = std::fs::read_dir(dir.join("store"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let body = std::fs::read_to_string(path).unwrap();
+    let persisted: CallRecord = serde_json::from_str(body.trim_end()).unwrap();
+    assert_eq!(persisted.error.unwrap().code, Some(serde_json::Value::Null));
+    let missing: ErrorInfo = serde_json::from_str("{}").unwrap();
+    assert_eq!(missing.code, None);
+
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

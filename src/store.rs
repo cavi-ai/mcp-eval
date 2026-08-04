@@ -33,12 +33,17 @@ impl Store {
         let path = self.root.join("store").join(format!("calls-{day}.jsonl"));
         let mut file = OpenOptions::new()
             .create(true)
+            .read(true)
             .append(true)
             .open(&path)
             .with_context(|| format!("opening {}", path.display()))?;
-        let line = serde_json::to_string(rec)?;
+        file.lock()
+            .with_context(|| format!("locking {}", path.display()))?;
+        let mut line = serde_json::to_string(rec)?;
+        line.push('\n');
         file.write_all(line.as_bytes())?;
-        file.write_all(b"\n")?;
+        file.unlock()
+            .with_context(|| format!("unlocking {}", path.display()))?;
         Ok(())
     }
 }

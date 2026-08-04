@@ -91,3 +91,101 @@ fn long_strings_bucket_upward() {
     let out = shape::of(&json!({ "essay": long }), "t", &idx);
     assert_eq!(out["essay"], "str<512");
 }
+
+#[test]
+fn malformed_urls_and_header_values_are_bucketed() {
+    let idx = EnumIndex::new();
+    for (value, expected) in [
+        ("http://call me at 555-0100", "str<32"),
+        ("https://example.com\r\nX-Secret: token", "str<128"),
+    ] {
+        let out = shape::of(&json!({ "url": value }), "navigate", &idx);
+        assert_eq!(out["url"], expected);
+    }
+}
+
+#[test]
+fn uppercase_http_scheme_is_parsed() {
+    let idx = EnumIndex::new();
+    let out = shape::of(
+        &json!({ "url": "HTTPS://WWW.Example.COM/private" }),
+        "navigate",
+        &idx,
+    );
+    assert_eq!(out["url"], "url:example.com");
+}
+
+#[test]
+fn ipv6_url_uses_its_complete_host() {
+    let idx = EnumIndex::new();
+    let out = shape::of(
+        &json!({ "url": "https://[2001:db8::1]/private" }),
+        "navigate",
+        &idx,
+    );
+    assert_eq!(out["url"], "url:[2001:db8::1]");
+}
+
+#[test]
+fn composition_branches_merge_enum_declarations() {
+    for schema in [
+        json!({
+            "oneOf": [
+                { "type": "object", "properties": { "mode": { "enum": ["first"] } } },
+                { "type": "object", "properties": { "mode": { "enum": ["second"] } } }
+            ]
+        }),
+        json!({
+            "anyOf": [
+                { "type": "object", "properties": { "mode": { "enum": ["first"] } } },
+                { "type": "object", "properties": { "mode": { "enum": ["second"] } } }
+            ]
+        }),
+        json!({
+            "allOf": [
+                { "type": "object", "properties": { "mode": { "enum": ["first"] } } },
+                { "type": "object", "properties": { "mode": { "enum": ["second"] } } }
+            ]
+        }),
+    ] {
+        let mut idx = EnumIndex::new();
+        idx.learn("composed", &schema);
+        for value in ["first", "second"] {
+            let out = shape::of(&json!({ "mode": value }), "composed", &idx);
+            assert_eq!(out["mode"], format!("enum:{value}"));
+        }
+    }
+}
+
+#[test]
+fn literal_delimiter_names_do_not_collide_with_structural_paths() {
+    let mut idx = EnumIndex::new();
+    idx.learn(
+        "tool",
+        &json!({
+            "type": "object",
+            "properties": {
+                "a.b": { "enum": ["dot-secret"] },
+                "a": { "type": "object", "properties": { "b": { "type": "string" } } },
+                "items[]": { "enum": ["array-secret"] },
+                "items": { "type": "array", "items": { "type": "string" } }
+            }
+        }),
+    );
+
+    let literal = shape::of(
+        &json!({ "a.b": "dot-secret", "items[]": "array-secret" }),
+        "tool",
+        &idx,
+    );
+    assert_eq!(literal["a.b"], "enum:dot-secret");
+    assert_eq!(literal["items[]"], "enum:array-secret");
+
+    let structural = shape::of(
+        &json!({ "a": { "b": "dot-secret" }, "items": ["array-secret"] }),
+        "tool",
+        &idx,
+    );
+    assert_eq!(structural["a"]["b"], "str<32");
+    assert_eq!(structural["items"]["items"], "str<32");
+}

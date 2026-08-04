@@ -160,6 +160,10 @@ fn string_shape(s: &str, tool: &str, path: &[PathSegment], enums: &EnumIndex) ->
     if let Some(domain) = registrable_domain(s) {
         return format!("url:{domain}");
     }
+    string_bucket(s)
+}
+
+pub(crate) fn string_bucket(s: &str) -> String {
     for bucket in [8usize, 32, 128, 512, 4096] {
         if s.len() <= bucket {
             return format!("str<{bucket}");

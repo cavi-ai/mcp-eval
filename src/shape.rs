@@ -29,8 +29,14 @@ impl EnumIndex {
         self.by_tool.insert(tool.to_string(), found);
     }
 
+    /// Returns whether `value` is an enum member at `path` in `tool`'s schema.
+    ///
+    /// A non-slash path is a literal top-level property name, preserving simple
+    /// paths such as `waitUntil`; `[]` is the root-array item path. Nested
+    /// paths use typed slash segments: `/k/<key>` for a property and `/i` for
+    /// an array item. Within a key, escape `~` as `~0` and `/` as `~1`.
     pub fn is_enum(&self, tool: &str, path: &str, value: &str) -> bool {
-        self.is_enum_at(tool, &legacy_path(path), value)
+        public_path(path).is_some_and(|path| self.is_enum_at(tool, &path, value))
     }
 
     fn is_enum_at(&self, tool: &str, path: &[PathSegment], value: &str) -> bool {
@@ -41,16 +47,44 @@ impl EnumIndex {
     }
 }
 
-fn legacy_path(path: &str) -> Path {
-    path.split('.')
-        .flat_map(|part| {
-            let key = part.trim_end_matches("[]");
-            std::iter::once(PathSegment::Key(key.to_string())).chain(std::iter::repeat_n(
-                PathSegment::Item,
-                (part.len() - key.len()) / 2,
-            ))
-        })
-        .collect()
+fn public_path(path: &str) -> Option<Path> {
+    if path.is_empty() {
+        return Some(Vec::new());
+    }
+    if path == "[]" {
+        return Some(vec![PathSegment::Item]);
+    }
+    let Some(encoded) = path.strip_prefix('/') else {
+        return Some(vec![PathSegment::Key(path.to_string())]);
+    };
+
+    let mut segments = Vec::new();
+    let mut parts = encoded.split('/');
+    while let Some(kind) = parts.next() {
+        match kind {
+            "k" => segments.push(PathSegment::Key(decode_key(parts.next()?)?)),
+            "i" => segments.push(PathSegment::Item),
+            _ => return None,
+        }
+    }
+    Some(segments)
+}
+
+fn decode_key(key: &str) -> Option<String> {
+    let mut decoded = String::new();
+    let mut chars = key.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '~' {
+            decoded.push(ch);
+            continue;
+        }
+        match chars.next()? {
+            '0' => decoded.push('~'),
+            '1' => decoded.push('/'),
+            _ => return None,
+        }
+    }
+    Some(decoded)
 }
 
 fn walk_schema(schema: &Value, path: &[PathSegment], out: &mut HashMap<Path, HashSet<String>>) {

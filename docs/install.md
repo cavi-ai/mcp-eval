@@ -65,10 +65,15 @@ for every record from that process.
 
 ## What crosses the persistence boundary
 
-The shim forwards the live MCP byte stream unchanged, but its journal contains
-only completed-call metadata, inbound server-notification metadata, and shaped
-`params.arguments`; raw response bodies and raw unparsed frames are not persisted.
-Human error messages always become the constant `{message}`.
+The shim forwards the live MCP byte stream unchanged. For completed calls and
+inbound server notifications, its journal keeps metadata and shaped
+`params.arguments`, but not raw response bodies.
+
+Every invalid or otherwise unparseable frame produces a content-free record with
+only `ts`, `session`, `seq`, `server`, an `unparsed/{direction}` method, the
+`unparsed` outcome, `shim_self_us`, and `kind`. The direction is `outbound` or
+`inbound`; the frame's raw bytes are forwarded unchanged but never stored. Human
+error messages always become the constant `{message}`.
 
 HTTP(S) URLs retain only the true public-suffix registrable domain. Literal IP
 hosts, `localhost`, and nonregistrable hosts become the constants `ip`,
@@ -130,9 +135,10 @@ selected `runtime_info` tool was annotated read-only and non-destructive. Its
 normal `tools/call` succeeded. A separate invalid-argument request to that same
 read-only tool exercised redaction without executing a browser action.
 
-`mcpeval index` reported 4 real calls and 1 failure in 1 session. SQLite contained
-3 successful calls, 1 error, and 3 failure-window rows. The planted-value scan and
-the common-pattern scan above each found 0 persisted matches. The redaction-probe
-arguments contained only string buckets, `url:example.co.uk`, `url:ip`,
-`url:localhost`, and `url:host`. Its error fields contained a scalar code and the
-constant `{message}`; no raw request or response payload is included here.
+`mcpeval index` printed `indexed 4 calls, 1 failures`. SQLite then confirmed that
+all 4 records were real and belonged to 1 session, with 3 successful calls, 1
+error, and 3 failure-window rows. The planted-value scan and the common-pattern
+scan above each found 0 persisted matches. The redaction-probe arguments contained
+only string buckets, `url:example.co.uk`, `url:ip`, `url:localhost`, and
+`url:host`. Its error fields contained a scalar code and the constant `{message}`;
+no raw request or response payload is included here.

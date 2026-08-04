@@ -1,3 +1,4 @@
+pub mod correlate;
 pub mod errtemplate;
 pub mod frame;
 pub mod record;

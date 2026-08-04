@@ -182,7 +182,7 @@ fn forwards_unparsed_bytes_exactly_without_persisting_them() {
 
 #[test]
 fn parsed_payload_values_paths_and_queries_never_reach_disk() {
-    const REQUEST: &[u8] = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"x\",\"arguments\":{\"secret\":\"CANARY-8f3a\",\"path\":\"/Users/someone/private.pdf\",\"url\":\"https://example.com/a?token=CANARY-9b2\"}}}\n";
+    const REQUEST: &[u8] = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"x\",\"arguments\":{\"secret\":\"CANARY-8f3a\",\"path\":\"/Users/someone/private.pdf\",\"url\":\"https://CANARY.customer.example.co.uk/a?token=CANARY-9b2\"}}}\n";
 
     let home = TestHome::new();
     let mut child = shim_command(&home).spawn().unwrap();
@@ -195,6 +195,7 @@ fn parsed_payload_values_paths_and_queries_never_reach_disk() {
         String::from_utf8_lossy(&output.stderr)
     );
     let stored = read_store(&home);
+    assert!(stored.contains("url:example.co.uk"));
     for forbidden in ["CANARY", "private.pdf", "/Users/", "token=", "?token"] {
         assert!(
             !stored.contains(forbidden),
@@ -280,4 +281,52 @@ fn maps_child_signal_status_without_reporting_success() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(128 + 15));
+}
+
+#[test]
+fn duplex_backpressure_never_deadlocks_or_changes_child_stdout() {
+    const LINE_COUNT: usize = 512;
+    const LINE_WIDTH: usize = 4_096;
+    const INPUT_SIZE: usize = 2 * 1024 * 1024;
+
+    let home = TestHome::new();
+    let mut child = Command::new(bin())
+        .args([
+            "shim",
+            "--server",
+            "demo",
+            "--",
+            "python3",
+            FIXTURE,
+            "--duplex-stress",
+            &LINE_COUNT.to_string(),
+            &LINE_WIDTH.to_string(),
+            &(INPUT_SIZE + 1).to_string(),
+        ])
+        .env("MCPEVAL_HOME", home.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let mut stdin = child.stdin.take().unwrap();
+    let writer = thread::spawn(move || {
+        let mut input = vec![b'I'; INPUT_SIZE];
+        input.push(b'\n');
+        stdin.write_all(&input)
+    });
+    let mut stdout = child.stdout.take().unwrap();
+    let reader = thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).map(|_| output)
+    });
+
+    let status = wait_for_exit(&mut child, Duration::from_secs(3));
+    writer.join().unwrap().unwrap();
+    let output = reader.join().unwrap().unwrap();
+
+    assert!(status.success());
+    let line = [vec![b'O'; LINE_WIDTH - 1], vec![b'\n']].concat();
+    assert_eq!(output, line.repeat(LINE_COUNT));
 }

@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize, Serializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 
 use crate::{errtemplate, shape};
@@ -26,6 +26,8 @@ pub struct CallRecord {
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ErrorInfo {
     #[serde(
+        default,
+        deserialize_with = "deserialize_code",
         skip_serializing_if = "Option::is_none",
         serialize_with = "serialize_code"
     )]
@@ -104,6 +106,13 @@ where
     S: Serializer,
 {
     value.as_ref().map(privacy_safe_code).serialize(serializer)
+}
+
+fn deserialize_code<'de, D>(deserializer: D) -> Result<Option<Value>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Value::deserialize(deserializer).map(Some)
 }
 
 fn serialize_bucketed_string<S>(value: &Option<String>, serializer: S) -> Result<S::Ok, S::Error>

@@ -241,6 +241,34 @@ fn serialization_sanitizes_directly_constructed_error_info() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn store_sanitizes_directly_constructed_identifier_fields() {
+    let dir = tempdir();
+    let canary = "CANARY /Users/private?token=secret";
+    let mut rec = sample(9);
+    rec.session = canary.into();
+    rec.server = canary.into();
+    rec.method = canary.into();
+    rec.tool = Some(canary.into());
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store.append(&rec).unwrap();
+
+    let path = std::fs::read_dir(dir.join("store"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let body = std::fs::read_to_string(path).unwrap();
+    assert!(!body.contains("CANARY") && !body.contains("private") && !body.contains("token"));
+    let stored: serde_json::Value = serde_json::from_str(body.trim()).unwrap();
+    assert!(stored["session"].as_str().unwrap().starts_with("session:"));
+    assert_eq!(stored["server"], "invalid");
+    assert_eq!(stored["method"], "unparsed/metadata");
+    assert!(stored.get("tool").is_none());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 fn sensitive_error_payload() -> serde_json::Value {
     json!({
         "error": {

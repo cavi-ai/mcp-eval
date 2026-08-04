@@ -215,6 +215,10 @@ impl ChildProcess {
         let msg = format!(
             r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"navigate","arguments":{{"waitUntil":"commit"}}}}}}"#
         );
+        self.round_trip_message(id, &msg)
+    }
+
+    fn round_trip_message(&mut self, id: usize, msg: &str) -> Result<u128, String> {
         let started = Instant::now();
         let stdin = self
             .stdin
@@ -270,6 +274,32 @@ impl ChildProcess {
             Err(format!("child exited unsuccessfully: {status}"))
         }
     }
+}
+
+#[cfg(not(debug_assertions))]
+#[test]
+fn representative_large_frame_stays_under_the_same_two_millisecond_budget() {
+    let home = TestHome::new();
+    let padding = "x".repeat(32 * 1024);
+    let message = format!(
+        r#"{{"jsonrpc":"2.0","id":901,"method":"tools/call","params":{{"name":"navigate","arguments":{{"note":"{padding}"}}}}}}"#
+    );
+
+    let mut direct = ChildProcess::spawn(true, home.path());
+    direct.round_trip(WARM_UP_ID).unwrap();
+    let baseline = direct.round_trip_message(901, &message).unwrap();
+    direct.finish().unwrap();
+
+    let mut shimmed = ChildProcess::spawn(false, home.path());
+    shimmed.round_trip(WARM_UP_ID).unwrap();
+    let through = shimmed.round_trip_message(901, &message).unwrap();
+    shimmed.finish().unwrap();
+
+    let added = through.saturating_sub(baseline);
+    assert!(
+        added < 2_000,
+        "large-frame shim added {added}us (baseline {baseline}us, shimmed {through}us)"
+    );
 }
 
 impl Drop for ChildProcess {

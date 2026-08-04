@@ -60,8 +60,8 @@ users should set `MCPEVAL_HOME` explicitly when their client does not provide a
 `HOME` variable.
 
 Set `MCPEVAL_SESSION` to correlate the capture with an agent session identifier.
-If it is unset, the shim generates one UUID when the process starts and uses it
-for every record from that process.
+The raw value is never persisted: the shim stores a stable `session:<sha256>`
+token. If unset, the shim generates a UUID and hashes it once per process.
 
 ## What crosses the persistence boundary
 
@@ -80,10 +80,12 @@ hosts, `localhost`, and nonregistrable hosts become the constants `ip`,
 `localhost`, and `host`. Other strings become length buckets unless the called
 tool's own input schema declared the value as an enum.
 
-The configured server name, `MCPEVAL_SESSION`, method and tool names, argument
-keys, schema-declared enum values, numeric and boolean arguments, and
-registrable domains remain queryable. Treat those fields as non-secret metadata.
-There is no verbose or raw-payload mode.
+Server names must be bounded ASCII labels and methods must use bounded
+slash-separated labels. Tool names remain queryable only after `tools/list`
+declares them; pre-discovery or undeclared calls use `unlisted`. The store
+revalidates these fields before serialization. Argument keys, schema-declared
+enum values, numeric and boolean arguments, and registrable domains remain
+queryable. There is no verbose or raw-payload mode.
 
 ## Verify a live capture
 

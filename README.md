@@ -15,9 +15,9 @@ cargo build --release
 ```
 
 Set `MCPEVAL_HOME` to choose the capture root. If it is unset, `mcp-eval` uses
-`$HOME/.mcp-eval` when `HOME` is available. Set `MCPEVAL_SESSION` when records
-from one shim process must correlate with an existing agent session; otherwise
-the shim generates a UUID for that process.
+`$HOME/.mcp-eval` when `HOME` is available. `MCPEVAL_SESSION` is transformed to
+a stable `session:<sha256>` token before persistence; otherwise the shim hashes
+a generated UUID for that process.
 
 The stdio shim targets Unix and Windows and expects newline-delimited JSON-RPC.
 See [the installation guide](docs/install.md) for MCP client configuration and
@@ -26,8 +26,9 @@ live verification.
 ## What is recorded
 
 For completed JSON-RPC calls and inbound server notifications, the journal keeps
-timestamps, session and sequence identifiers, the configured server name, method
-and tool names, latency, outcome, shim overhead, and shaped `params.arguments`
+timestamps, an opaque session token and sequence identifier, the validated server
+label and method, declared tool names, latency, outcome, shim overhead (including
+JSON parsing), and shaped `params.arguments`
 when present. It does not persist raw response bodies.
 
 Every invalid or otherwise unparseable frame produces a content-free record with
@@ -51,11 +52,12 @@ layers, and kinds are reduced to length buckets.
 
 ## Privacy boundary
 
-The configured server name, `MCPEVAL_SESSION`, method and tool names, argument
-keys, schema-declared enum values, numeric and boolean arguments, and
-registrable domains are intentionally queryable and therefore persisted. Do not
-put secrets in those fields. Server stderr is passed through unchanged to the
-client, not written to the journal. There is no verbose or raw-payload mode.
+Server names must be 1–128 character ASCII labels. Methods use a bounded
+slash-separated label grammar. Tool names are stored only after a valid
+`tools/list` response declares them; earlier or undeclared calls use `unlisted`.
+Argument keys, schema-declared enum values, numeric and boolean arguments, and
+registrable domains remain queryable. Server stderr is passed through unchanged
+to the client, not written to the journal. There is no verbose or raw-payload mode.
 
 See [the Phase 1 design](docs/design/2026-08-04-mcp-eval.md) for the complete
 data model and scope.

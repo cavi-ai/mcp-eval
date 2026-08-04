@@ -212,7 +212,7 @@ fn shutdown_drains_completion_emitted_while_input_pump_is_joined() {
         if cancellation_bytes != 0 {
             return Err(io::Error::other("unexpected cancellation payload"));
         }
-        complete_frame(&input_events, sequence, std::time::Instant::now())
+        complete_frame(&input_events, sequence, std::time::Instant::now(), 0)
     })
     .unwrap();
     let input_pump = PumpHandle {
@@ -239,7 +239,7 @@ fn shutdown_drains_completion_emitted_while_input_pump_is_joined() {
             b"response\n",
             "writing injected agent stdout",
         )?;
-        complete_frame(&output_events, sequence, std::time::Instant::now())
+        complete_frame(&output_events, sequence, std::time::Instant::now(), 0)
     })
     .unwrap();
     let output_pump = PumpHandle {
@@ -303,7 +303,7 @@ fn shutdown_drains_completion_emitted_while_input_pump_is_joined() {
     let body = std::fs::read_to_string(path).unwrap();
     let record: serde_json::Value = serde_json::from_str(body.trim_end()).unwrap();
     assert_eq!(record["method"], "tools/call");
-    assert_eq!(record["tool"], "late");
+    assert_eq!(record["tool"], "unlisted");
     assert_eq!(record["outcome"], "ok");
 
     std::fs::remove_dir_all(root).unwrap();
@@ -469,7 +469,7 @@ fn cancelled_partial_frame_is_retired_before_later_completed_frame_is_recorded()
                 30,
             ),
         )?;
-        super::complete_frame(&survivor_events, sequence, std::time::Instant::now())
+        super::complete_frame(&survivor_events, sequence, std::time::Instant::now(), 0)
     })
     .unwrap();
     survivor_thread.join().unwrap().unwrap();

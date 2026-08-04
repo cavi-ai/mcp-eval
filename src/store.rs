@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
+use crate::privacy;
 use crate::record::CallRecord;
 
 pub struct Store {
@@ -39,7 +40,22 @@ impl Store {
             .with_context(|| format!("opening {}", path.display()))?;
         file.lock()
             .with_context(|| format!("locking {}", path.display()))?;
-        let mut line = serde_json::to_string(rec)?;
+        let mut safe = rec.clone();
+        safe.session = privacy::opaque_session(&safe.session);
+        if !privacy::valid_server(&safe.server) {
+            safe.server = "invalid".into();
+        }
+        if !privacy::valid_method(&safe.method) {
+            safe.method = "unparsed/metadata".into();
+        }
+        if safe
+            .tool
+            .as_deref()
+            .is_some_and(|tool| !privacy::valid_tool(tool))
+        {
+            safe.tool = None;
+        }
+        let mut line = serde_json::to_string(&safe)?;
         line.push('\n');
         file.write_all(line.as_bytes())?;
         file.unlock()

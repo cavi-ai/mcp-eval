@@ -7,6 +7,8 @@ use std::time::{Duration, Instant};
 
 const READ_TIMEOUT: Duration = Duration::from_secs(2);
 const EXIT_TIMEOUT: Duration = Duration::from_secs(2);
+const TIMED_SAMPLES: usize = 200;
+const WARM_UP_ID: usize = TIMED_SAMPLES;
 
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_mcpeval")
@@ -45,6 +47,46 @@ fn response_validation_requires_json_with_the_matching_id() {
     assert!(validate_response(r#"{"jsonrpc":"2.0","id":8,"result":{}}"#, 7).is_err());
 }
 
+#[test]
+fn warm_up_id_does_not_overlap_timed_samples() {
+    let timed_ids: Vec<_> = (0..TIMED_SAMPLES).collect();
+    assert!(!timed_ids.contains(&WARM_UP_ID));
+}
+
+struct ExitAfterTryWait {
+    kill_calls: usize,
+    wait_calls: usize,
+}
+
+impl TimeoutProcess for ExitAfterTryWait {
+    type Status = &'static str;
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        self.kill_calls += 1;
+        Err(std::io::Error::from(std::io::ErrorKind::InvalidInput))
+    }
+
+    fn wait(&mut self) -> std::io::Result<Self::Status> {
+        self.wait_calls += 1;
+        Ok("success")
+    }
+}
+
+#[test]
+fn timeout_cleanup_accepts_a_child_that_exited_before_kill() {
+    let mut process = ExitAfterTryWait {
+        kill_calls: 0,
+        wait_calls: 0,
+    };
+
+    assert_eq!(
+        kill_and_reap_after_timeout(&mut process).unwrap(),
+        "success"
+    );
+    assert_eq!(process.kill_calls, 1);
+    assert_eq!(process.wait_calls, 1);
+}
+
 struct TestHome(PathBuf);
 
 impl TestHome {
@@ -69,6 +111,40 @@ enum ReaderEvent {
     Line(String),
     Eof,
     Error(String),
+}
+
+trait TimeoutProcess {
+    type Status;
+
+    fn kill(&mut self) -> std::io::Result<()>;
+    fn wait(&mut self) -> std::io::Result<Self::Status>;
+}
+
+impl TimeoutProcess for Child {
+    type Status = ExitStatus;
+
+    fn kill(&mut self) -> std::io::Result<()> {
+        Child::kill(self)
+    }
+
+    fn wait(&mut self) -> std::io::Result<Self::Status> {
+        Child::wait(self)
+    }
+}
+
+fn kill_and_reap_after_timeout<P: TimeoutProcess>(process: &mut P) -> Result<P::Status, String> {
+    let kill_error = match process.kill() {
+        Ok(()) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => None,
+        Err(error) => Some(error),
+    };
+    let status = process
+        .wait()
+        .map_err(|error| format!("reaping child after timeout: {error}"))?;
+    match kill_error {
+        None => Ok(status),
+        Some(error) => Err(format!("killing child after timeout: {error}")),
+    }
 }
 
 struct ChildProcess {
@@ -135,40 +211,38 @@ impl ChildProcess {
         }
     }
 
-    fn round_trips(&mut self, n: usize) -> Result<Vec<u128>, String> {
-        let mut samples = Vec::with_capacity(n);
-        for i in 0..n {
-            let msg = format!(
-                r#"{{"jsonrpc":"2.0","id":{i},"method":"tools/call","params":{{"name":"navigate","arguments":{{"waitUntil":"commit"}}}}}}"#
-            );
-            let started = Instant::now();
-            let stdin = self
-                .stdin
-                .as_mut()
-                .ok_or_else(|| "child stdin was already closed".to_owned())?;
-            writeln!(stdin, "{msg}").map_err(|error| format!("writing request {i}: {error}"))?;
-            stdin
-                .flush()
-                .map_err(|error| format!("flushing request {i}: {error}"))?;
+    fn round_trip(&mut self, id: usize) -> Result<u128, String> {
+        let msg = format!(
+            r#"{{"jsonrpc":"2.0","id":{id},"method":"tools/call","params":{{"name":"navigate","arguments":{{"waitUntil":"commit"}}}}}}"#
+        );
+        let started = Instant::now();
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "child stdin was already closed".to_owned())?;
+        writeln!(stdin, "{msg}").map_err(|error| format!("writing request {id}: {error}"))?;
+        stdin
+            .flush()
+            .map_err(|error| format!("flushing request {id}: {error}"))?;
 
-            let line = match self.lines.recv_timeout(READ_TIMEOUT) {
-                Ok(ReaderEvent::Line(line)) if !line.is_empty() => line,
-                Ok(ReaderEvent::Line(_)) => return Err(format!("response {i} was empty")),
-                Ok(ReaderEvent::Eof) => return Err(format!("response {i} reached EOF")),
-                Ok(ReaderEvent::Error(error)) => {
-                    return Err(format!("reading response {i}: {error}"));
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    return Err(format!("response {i} exceeded {READ_TIMEOUT:?}"));
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err(format!("response reader disconnected before response {i}"));
-                }
-            };
-            validate_response(&line, i)?;
-            samples.push(started.elapsed().as_micros());
-        }
-        Ok(samples)
+        let line = match self.lines.recv_timeout(READ_TIMEOUT) {
+            Ok(ReaderEvent::Line(line)) if !line.is_empty() => line,
+            Ok(ReaderEvent::Line(_)) => return Err(format!("response {id} was empty")),
+            Ok(ReaderEvent::Eof) => return Err(format!("response {id} reached EOF")),
+            Ok(ReaderEvent::Error(error)) => return Err(format!("reading response {id}: {error}")),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                return Err(format!("response {id} exceeded {READ_TIMEOUT:?}"));
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(format!("response reader disconnected before response {id}"));
+            }
+        };
+        validate_response(&line, id)?;
+        Ok(started.elapsed().as_micros())
+    }
+
+    fn round_trips(&mut self, n: usize) -> Result<Vec<u128>, String> {
+        (0..n).map(|id| self.round_trip(id)).collect()
     }
 
     fn wait_for_exit(&mut self) -> Result<ExitStatus, String> {
@@ -180,22 +254,7 @@ impl ChildProcess {
                 Err(error) => return Err(format!("checking child status: {error}")),
             }
             if Instant::now() >= deadline {
-                let kill_error = self.child.kill().err();
-                let reap_result = self.child.wait();
-                return Err(match (kill_error, reap_result) {
-                    (None, Ok(status)) => {
-                        format!("child did not exit within {EXIT_TIMEOUT:?}; killed and reaped {status}")
-                    }
-                    (Some(kill_error), Ok(status)) => format!(
-                        "child did not exit within {EXIT_TIMEOUT:?}; kill failed ({kill_error}), reaped {status}"
-                    ),
-                    (None, Err(reap_error)) => format!(
-                        "child did not exit within {EXIT_TIMEOUT:?}; kill succeeded but reap failed ({reap_error})"
-                    ),
-                    (Some(kill_error), Err(reap_error)) => format!(
-                        "child did not exit within {EXIT_TIMEOUT:?}; kill failed ({kill_error}) and reap failed ({reap_error})"
-                    ),
-                });
+                return kill_and_reap_after_timeout(&mut self.child);
             }
             thread::sleep(Duration::from_millis(10));
         }
@@ -229,13 +288,23 @@ fn shim_adds_under_two_milliseconds_at_p95() {
     let home = TestHome::new();
 
     let mut direct = ChildProcess::spawn(true, home.path());
-    let baseline = p95(direct.round_trips(200).expect("direct round trips"));
+    direct
+        .round_trip(WARM_UP_ID)
+        .expect("direct warm-up round trip");
+    let baseline = p95(direct
+        .round_trips(TIMED_SAMPLES)
+        .expect("direct timed round trips"));
     direct
         .finish()
         .expect("direct child must exit successfully");
 
     let mut shimmed = ChildProcess::spawn(false, home.path());
-    let through = p95(shimmed.round_trips(200).expect("shimmed round trips"));
+    shimmed
+        .round_trip(WARM_UP_ID)
+        .expect("shimmed warm-up round trip");
+    let through = p95(shimmed
+        .round_trips(TIMED_SAMPLES)
+        .expect("shimmed timed round trips"));
     shimmed
         .finish()
         .expect("shimmed child must exit successfully");

@@ -17,10 +17,39 @@ fn matches_a_response_to_its_request_and_measures_latency() {
         .expect("a matched response emits a record");
 
     assert_eq!(rec.method, "tools/call");
-    assert_eq!(rec.tool.as_deref(), Some("click"));
+    assert_eq!(rec.tool.as_deref(), Some("unlisted"));
     assert_eq!(rec.latency_ms, Some(250));
     assert_eq!(rec.outcome, "ok");
     assert_eq!(rec.args.unwrap()["note"], "str<8");
+}
+
+#[test]
+fn sessions_are_stable_opaque_tokens_and_unlisted_tools_are_not_persisted() {
+    let mut first = Correlator::new("demo".into(), "session secret /Users/a".into());
+    let mut second = Correlator::new("demo".into(), "session secret /Users/a".into());
+    for c in [&mut first, &mut second] {
+        c.on_outbound(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"CANARY?token=x","arguments":{}}}), 0);
+    }
+    let a = first
+        .on_inbound(&json!({"jsonrpc":"2.0","id":1,"result":{}}), 1)
+        .unwrap();
+    let b = second
+        .on_inbound(&json!({"jsonrpc":"2.0","id":1,"result":{}}), 1)
+        .unwrap();
+    assert_eq!(a.session, b.session);
+    assert!(a.session.starts_with("session:"));
+    assert!(!a.session.contains("secret"));
+    assert_eq!(a.tool.as_deref(), Some("unlisted"));
+}
+
+#[test]
+fn completed_call_carries_outbound_parse_and_forward_overhead() {
+    let mut c = Correlator::new("demo".into(), "session".into());
+    c.on_outbound_with_overhead(&json!({"jsonrpc":"2.0","id":1,"method":"ping"}), 0, 777);
+    let record = c
+        .on_inbound(&json!({"jsonrpc":"2.0","id":1,"result":{}}), 1)
+        .unwrap();
+    assert!(record.shim_self_us >= 777);
 }
 
 #[test]

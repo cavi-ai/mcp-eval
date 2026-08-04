@@ -175,6 +175,17 @@ fn duplicate_session_server_sequence_occurrences_are_preserved_on_every_rebuild(
             .map(Result::unwrap)
             .collect();
         assert_eq!(outcomes, vec!["ok", "error"]);
+        let links: Vec<(i64, i64, String, String)> = db
+            .prepare("SELECT w.failure_id, w.neighbour_id, f.outcome, n.outcome FROM windows w JOIN calls f ON f.id=w.failure_id JOIN calls n ON n.id=w.neighbour_id")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+            .unwrap().map(Result::unwrap).collect();
+        assert_eq!(links.len(), 1);
+        assert_ne!(links[0].0, links[0].1);
+        assert_eq!(
+            (&links[0].2, &links[0].3),
+            (&"error".to_string(), &"ok".to_string())
+        );
     }
 }
 

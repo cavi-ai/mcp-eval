@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
+use crate::privacy;
 use crate::record::{error_info, CallRecord};
 use crate::shape::{self, EnumIndex};
 
@@ -10,6 +11,7 @@ struct Pending {
     tool: Option<String>,
     args: Option<Value>,
     sent_ms: u64,
+    shim_self_us: u64,
 }
 
 pub struct Correlator {
@@ -17,6 +19,7 @@ pub struct Correlator {
     session: String,
     seq: u64,
     enums: EnumIndex,
+    declared_tools: HashSet<String>,
     pending: HashMap<String, Pending>,
 }
 
@@ -24,26 +27,42 @@ impl Correlator {
     pub fn new(server: String, session: String) -> Self {
         Self {
             server,
-            session,
+            session: privacy::opaque_session(&session),
             seq: 0,
             enums: EnumIndex::new(),
+            declared_tools: HashSet::new(),
             pending: HashMap::new(),
         }
     }
 
     pub fn on_outbound(&mut self, v: &Value, now_ms: u64) {
+        self.on_outbound_with_overhead(v, now_ms, 0);
+    }
+
+    pub fn on_outbound_with_overhead(&mut self, v: &Value, now_ms: u64, base_us: u64) {
+        let started = std::time::Instant::now();
         let Some(method) = v.get("method").and_then(Value::as_str) else {
             return;
         };
         let Some(id) = id_key(v) else { return };
         let params = v.get("params");
-        let tool = params
-            .and_then(|p| p.get("name"))
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        let args = params
-            .and_then(|p| p.get("arguments"))
-            .map(|a| shape::of(a, tool.as_deref().unwrap_or(""), &self.enums));
+        let requested_tool = params.and_then(|p| p.get("name")).and_then(Value::as_str);
+        let tool = requested_tool.map(|name| {
+            if self.declared_tools.contains(name) {
+                name.to_string()
+            } else {
+                "unlisted".into()
+            }
+        });
+        let args = params.and_then(|p| p.get("arguments")).map(|a| {
+            shape::of(
+                a,
+                requested_tool
+                    .filter(|name| self.declared_tools.contains(*name))
+                    .unwrap_or(""),
+                &self.enums,
+            )
+        });
         self.pending.insert(
             id,
             Pending {
@@ -51,6 +70,7 @@ impl Correlator {
                 tool,
                 args,
                 sent_ms: now_ms,
+                shim_self_us: base_us.saturating_add(started.elapsed().as_micros() as u64),
             },
         );
     }
@@ -86,7 +106,7 @@ impl Correlator {
                         "ok".into()
                     },
                     error: if is_error { Some(error_info(v)) } else { None },
-                    shim_self_us: 0,
+                    shim_self_us: p.shim_self_us,
                     kind: "real".into(),
                 })
             }
@@ -141,6 +161,10 @@ impl Correlator {
             ) else {
                 continue;
             };
+            if !privacy::valid_tool(name) {
+                continue;
+            }
+            self.declared_tools.insert(name.to_string());
             self.enums.learn(name, schema);
         }
     }

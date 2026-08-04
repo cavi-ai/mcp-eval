@@ -123,7 +123,11 @@ fn proxies_messages_and_records_privacy_safe_shapes() {
 
     let records = read_records(&home);
     assert_eq!(records.len(), 3);
-    assert!(records.iter().all(|record| record["session"] == SESSION));
+    let expected_session = mcpeval::privacy::opaque_session(SESSION);
+    assert!(records
+        .iter()
+        .all(|record| record["session"] == expected_session));
+    assert!(!read_store(&home).contains(SESSION));
 
     let call = records
         .iter()
@@ -181,6 +185,21 @@ fn forwards_unparsed_bytes_exactly_without_persisting_them() {
 }
 
 #[test]
+fn semantically_invalid_json_is_forwarded_and_recorded_as_unparsed() {
+    const INVALID: &[u8] = b"{}\n";
+    const RESPONSE: &[u8] = b"{\"jsonrpc\":\"2.0\",\"id\":null,\"result\":{\"echo\":true}}\n";
+    let home = TestHome::new();
+    let mut child = shim_command(&home).spawn().unwrap();
+    child.stdin.take().unwrap().write_all(INVALID).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, RESPONSE);
+    let records = read_records(&home);
+    assert_eq!(records.len(), 2);
+    assert!(records.iter().all(|record| record["outcome"] == "unparsed"));
+}
+
+#[test]
 fn parsed_payload_values_paths_and_queries_never_reach_disk() {
     const REQUEST: &[u8] = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"x\",\"arguments\":{\"secret\":\"CANARY-8f3a\",\"path\":\"/Users/someone/private.pdf\",\"url\":\"https://CANARY.customer.example.co.uk/a?token=CANARY-9b2\"}}}\n";
 
@@ -225,7 +244,9 @@ fn generates_one_uuid_session_for_the_process() {
     let records = read_records(&home);
     assert_eq!(records.len(), 2);
     let session = records[0]["session"].as_str().unwrap();
-    uuid::Uuid::parse_str(session).expect("generated session must be a UUID");
+    assert_eq!(session.len(), 72);
+    assert!(session.starts_with("session:"));
+    assert!(session[8..].bytes().all(|byte| byte.is_ascii_hexdigit()));
     assert!(records.iter().all(|record| record["session"] == session));
 }
 

@@ -417,6 +417,9 @@ pub fn run(_server: String, _cmd: Vec<String>) -> anyhow::Result<i32> {
 
 #[cfg(any(unix, windows))]
 pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
+    if !crate::privacy::valid_server(&server) {
+        anyhow::bail!("server must be a 1-128 character label using only ASCII letters, digits, '.', '_', '-', or ':'");
+    }
     let (program, args) = cmd.split_first().context("empty server command")?;
     let mut store = Store::open(None).context("opening recording store")?;
     let session =
@@ -623,7 +626,11 @@ fn spawn_input_pump(
             };
             let started = Instant::now();
             let observed_ms = now_ms();
-            let Frame { raw, value } = frame;
+            let Frame {
+                raw,
+                value,
+                parse_us,
+            } = frame;
             let sequence = reserve_frame(
                 &events,
                 FrameMetadata {
@@ -637,7 +644,7 @@ fn spawn_input_pump(
             })? {
                 break;
             }
-            complete_frame(&events, sequence, started)?;
+            complete_frame(&events, sequence, started, parse_us)?;
         }
         Ok(())
     })?;
@@ -665,7 +672,11 @@ fn spawn_output_pump(
             };
             let started = Instant::now();
             let observed_ms = now_ms();
-            let Frame { raw, value } = frame;
+            let Frame {
+                raw,
+                value,
+                parse_us,
+            } = frame;
             let sequence = reserve_frame(
                 &events,
                 FrameMetadata {
@@ -679,7 +690,7 @@ fn spawn_output_pump(
             })? {
                 break;
             }
-            complete_frame(&events, sequence, started)?;
+            complete_frame(&events, sequence, started, parse_us)?;
         }
         Ok(())
     })?;
@@ -740,8 +751,16 @@ fn reserve_frame(events: &Mutex<EventSender>, metadata: FrameMetadata) -> io::Re
     lock_events(events).reserve(metadata)
 }
 
-fn complete_frame(events: &Mutex<EventSender>, sequence: u64, started: Instant) -> io::Result<()> {
-    lock_events(events).forwarded(sequence, started.elapsed().as_micros() as u64)
+fn complete_frame(
+    events: &Mutex<EventSender>,
+    sequence: u64,
+    started: Instant,
+    parse_us: u64,
+) -> io::Result<()> {
+    lock_events(events).forwarded(
+        sequence,
+        parse_us.saturating_add(started.elapsed().as_micros() as u64),
+    )
 }
 
 fn handle_event(
@@ -768,16 +787,20 @@ fn handle_event(
     };
 
     for frame in frame_order.drain_ready() {
+        let recording_started = Instant::now();
         let record = match (frame.direction, frame.value) {
             (Direction::Outbound, Some(value)) => {
-                correlator.on_outbound(&value, frame.observed_ms);
+                correlator.on_outbound_with_overhead(&value, frame.observed_ms, frame.shim_self_us);
                 None
             }
             (Direction::Inbound, Some(value)) => correlator.on_inbound(&value, frame.observed_ms),
             (direction, None) => Some(correlator.on_unparsed(direction.label(), frame.observed_ms)),
         };
         if let Some(mut record) = record {
-            record.shim_self_us = frame.shim_self_us;
+            record.shim_self_us = record
+                .shim_self_us
+                .saturating_add(frame.shim_self_us)
+                .saturating_add(recording_started.elapsed().as_micros() as u64);
             append_record(store, &record, recording_error);
         }
     }

@@ -32,12 +32,10 @@ impl Correlator {
     }
 
     pub fn on_outbound(&mut self, v: &Value, now_ms: u64) {
+        let Some(method) = v.get("method").and_then(Value::as_str) else {
+            return;
+        };
         let Some(id) = id_key(v) else { return };
-        let method = v
-            .get("method")
-            .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string();
         let params = v.get("params");
         let tool = params
             .and_then(|p| p.get("name"))
@@ -49,7 +47,7 @@ impl Correlator {
         self.pending.insert(
             id,
             Pending {
-                method,
+                method: method.to_string(),
                 tool,
                 args,
                 sent_ms: now_ms,
@@ -58,6 +56,7 @@ impl Correlator {
     }
 
     pub fn on_inbound(&mut self, v: &Value, now_ms: u64) -> Option<CallRecord> {
+        let is_response = v.get("result").is_some() || v.get("error").is_some();
         if let Some(result) = v.get("result") {
             if let Some(id) = id_key(v) {
                 if let Some(p) = self.pending.get(&id) {
@@ -68,7 +67,7 @@ impl Correlator {
             }
         }
         match id_key(v) {
-            Some(id) => {
+            Some(id) if is_response => {
                 let p = self.pending.remove(&id)?;
                 let is_error = v.get("error").is_some();
                 self.seq += 1;
@@ -91,6 +90,7 @@ impl Correlator {
                     kind: "real".into(),
                 })
             }
+            Some(_) => None,
             None => {
                 let method = v.get("method").and_then(Value::as_str)?.to_string();
                 self.seq += 1;

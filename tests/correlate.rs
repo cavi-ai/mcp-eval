@@ -102,3 +102,107 @@ fn sequence_numbers_increase_per_record() {
         .unwrap();
     assert!(b.seq > a.seq);
 }
+
+#[test]
+fn inbound_server_request_with_colliding_id_does_not_consume_pending() {
+    let mut c = Correlator::new("demo".into(), "sess".into());
+    c.on_outbound(
+        &json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+                 "params": { "name": "click", "arguments": {} } }),
+        100,
+    );
+
+    let server_request = c.on_inbound(
+        &json!({ "jsonrpc": "2.0", "id": 7, "method": "sampling/createMessage",
+                 "params": { "messages": [] } }),
+        110,
+    );
+    assert!(server_request.is_none());
+
+    let response = c
+        .on_inbound(
+            &json!({ "jsonrpc": "2.0", "id": 7, "result": { "ok": true } }),
+            125,
+        )
+        .expect("the actual response still matches the pending request");
+    assert_eq!(response.method, "tools/call");
+    assert_eq!(response.latency_ms, Some(25));
+    assert_eq!(response.seq, 1);
+}
+
+#[test]
+fn outbound_response_does_not_create_a_ghost_pending_request() {
+    let mut c = Correlator::new("demo".into(), "sess".into());
+    c.on_outbound(
+        &json!({ "jsonrpc": "2.0", "id": 7, "result": { "accepted": true } }),
+        10,
+    );
+
+    assert!(c
+        .on_inbound(
+            &json!({ "jsonrpc": "2.0", "id": 7, "result": { "ok": true } }),
+            20,
+        )
+        .is_none());
+}
+
+#[test]
+fn outbound_response_does_not_overwrite_a_pending_request() {
+    let mut c = Correlator::new("demo".into(), "sess".into());
+    c.on_outbound(&json!({ "jsonrpc": "2.0", "id": 7, "method": "ping" }), 10);
+    c.on_outbound(
+        &json!({ "jsonrpc": "2.0", "id": 7, "result": { "accepted": true } }),
+        15,
+    );
+
+    let response = c
+        .on_inbound(
+            &json!({ "jsonrpc": "2.0", "id": 7, "result": { "ok": true } }),
+            30,
+        )
+        .expect("the original request remains pending");
+    assert_eq!(response.method, "ping");
+    assert_eq!(response.latency_ms, Some(20));
+}
+
+#[test]
+fn numeric_and_string_ids_do_not_collide() {
+    let mut c = Correlator::new("demo".into(), "sess".into());
+    c.on_outbound(
+        &json!({ "jsonrpc": "2.0", "id": 7, "method": "numeric" }),
+        10,
+    );
+    c.on_outbound(
+        &json!({ "jsonrpc": "2.0", "id": "7", "method": "string" }),
+        20,
+    );
+
+    let string_response = c
+        .on_inbound(&json!({ "jsonrpc": "2.0", "id": "7", "result": {} }), 30)
+        .unwrap();
+    assert_eq!(string_response.method, "string");
+    assert_eq!(string_response.latency_ms, Some(10));
+
+    let numeric_response = c
+        .on_inbound(&json!({ "jsonrpc": "2.0", "id": 7, "result": {} }), 40)
+        .unwrap();
+    assert_eq!(numeric_response.method, "numeric");
+    assert_eq!(numeric_response.latency_ms, Some(30));
+}
+
+#[test]
+fn unmatched_response_does_not_affect_pending_state_or_sequence() {
+    let mut c = Correlator::new("demo".into(), "sess".into());
+    c.on_outbound(&json!({ "jsonrpc": "2.0", "id": 7, "method": "ping" }), 10);
+
+    assert!(c
+        .on_inbound(&json!({ "jsonrpc": "2.0", "id": 99, "result": {} }), 20)
+        .is_none());
+
+    let matched = c
+        .on_inbound(&json!({ "jsonrpc": "2.0", "id": 7, "result": {} }), 30)
+        .expect("the original request remains pending");
+    assert_eq!(matched.method, "ping");
+    assert_eq!(matched.seq, 1);
+    assert_eq!(matched.latency_ms, Some(20));
+}

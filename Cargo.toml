@@ -18,6 +18,9 @@ uuid = { version = "1", features = ["v4"] }
 [target.'cfg(unix)'.dependencies]
 nix = { version = "0.31", features = ["poll"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_IO"] }
+
 [dev-dependencies]
 uuid = { version = "1", features = ["v4"] }
 

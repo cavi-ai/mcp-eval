@@ -7,6 +7,7 @@ byte so the shim's transparent fallback can be exercised.
 """
 import json
 import os
+import select
 import signal
 import sys
 
@@ -32,6 +33,22 @@ if sys.argv[1:2] == ["--exit-code"]:
 
 if sys.argv[1:2] == ["--signal"]:
     os.kill(os.getpid(), getattr(signal, sys.argv[2]))
+
+if sys.argv[1:2] == ["--duplex-stress"]:
+    line_count = int(sys.argv[2])
+    line_width = int(sys.argv[3])
+    input_size = int(sys.argv[4])
+    readable, _, _ = select.select([sys.stdin.buffer], [], [], 2)
+    if not readable:
+        sys.exit(4)
+    line = b"O" * (line_width - 1) + b"\n"
+    for _ in range(line_count):
+        sys.stdout.buffer.write(line)
+        sys.stdout.buffer.flush()
+    incoming = sys.stdin.buffer.readline()
+    if len(incoming) != input_size:
+        sys.exit(5)
+    sys.exit(0)
 
 
 while raw := sys.stdin.buffer.readline():

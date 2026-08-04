@@ -1,4 +1,11 @@
-use std::io::{self, BufReader, Write};
+use std::collections::BTreeMap;
+use std::io::{self, BufReader, Read, Write};
+#[cfg(unix)]
+use std::net::Shutdown;
+#[cfg(unix)]
+use std::os::fd::AsFd;
+#[cfg(unix)]
+use std::os::unix::net::UnixStream;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -6,6 +13,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context};
+#[cfg(unix)]
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
 
 use crate::correlate::Correlator;
 use crate::frame::{read_frame, Frame};
@@ -13,6 +22,93 @@ use crate::record::CallRecord;
 use crate::store::Store;
 
 const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+#[cfg(unix)]
+struct CancelHandle {
+    sender: UnixStream,
+}
+
+#[cfg(unix)]
+impl CancelHandle {
+    fn cancel(&self) -> io::Result<()> {
+        match self.sender.shutdown(Shutdown::Write) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == io::ErrorKind::NotConnected => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn cancellation_pair() -> io::Result<(CancelHandle, UnixStream)> {
+    let (sender, receiver) = UnixStream::pair()?;
+    Ok((CancelHandle { sender }, receiver))
+}
+
+#[cfg(unix)]
+struct CancellableReader<R> {
+    source: R,
+    cancellation: UnixStream,
+    cancelled: bool,
+}
+
+#[cfg(unix)]
+impl<R> CancellableReader<R> {
+    fn new(source: R, cancellation: UnixStream) -> Self {
+        Self {
+            source,
+            cancellation,
+            cancelled: false,
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelled
+    }
+}
+
+#[cfg(unix)]
+impl<R: Read + AsFd> Read for CancellableReader<R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        loop {
+            let (source_events, cancellation_events) = {
+                let mut descriptors = [
+                    PollFd::new(
+                        self.cancellation.as_fd(),
+                        PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR,
+                    ),
+                    PollFd::new(
+                        self.source.as_fd(),
+                        PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR,
+                    ),
+                ];
+                match poll(&mut descriptors, PollTimeout::NONE) {
+                    Ok(_) => (
+                        descriptors[1].revents().unwrap_or_else(PollFlags::empty),
+                        descriptors[0].revents().unwrap_or_else(PollFlags::empty),
+                    ),
+                    Err(nix::errno::Errno::EINTR) => continue,
+                    Err(error) => return Err(io::Error::from_raw_os_error(error as i32)),
+                }
+            };
+
+            if cancellation_events.intersects(
+                PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL,
+            ) {
+                self.cancelled = true;
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionAborted,
+                    "stdio pump cancelled",
+                ));
+            }
+            if source_events.intersects(
+                PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL,
+            ) {
+                return self.source.read(buffer);
+            }
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Direction {
@@ -36,11 +132,91 @@ struct PumpFailure {
     message: String,
 }
 
+struct FrameMetadata {
+    direction: Direction,
+    value: Option<serde_json::Value>,
+    observed_ms: u64,
+}
+
+struct CompletedFrame {
+    direction: Direction,
+    value: Option<serde_json::Value>,
+    observed_ms: u64,
+    shim_self_us: u64,
+}
+
+struct PendingFrame {
+    metadata: FrameMetadata,
+    shim_self_us: Option<u64>,
+}
+
+#[derive(Default)]
+struct FrameOrder {
+    next_reservation: u64,
+    next_ready: u64,
+    pending: BTreeMap<u64, PendingFrame>,
+}
+
+impl FrameOrder {
+    fn reserve(&mut self, sequence: u64, metadata: FrameMetadata) -> anyhow::Result<()> {
+        if sequence != self.next_reservation {
+            anyhow::bail!(
+                "frame reservation out of order: expected {}, got {sequence}",
+                self.next_reservation
+            );
+        }
+        self.pending.insert(
+            sequence,
+            PendingFrame {
+                metadata,
+                shim_self_us: None,
+            },
+        );
+        self.next_reservation += 1;
+        Ok(())
+    }
+
+    fn complete(&mut self, sequence: u64, shim_self_us: u64) -> anyhow::Result<()> {
+        let pending = self
+            .pending
+            .get_mut(&sequence)
+            .with_context(|| format!("completing unknown frame reservation {sequence}"))?;
+        if pending.shim_self_us.replace(shim_self_us).is_some() {
+            anyhow::bail!("frame reservation {sequence} completed twice");
+        }
+        Ok(())
+    }
+
+    fn drain_ready(&mut self) -> Vec<CompletedFrame> {
+        let mut ready = Vec::new();
+        while let Some(shim_self_us) = self
+            .pending
+            .get(&self.next_ready)
+            .and_then(|pending| pending.shim_self_us)
+        {
+            let pending = self
+                .pending
+                .remove(&self.next_ready)
+                .expect("ready frame must remain pending");
+            ready.push(CompletedFrame {
+                direction: pending.metadata.direction,
+                value: pending.metadata.value,
+                observed_ms: pending.metadata.observed_ms,
+                shim_self_us,
+            });
+            self.next_ready += 1;
+        }
+        ready
+    }
+}
+
 enum Event {
-    Frame {
-        direction: Direction,
-        value: Option<serde_json::Value>,
-        observed_ms: u64,
+    Reserved {
+        sequence: u64,
+        metadata: FrameMetadata,
+    },
+    Forwarded {
+        sequence: u64,
         shim_self_us: u64,
     },
     Finished {
@@ -49,6 +225,49 @@ enum Event {
     },
 }
 
+struct EventSender {
+    tx: Sender<Event>,
+    next_sequence: u64,
+}
+
+impl EventSender {
+    fn reserve(&mut self, metadata: FrameMetadata) -> io::Result<u64> {
+        let sequence = self.next_sequence;
+        self.tx
+            .send(Event::Reserved { sequence, metadata })
+            .map_err(|_| event_receiver_closed())?;
+        self.next_sequence += 1;
+        Ok(sequence)
+    }
+
+    fn forwarded(&mut self, sequence: u64, shim_self_us: u64) -> io::Result<()> {
+        self.tx
+            .send(Event::Forwarded {
+                sequence,
+                shim_self_us,
+            })
+            .map_err(|_| event_receiver_closed())
+    }
+
+    fn finished(&mut self, direction: Direction, failure: Option<PumpFailure>) -> io::Result<()> {
+        self.tx
+            .send(Event::Finished { direction, failure })
+            .map_err(|_| event_receiver_closed())
+    }
+}
+
+#[cfg(unix)]
+struct PumpHandle {
+    thread: JoinHandle<io::Result<()>>,
+    cancel: CancelHandle,
+}
+
+#[cfg(not(unix))]
+pub fn run(_server: String, _cmd: Vec<String>) -> anyhow::Result<i32> {
+    anyhow::bail!("the recording stdio shim requires cancellable Unix file descriptors")
+}
+
+#[cfg(unix)]
 pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
     let (program, args) = cmd.split_first().context("empty server command")?;
     let mut store = Store::open(None).context("opening recording store")?;
@@ -82,9 +301,12 @@ pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
         }
     };
     let (tx, rx) = mpsc::channel::<Event>();
-    let event_order = Arc::new(Mutex::new(()));
+    let events = Arc::new(Mutex::new(EventSender {
+        tx,
+        next_sequence: 0,
+    }));
 
-    let output_pump = match spawn_output_pump(child_stdout, tx.clone(), Arc::clone(&event_order)) {
+    let output_pump = match spawn_output_pump(child_stdout, Arc::clone(&events)) {
         Ok(handle) => handle,
         Err(error) => {
             return Err(cleanup_setup_failure(
@@ -93,73 +315,97 @@ pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
             ));
         }
     };
-    let input_pump = match spawn_input_pump(child_stdin, tx, Arc::clone(&event_order)) {
+    let input_pump = match spawn_input_pump(child_stdin, Arc::clone(&events)) {
         Ok(handle) => handle,
         Err(error) => {
+            let mut setup_error =
+                Some(anyhow::Error::from(error).context("spawning agent stdin pump"));
+            cancel_pump(&output_pump, "child stdout", &mut setup_error);
             let setup_error = cleanup_setup_failure(
                 &mut child,
-                anyhow::Error::from(error).context("spawning agent stdin pump"),
+                setup_error.expect("setup error must be retained"),
             );
-            let _ = output_pump.join();
-            return Err(setup_error);
+            let mut operation_error = Some(setup_error);
+            join_finished_pump(output_pump.thread, "child stdout", &mut operation_error);
+            return Err(operation_error.expect("setup failure must be retained"));
         }
     };
 
     let mut correlator = Correlator::new(server, session);
-    let mut input_finished = false;
     let mut output_finished = false;
     let mut child_status = None;
     let mut operation_error = None;
     let mut recording_error = None;
-    let mut kill_requested = false;
+    let mut input_cancelled = false;
+    let mut output_cancelled = false;
+    let mut frame_order = FrameOrder::default();
 
     loop {
         if child_status.is_none() {
-            child_status = match child.try_wait() {
-                Ok(status) => status,
+            match child.try_wait() {
+                Ok(status) => child_status = status,
                 Err(error) => {
-                    operation_error.get_or_insert_with(|| {
-                        anyhow::Error::from(error).context("checking child process status")
-                    });
-                    Some(
-                        terminate_and_reap(&mut child)
-                            .context("cleaning up after child status failure")?,
-                    )
+                    remember_operation_error(
+                        &mut operation_error,
+                        anyhow::Error::from(error).context("checking child process status"),
+                    );
                 }
-            };
+            }
+        }
+
+        if child_status.is_some() && !input_cancelled {
+            input_cancelled = true;
+            cancel_pump(&input_pump, "agent stdin", &mut operation_error);
         }
 
         if child_status.is_some() && output_finished {
-            let pending_events = {
-                let _guard = lock_event_order(&event_order);
-                rx.try_iter().collect::<Vec<_>>()
-            };
-            for event in pending_events {
-                if let Some(failure) = handle_event(
+            for event in rx.try_iter() {
+                if let Some(error) = handle_event(
                     event,
+                    &mut frame_order,
                     &mut correlator,
                     &mut store,
-                    &mut input_finished,
                     &mut output_finished,
                     &mut recording_error,
                 ) {
-                    remember_pump_failure(&mut operation_error, failure);
+                    remember_operation_error(&mut operation_error, error);
                 }
+            }
+            break;
+        }
+
+        if operation_error.is_some() {
+            if !input_cancelled {
+                input_cancelled = true;
+                cancel_pump(&input_pump, "agent stdin", &mut operation_error);
+            }
+            if !output_cancelled {
+                output_cancelled = true;
+                cancel_pump(&output_pump, "child stdout", &mut operation_error);
+            }
+            if child_status.is_none() {
+                let primary = operation_error
+                    .take()
+                    .expect("operation error was checked above");
+                let (status, error) =
+                    cleanup_after_error(&mut child, primary, "cleaning up after operation failure");
+                child_status = status;
+                operation_error = Some(error);
             }
             break;
         }
 
         match rx.recv_timeout(CHILD_POLL_INTERVAL) {
             Ok(event) => {
-                if let Some(failure) = handle_event(
+                if let Some(error) = handle_event(
                     event,
+                    &mut frame_order,
                     &mut correlator,
                     &mut store,
-                    &mut input_finished,
                     &mut output_finished,
                     &mut recording_error,
                 ) {
-                    remember_pump_failure(&mut operation_error, failure);
+                    remember_operation_error(&mut operation_error, error);
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -172,34 +418,16 @@ pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
                 }
             }
         }
-
-        if operation_error.is_some() && child_status.is_none() && !kill_requested {
-            match child.kill() {
-                Ok(()) => kill_requested = true,
-                Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
-                    kill_requested = true;
-                }
-                Err(error) => {
-                    operation_error = Some(anyhow!(
-                        "{}; also failed to terminate child: {error}",
-                        operation_error.as_ref().unwrap()
-                    ));
-                    kill_requested = true;
-                }
-            }
-        }
     }
 
-    join_finished_pump(output_pump, "child stdout", &mut operation_error);
-    if input_finished {
-        join_finished_pump(input_pump, "agent stdin", &mut operation_error);
-    } else {
-        // Process stdin cannot be cancelled portably. The child has exited, so
-        // returning is preferable to hanging while an agent keeps stdin open.
-        // The binary exits immediately with the child's status, which tears down
-        // this now-inert reader thread without changing proxied bytes.
-        drop(input_pump);
+    if !input_cancelled {
+        cancel_pump(&input_pump, "agent stdin", &mut operation_error);
     }
+    if operation_error.is_some() && !output_cancelled {
+        cancel_pump(&output_pump, "child stdout", &mut operation_error);
+    }
+    join_finished_pump(output_pump.thread, "child stdout", &mut operation_error);
+    join_finished_pump(input_pump.thread, "agent stdin", &mut operation_error);
 
     if let Some(error) = operation_error {
         return Err(error);
@@ -211,66 +439,85 @@ pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
     child_exit_code(child_status.context("child exited without a status")?)
 }
 
+#[cfg(unix)]
 fn spawn_input_pump(
     child_stdin: std::process::ChildStdin,
-    tx: Sender<Event>,
-    event_order: Arc<Mutex<()>>,
-) -> io::Result<JoinHandle<io::Result<()>>> {
-    spawn_pump(
-        Direction::Outbound,
-        tx.clone(),
-        event_order.clone(),
-        move || {
-            let stdin = io::stdin();
-            let mut source = BufReader::new(stdin.lock());
-            let mut destination = child_stdin;
+    events: Arc<Mutex<EventSender>>,
+) -> io::Result<PumpHandle> {
+    let (cancel, cancellation) = cancellation_pair()?;
+    let thread = spawn_pump(Direction::Outbound, events.clone(), move || {
+        let stdin = io::stdin();
+        let reader = CancellableReader::new(stdin.lock(), cancellation);
+        let mut source = BufReader::new(reader);
+        let mut destination = child_stdin;
 
-            while let Some(frame) = read_frame(&mut source)
-                .map_err(|error| contextual_io(error, "reading agent stdin"))?
-            {
-                let started = Instant::now();
-                let observed_ms = now_ms();
-                let _guard = lock_event_order(&event_order);
-                forward(&mut destination, &frame, "writing child stdin")?;
-                send_frame(&tx, Direction::Outbound, frame, observed_ms, started)?;
-            }
-            Ok(())
-        },
-    )
+        loop {
+            let frame = match read_frame(&mut source) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(_) if source.get_ref().is_cancelled() => break,
+                Err(error) => return Err(contextual_io(error, "reading agent stdin")),
+            };
+            let started = Instant::now();
+            let observed_ms = now_ms();
+            let Frame { raw, value } = frame;
+            let sequence = reserve_frame(
+                &events,
+                FrameMetadata {
+                    direction: Direction::Outbound,
+                    value,
+                    observed_ms,
+                },
+            )?;
+            forward(&mut destination, &raw, "writing child stdin")?;
+            complete_frame(&events, sequence, started)?;
+        }
+        Ok(())
+    })?;
+    Ok(PumpHandle { thread, cancel })
 }
 
+#[cfg(unix)]
 fn spawn_output_pump(
     child_stdout: std::process::ChildStdout,
-    tx: Sender<Event>,
-    event_order: Arc<Mutex<()>>,
-) -> io::Result<JoinHandle<io::Result<()>>> {
-    spawn_pump(
-        Direction::Inbound,
-        tx.clone(),
-        event_order.clone(),
-        move || {
-            let mut source = BufReader::new(child_stdout);
-            let stdout = io::stdout();
-            let mut destination = stdout.lock();
+    events: Arc<Mutex<EventSender>>,
+) -> io::Result<PumpHandle> {
+    let (cancel, cancellation) = cancellation_pair()?;
+    let thread = spawn_pump(Direction::Inbound, events.clone(), move || {
+        let reader = CancellableReader::new(child_stdout, cancellation);
+        let mut source = BufReader::new(reader);
+        let stdout = io::stdout();
+        let mut destination = stdout.lock();
 
-            while let Some(frame) = read_frame(&mut source)
-                .map_err(|error| contextual_io(error, "reading child stdout"))?
-            {
-                let started = Instant::now();
-                let observed_ms = now_ms();
-                forward(&mut destination, &frame, "writing agent stdout")?;
-                let _guard = lock_event_order(&event_order);
-                send_frame(&tx, Direction::Inbound, frame, observed_ms, started)?;
-            }
-            Ok(())
-        },
-    )
+        loop {
+            let frame = match read_frame(&mut source) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(_) if source.get_ref().is_cancelled() => break,
+                Err(error) => return Err(contextual_io(error, "reading child stdout")),
+            };
+            let started = Instant::now();
+            let observed_ms = now_ms();
+            let Frame { raw, value } = frame;
+            let sequence = reserve_frame(
+                &events,
+                FrameMetadata {
+                    direction: Direction::Inbound,
+                    value,
+                    observed_ms,
+                },
+            )?;
+            forward(&mut destination, &raw, "writing agent stdout")?;
+            complete_frame(&events, sequence, started)?;
+        }
+        Ok(())
+    })?;
+    Ok(PumpHandle { thread, cancel })
 }
 
 fn spawn_pump<F>(
     direction: Direction,
-    tx: Sender<Event>,
-    event_order: Arc<Mutex<()>>,
+    events: Arc<Mutex<EventSender>>,
     pump: F,
 ) -> io::Result<JoinHandle<io::Result<()>>>
 where
@@ -291,74 +538,66 @@ where
                 kind: error.kind(),
                 message: error.to_string(),
             });
-            let _guard = lock_event_order(&event_order);
-            let _ = tx.send(Event::Finished { direction, failure });
+            let _ = lock_events(&events).finished(direction, failure);
             result
         })
 }
 
-fn forward<W: Write>(destination: &mut W, frame: &Frame, context: &str) -> io::Result<()> {
+fn forward<W: Write>(destination: &mut W, raw: &[u8], context: &str) -> io::Result<()> {
     destination
-        .write_all(&frame.raw)
+        .write_all(raw)
         .map_err(|error| contextual_io(error, context))?;
     destination
         .flush()
         .map_err(|error| contextual_io(error, context))
 }
 
-fn send_frame(
-    tx: &Sender<Event>,
-    direction: Direction,
-    frame: Frame,
-    observed_ms: u64,
-    started: Instant,
-) -> io::Result<()> {
-    tx.send(Event::Frame {
-        direction,
-        value: frame.value,
-        observed_ms,
-        shim_self_us: started.elapsed().as_micros() as u64,
-    })
-    .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "recording event receiver closed"))
+fn reserve_frame(events: &Mutex<EventSender>, metadata: FrameMetadata) -> io::Result<u64> {
+    lock_events(events).reserve(metadata)
+}
+
+fn complete_frame(events: &Mutex<EventSender>, sequence: u64, started: Instant) -> io::Result<()> {
+    lock_events(events).forwarded(sequence, started.elapsed().as_micros() as u64)
 }
 
 fn handle_event(
     event: Event,
+    frame_order: &mut FrameOrder,
     correlator: &mut Correlator,
     store: &mut Store,
-    input_finished: &mut bool,
     output_finished: &mut bool,
     recording_error: &mut Option<anyhow::Error>,
-) -> Option<PumpFailure> {
-    match event {
-        Event::Frame {
-            direction,
-            value,
-            observed_ms,
+) -> Option<anyhow::Error> {
+    let event_error = match event {
+        Event::Reserved { sequence, metadata } => frame_order.reserve(sequence, metadata).err(),
+        Event::Forwarded {
+            sequence,
             shim_self_us,
-        } => {
-            let record = match (direction, value) {
-                (Direction::Outbound, Some(value)) => {
-                    correlator.on_outbound(&value, observed_ms);
-                    None
-                }
-                (Direction::Inbound, Some(value)) => correlator.on_inbound(&value, observed_ms),
-                (direction, None) => Some(correlator.on_unparsed(direction.label(), observed_ms)),
-            };
-            if let Some(mut record) = record {
-                record.shim_self_us = shim_self_us;
-                append_record(store, &record, recording_error);
-            }
-            None
-        }
+        } => frame_order.complete(sequence, shim_self_us).err(),
         Event::Finished { direction, failure } => {
-            match direction {
-                Direction::Outbound => *input_finished = true,
-                Direction::Inbound => *output_finished = true,
+            if direction == Direction::Inbound {
+                *output_finished = true;
             }
-            failure
+            failure.map(pump_failure_error)
+        }
+    };
+
+    for frame in frame_order.drain_ready() {
+        let record = match (frame.direction, frame.value) {
+            (Direction::Outbound, Some(value)) => {
+                correlator.on_outbound(&value, frame.observed_ms);
+                None
+            }
+            (Direction::Inbound, Some(value)) => correlator.on_inbound(&value, frame.observed_ms),
+            (direction, None) => Some(correlator.on_unparsed(direction.label(), frame.observed_ms)),
+        };
+        if let Some(mut record) = record {
+            record.shim_self_us = frame.shim_self_us;
+            append_record(store, &record, recording_error);
         }
     }
+
+    event_error
 }
 
 fn append_record(
@@ -373,14 +612,29 @@ fn append_record(
     }
 }
 
-fn remember_pump_failure(target: &mut Option<anyhow::Error>, failure: PumpFailure) {
-    if target.is_none() {
-        *target = Some(anyhow!(
-            "{} stdio pump failed ({:?}): {}",
-            failure.direction.label(),
-            failure.kind,
-            failure.message
-        ));
+fn remember_operation_error(target: &mut Option<anyhow::Error>, error: anyhow::Error) {
+    *target = Some(match target.take() {
+        Some(primary) => combine_errors(primary, "handling another operation failure", error),
+        None => error,
+    });
+}
+
+fn pump_failure_error(failure: PumpFailure) -> anyhow::Error {
+    anyhow!(
+        "{} stdio pump failed ({:?}): {}",
+        failure.direction.label(),
+        failure.kind,
+        failure.message
+    )
+}
+
+#[cfg(unix)]
+fn cancel_pump(pump: &PumpHandle, label: &str, operation_error: &mut Option<anyhow::Error>) {
+    if let Err(error) = pump.cancel.cancel() {
+        remember_operation_error(
+            operation_error,
+            anyhow::Error::from(error).context(format!("cancelling {label} pump")),
+        );
     }
 }
 
@@ -394,9 +648,10 @@ fn join_finished_pump(
         Err(_) => Err(anyhow!("{label} pump thread panicked while joining")),
     };
     if let Err(error) = result {
-        if operation_error.is_none() {
-            *operation_error = Some(error.context(format!("joining {label} pump")));
-        }
+        remember_operation_error(
+            operation_error,
+            error.context(format!("joining {label} pump")),
+        );
     }
 }
 
@@ -404,18 +659,73 @@ fn cleanup_setup_failure(child: &mut Child, setup_error: anyhow::Error) -> anyho
     match terminate_and_reap(child) {
         Ok(_) => setup_error,
         Err(cleanup_error) => {
-            anyhow!("{setup_error:#}; also failed to terminate and reap child: {cleanup_error:#}")
+            combine_errors(setup_error, "terminating and reaping child", cleanup_error)
         }
     }
 }
 
 fn terminate_and_reap(child: &mut Child) -> anyhow::Result<ExitStatus> {
-    match child.kill() {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::InvalidInput => {}
-        Err(error) => return Err(error).context("terminating child"),
+    terminate_and_reap_process(child)
+}
+
+trait ProcessControl {
+    type Status;
+
+    fn kill(&mut self) -> io::Result<()>;
+    fn wait(&mut self) -> io::Result<Self::Status>;
+}
+
+impl ProcessControl for Child {
+    type Status = ExitStatus;
+
+    fn kill(&mut self) -> io::Result<()> {
+        Child::kill(self)
     }
-    child.wait().context("reaping child")
+
+    fn wait(&mut self) -> io::Result<Self::Status> {
+        Child::wait(self)
+    }
+}
+
+fn terminate_and_reap_process<P: ProcessControl>(process: &mut P) -> anyhow::Result<P::Status> {
+    let kill_error = match process.kill() {
+        Ok(()) => None,
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => None,
+        Err(error) => Some(anyhow::Error::from(error).context("terminating child")),
+    };
+    let wait_result = process.wait().context("reaping child");
+
+    match (kill_error, wait_result) {
+        (None, result) => result,
+        (Some(error), Ok(_)) => Err(error),
+        (Some(kill_error), Err(wait_error)) => Err(combine_errors(
+            kill_error,
+            "reaping child after termination failure",
+            wait_error,
+        )),
+    }
+}
+
+fn cleanup_after_error<P: ProcessControl>(
+    process: &mut P,
+    primary: anyhow::Error,
+    cleanup_context: &str,
+) -> (Option<P::Status>, anyhow::Error) {
+    match terminate_and_reap_process(process) {
+        Ok(status) => (Some(status), primary),
+        Err(cleanup_error) => (
+            None,
+            combine_errors(primary, cleanup_context, cleanup_error),
+        ),
+    }
+}
+
+fn combine_errors(
+    primary: anyhow::Error,
+    secondary_context: &str,
+    secondary: anyhow::Error,
+) -> anyhow::Error {
+    anyhow!("{primary:#}; also failed while {secondary_context}: {secondary:#}")
 }
 
 fn child_exit_code(status: ExitStatus) -> anyhow::Result<i32> {
@@ -434,10 +744,14 @@ fn child_exit_code(status: ExitStatus) -> anyhow::Result<i32> {
     Err(anyhow!("child terminated without an exit code: {status}"))
 }
 
-fn lock_event_order(mutex: &Mutex<()>) -> MutexGuard<'_, ()> {
-    mutex
+fn lock_events(events: &Mutex<EventSender>) -> MutexGuard<'_, EventSender> {
+    events
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn event_receiver_closed() -> io::Error {
+    io::Error::new(io::ErrorKind::BrokenPipe, "recording event receiver closed")
 }
 
 fn contextual_io(error: io::Error, context: &str) -> io::Error {
@@ -450,3 +764,6 @@ fn now_ms() -> u64 {
         .map(|duration| duration.as_millis() as u64)
         .unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests;

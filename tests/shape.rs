@@ -60,6 +60,23 @@ fn urls_keep_only_the_domain() {
 }
 
 #[test]
+fn urls_keep_only_the_public_suffix_registrable_domain() {
+    let idx = EnumIndex::new();
+    let out = shape::of(
+        &json!({
+            "url": "https://CANARY.customer.example.co.uk/private?token=secret",
+            "privateSuffix": "https://CANARY.customer.github.io/private"
+        }),
+        "navigate",
+        &idx,
+    );
+    assert_eq!(out["url"], "url:example.co.uk");
+    assert_eq!(out["privateSuffix"], "url:customer.github.io");
+    let text = out.to_string();
+    assert!(!text.to_ascii_lowercase().contains("canary"));
+}
+
+#[test]
 fn uuids_are_labelled_not_stored() {
     let idx = EnumIndex::new();
     let out = shape::of(
@@ -116,14 +133,41 @@ fn uppercase_http_scheme_is_parsed() {
 }
 
 #[test]
-fn ipv6_url_uses_its_complete_host() {
+fn ip_urls_use_a_constant_without_persisting_the_literal() {
     let idx = EnumIndex::new();
     let out = shape::of(
-        &json!({ "url": "https://[2001:db8::1]/private" }),
+        &json!({
+            "ipv6": "https://[2001:db8::1]/private",
+            "ipv4": "http://192.0.2.44/private"
+        }),
         "navigate",
         &idx,
     );
-    assert_eq!(out["url"], "url:[2001:db8::1]");
+    assert_eq!(out["ipv6"], "url:ip");
+    assert_eq!(out["ipv4"], "url:ip");
+    let text = out.to_string();
+    assert!(!text.contains("2001:db8") && !text.contains("192.0.2.44"));
+}
+
+#[test]
+fn non_registrable_hosts_use_safe_constant_classifications() {
+    let idx = EnumIndex::new();
+    let out = shape::of(
+        &json!({
+            "localhost": "http://localhost/private",
+            "suffixless": "http://CANARY-internal/private",
+            "unknownSuffix": "https://CANARY.customer.internal/private",
+            "publicSuffix": "https://co.uk/private"
+        }),
+        "navigate",
+        &idx,
+    );
+    assert_eq!(out["localhost"], "url:localhost");
+    assert_eq!(out["suffixless"], "url:host");
+    assert_eq!(out["unknownSuffix"], "url:host");
+    assert_eq!(out["publicSuffix"], "url:public-suffix");
+    let text = out.to_string();
+    assert!(!text.to_ascii_lowercase().contains("canary"));
 }
 
 #[test]

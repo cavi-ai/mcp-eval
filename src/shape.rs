@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{json, Map, Value};
-use url::Url;
+use url::{Host, Url};
 
 type Path = Vec<PathSegment>;
 
@@ -184,6 +184,23 @@ fn registrable_domain(s: &str) -> Option<String> {
     if !matches!(url.scheme(), "http" | "https") {
         return None;
     }
-    let host = url.host_str()?;
-    Some(host.strip_prefix("www.").unwrap_or(host).to_string())
+    match url.host()? {
+        Host::Ipv4(_) | Host::Ipv6(_) => Some("ip".to_string()),
+        Host::Domain(host) if host.eq_ignore_ascii_case("localhost") => {
+            Some("localhost".to_string())
+        }
+        Host::Domain(host) => {
+            let Some(info) = psl2::analyze(host) else {
+                return Some("host".to_string());
+            };
+            if !info.is_known() {
+                return Some("host".to_string());
+            }
+            Some(
+                info.registrable_domain()
+                    .unwrap_or("public-suffix")
+                    .to_string(),
+            )
+        }
+    }
 }

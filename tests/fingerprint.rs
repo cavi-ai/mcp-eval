@@ -54,3 +54,56 @@ fn salt_persists_across_loads() {
         template_id(&second, "same message")
     );
 }
+
+#[test]
+fn salt_lives_outside_the_shareable_store_directory() {
+    let dir = std::env::temp_dir().join(format!("mcpeval-saltpath-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(dir.join("store")).unwrap();
+    Salt::load(&dir).unwrap();
+    assert!(dir.join(".salt").is_file(), "salt must live at <root>/.salt");
+    assert!(
+        !dir.join("salt").exists(),
+        "the old non-dotfile salt path must not be used"
+    );
+    assert!(
+        !dir.join("store").join("salt").exists(),
+        "the salt must never land inside the shareable store/ directory"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn concurrent_first_run_loads_all_agree_with_the_persisted_salt() {
+    use std::sync::{Arc, Barrier};
+
+    // Regression for the salt-creation TOCTOU: two shims started on first
+    // run must not each mint their own salt and silently disagree about
+    // which one is on disk. Every racer's returned salt must match what
+    // ultimately landed on disk.
+    let dir = std::env::temp_dir().join(format!("mcpeval-salt-race-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    const RACERS: usize = 16;
+    let barrier = Arc::new(Barrier::new(RACERS));
+
+    let handles: Vec<_> = (0..RACERS)
+        .map(|_| {
+            let dir = dir.clone();
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                Salt::load(&dir).unwrap()
+            })
+        })
+        .collect();
+    let salts: Vec<Salt> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+    let persisted = Salt::load(&dir).unwrap();
+    for salt in &salts {
+        assert_eq!(
+            template_id(salt, "message"),
+            template_id(&persisted, "message"),
+            "a racing first-run load returned a salt that disagrees with what is on disk"
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -12,7 +12,10 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Index => {
             let store = mcpeval::store::Store::open(None)?;
             let stats = mcpeval::index::build(store.root())?;
-            println!("indexed {} calls, {} failures", stats.calls, stats.failures);
+            println!(
+                "indexed {} calls, {} failures, {} annotations",
+                stats.calls, stats.failures, stats.annotations
+            );
             Ok(())
         }
         cli::Command::Annotate {
@@ -35,17 +38,31 @@ fn main() -> anyhow::Result<()> {
             store.append_annotation(&record)?;
             Ok(())
         }
-        cli::Command::Doctor { check_redaction } => {
-            if check_redaction {
-                let store = mcpeval::store::Store::open(None)?;
-                let report = mcpeval::doctor::check_redaction(store.root())?;
-                println!("scanned {} files", report.files);
-                for finding in &report.findings {
-                    println!("{finding}");
-                }
-                if !report.findings.is_empty() {
-                    std::process::exit(1);
-                }
+        // `--check-redaction` is the only check `doctor` runs today, so
+        // naming it, or naming nothing, both mean "run every check": it
+        // always runs. A mistyped or omitted flag must never read as a
+        // silent pass. When a second check is added, gate each one on its
+        // own flag being set OR no flag being named at all, so this
+        // "run everything by default" behavior survives.
+        cli::Command::Doctor { check_redaction: _ } => {
+            let store = mcpeval::store::Store::open(None)?;
+            let report = mcpeval::doctor::check_redaction(store.root())?;
+            println!("scanned {} files", report.files);
+            for finding in &report.findings {
+                println!("{finding}");
+            }
+            if report.notes_requiring_review > 0 {
+                println!(
+                    "{} annotation notes contain agent prose; review before sharing",
+                    report.notes_requiring_review
+                );
+            }
+            println!(
+                "do not share: {} (fingerprint salt)",
+                report.salt_path.display()
+            );
+            if !report.findings.is_empty() {
+                std::process::exit(1);
             }
             Ok(())
         }

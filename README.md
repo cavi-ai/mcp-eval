@@ -27,8 +27,9 @@ live verification.
 
 For completed JSON-RPC calls and inbound server notifications, the journal keeps
 timestamps, an opaque session token and sequence identifier, the validated server
-label and method, declared tool names, latency, outcome, shim overhead (including
-JSON parsing), and shaped `params.arguments`
+label and method, tool names that satisfy the tool-name grammar (see Privacy
+boundary — independent of whether `tools/list` ever declared them), latency,
+outcome, shim overhead (including JSON parsing), and shaped `params.arguments`
 when present. It does not persist raw response bodies.
 
 Every invalid or otherwise unparseable frame produces a content-free record with
@@ -46,18 +47,47 @@ Argument values are reduced as follows:
 - `ip`, `localhost`, or `host` instead of literal IP, localhost, or
   nonregistrable host values.
 
-Human error text is never retained: every error message becomes the constant
-`{message}`. Error codes may retain scalar numbers or booleans; string codes,
-layers, and kinds are reduced to length buckets.
+Human error text is never retained as text. Every error message is reduced to
+the constant `{message}`, plus `template_id` — a lowercase-hex fingerprint of
+the first 8 bytes of `SHA256(salt || 0x00 || skeleton(message))`, where
+`skeleton` collapses UUIDs, quoted runs, URLs, paths, and digits out of the
+message first. The message itself never enters the fingerprint's output or
+the store; `template_id` exists only so that two failures sharing the same
+underlying defect can be told apart from two unrelated ones, which a constant
+`{message}` alone cannot do. Error codes may retain scalar numbers or
+booleans, or a string that satisfies the identifier grammar (non-empty,
+ASCII, starts with a letter, at most 64 bytes); every other string code, and
+every string `layer` or `kind`, is reduced to a length bucket instead.
+
+An agent may also record an `annotation`: a short, typed observation (`kind` is
+one of a fixed set, e.g. `false-success`, `workaround`) tied to a `(session,
+seq)` call, plus `note` — a free-text field bounded to 240 characters and
+scrubbed of control characters. `note` is the one deliberate prose channel in
+the store; every other field described above is structured, content-free
+metadata. Annotations are written to `annotations-*.jsonl`, alongside the
+`calls-*.jsonl` journal.
 
 ## Privacy boundary
 
 Server names must be 1–128 character ASCII labels. Methods use a bounded
-slash-separated label grammar. Tool names are stored only after a valid
-`tools/list` response declares them; earlier or undeclared calls use `unlisted`.
-Argument keys, schema-declared enum values, numeric and boolean arguments, and
-registrable domains remain queryable. Server stderr is passed through unchanged
-to the client, not written to the journal. There is no verbose or raw-payload mode.
+slash-separated label grammar. A tool name is retained whenever it satisfies
+the bounded tool-name grammar (non-empty, at most 128 bytes, ASCII
+alphanumeric plus `_`, `-`, `.`, or `:`) — whether or not a `tools/list`
+response ever declared it, so servers that load schemas on demand still get a
+usable tool dimension. A call whose tool name is prose-shaped (spaces,
+slashes, and the like) uses `unlisted` instead. Argument keys, schema-declared
+enum values, numeric and boolean arguments, and registrable domains remain
+queryable. Server stderr is passed through unchanged to the client, not
+written to the journal. There is no verbose or raw-payload mode.
+
+The salt that makes `template_id` non-invertible is generated once and stored
+at `<MCPEVAL_HOME>/.salt` (mode 0600 on Unix) — a dotfile sibling of `store/`,
+deliberately outside it. **Only `<MCPEVAL_HOME>/store/` is safe to share** or
+attach to an issue; the salt must never accompany it. The skeleton space of
+MCP error messages is small and guessable, so salt plus journal would let
+someone recover which messages produced which fingerprint. `mcpeval doctor
+--check-redaction` prints the salt path on its own line as a must-not-share
+reminder every time it runs.
 
 See [the Phase 1 design](docs/design/2026-08-04-mcp-eval.md) for the complete
 data model and scope.

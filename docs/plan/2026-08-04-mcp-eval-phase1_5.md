@@ -28,7 +28,7 @@
 
 **Interfaces:**
 - Produces:
-  - `fingerprint::Salt` — opaque 32 bytes. `Salt::load(root: &Path) -> anyhow::Result<Salt>` reads `<root>/salt`, creating it with 32 bytes from two `uuid::Uuid::new_v4()` values if absent, written with mode 0600 on Unix. `Salt::for_tests() -> Salt` returns a fixed value.
+  - `fingerprint::Salt` — opaque 32 bytes. `Salt::load(root: &Path) -> anyhow::Result<Salt>` reads `<root>/salt`, creating it with 32 bytes from two `uuid::Uuid::new_v4()` values if absent, written with mode 0600 on Unix. `Salt::for_tests() -> Salt` returns a fixed value. (C1/D1 in the later fix-wave moved this to `<root>/.salt` — outside the shareable `store/` tree — and changed creation to a write-temp-then-hard-link sequence so concurrent first-run racers agree on one persisted salt.)
   - `fingerprint::template_id(salt: &Salt, message: &str) -> String` — lowercase hex of the first 8 bytes of `SHA256(salt_bytes || 0x00 || errtemplate::skeleton(message))`.
   - `errtemplate::skeleton(message: &str) -> String` — content-collapsing normalizer used only as fingerprint input, never stored.
   - `record::error_info(payload: &Value, salt: &Salt) -> ErrorInfo` — signature gains the salt.
@@ -390,12 +390,12 @@ git commit -m "Add annotation record type and CLI"
 
 **Interfaces:**
 - Produces:
-  - `doctor::check_redaction(root: &Path) -> anyhow::Result<doctor::Report>` with `Report { files: usize, findings: Vec<String> }`
+  - `doctor::check_redaction(root: &Path) -> anyhow::Result<doctor::Report>` with `Report { files: usize, findings: Vec<String>, notes_requiring_review: usize, salt_path: PathBuf }` (the latter two fields added in the fix-wave that closed C1 and I3)
   - CLI subcommand `Doctor { check_redaction: bool }`, invoked as `mcpeval doctor --check-redaction`, exiting non-zero when findings is non-empty
 
 Three independent corrections:
 
-1. **Tool names.** Today a tool name is kept only after a `tools/list` response declares it, so servers whose schemas load on demand record every call as `unlisted` and lose the tool dimension of the issue key. Keep the name whenever it satisfies the identifier grammar (`privacy::valid_tool`); fall back to `unlisted` only when it does not. Enum learning still requires a declared schema — that is unchanged.
+1. **Tool names.** Today a tool name is kept only after a `tools/list` response declares it, so servers whose schemas load on demand record every call as `unlisted` and lose the tool dimension of the issue key. Keep the name whenever it satisfies the tool-name grammar (`privacy::valid_tool`: non-empty, ASCII alphanumeric plus `_`, `-`, `.`, or `:`, at most 128 bytes, no leading-letter rule — a different, wider grammar than the identifier grammar defined in Global Constraints, which is 64 bytes and requires a leading letter); fall back to `unlisted` only when it does not. Enum learning still requires a declared schema — that is unchanged.
 2. **Ordering.** `index::build` sorts by session alone and relies on read order for sequence. Sort by `(session, seq)` so windows follow logical order even when two processes share a session id.
 3. **Redaction check.** Make the manual grep in `docs/install.md` a command, and add a property test that plants high-entropy canaries at random depths in generated argument trees.
 

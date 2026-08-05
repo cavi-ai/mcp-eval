@@ -435,6 +435,28 @@ fn same_tool_and_fingerprint_collapse_to_one_issue() {
 }
 
 #[test]
+fn windows_follow_sequence_not_file_order() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    // Append out of sequence order on purpose.
+    for seq in [3u64, 1, 2] {
+        let outcome = if seq == 3 { "error" } else { "ok" };
+        store.append(&rec(seq, outcome)).unwrap();
+    }
+
+    index::build(&dir).unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let neighbours: Vec<i64> = db
+        .prepare("SELECT c.seq FROM windows w JOIN calls c ON c.id = w.neighbour_id ORDER BY w.offset")
+        .unwrap()
+        .query_map([], |r| r.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(neighbours, vec![1, 2], "the failure at seq 3 follows seqs 1 and 2");
+}
+
+#[test]
 fn windows_never_cross_session_boundaries() {
     let dir = tempdir();
     let mut store = Store::open(Some(dir.clone())).unwrap();

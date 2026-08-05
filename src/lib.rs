@@ -1,4 +1,5 @@
 pub mod correlate;
+pub mod doctor;
 pub mod errtemplate;
 pub mod fingerprint;
 pub mod frame;

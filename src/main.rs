@@ -35,5 +35,19 @@ fn main() -> anyhow::Result<()> {
             store.append_annotation(&record)?;
             Ok(())
         }
+        cli::Command::Doctor { check_redaction } => {
+            if check_redaction {
+                let store = mcpeval::store::Store::open(None)?;
+                let report = mcpeval::doctor::check_redaction(store.root())?;
+                println!("scanned {} files", report.files);
+                for finding in &report.findings {
+                    println!("{finding}");
+                }
+                if !report.findings.is_empty() {
+                    std::process::exit(1);
+                }
+            }
+            Ok(())
+        }
     }
 }

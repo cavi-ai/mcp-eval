@@ -18,7 +18,9 @@ fn matches_a_response_to_its_request_and_measures_latency() {
         .expect("a matched response emits a record");
 
     assert_eq!(rec.method, "tools/call");
-    assert_eq!(rec.tool.as_deref(), Some("unlisted"));
+    // "click" satisfies the identifier grammar, so it is kept even though
+    // no tools/list ever declared it (Task 3: gate is grammar, not declaration).
+    assert_eq!(rec.tool.as_deref(), Some("click"));
     assert_eq!(rec.latency_ms, Some(250));
     assert_eq!(rec.outcome, "ok");
     assert_eq!(rec.args.unwrap()["note"], "str<8");
@@ -218,6 +220,34 @@ fn numeric_and_string_ids_do_not_collide() {
         .unwrap();
     assert_eq!(numeric_response.method, "numeric");
     assert_eq!(numeric_response.latency_ms, Some(30));
+}
+
+#[test]
+fn an_undeclared_but_identifier_shaped_tool_name_is_kept() {
+    let mut c = Correlator::new("demo".into(), "sess".into(), mcpeval::fingerprint::Salt::for_tests());
+    c.on_outbound(
+        &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                             "params": { "name": "never_listed_tool", "arguments": {} } }),
+        0,
+    );
+    let rec = c
+        .on_inbound(&serde_json::json!({ "jsonrpc": "2.0", "id": 1, "result": {} }), 1)
+        .unwrap();
+    assert_eq!(rec.tool.as_deref(), Some("never_listed_tool"));
+}
+
+#[test]
+fn a_prose_shaped_tool_name_becomes_unlisted() {
+    let mut c = Correlator::new("demo".into(), "sess".into(), mcpeval::fingerprint::Salt::for_tests());
+    c.on_outbound(
+        &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                             "params": { "name": "upload /Users/someone/private.pdf", "arguments": {} } }),
+        0,
+    );
+    let rec = c
+        .on_inbound(&serde_json::json!({ "jsonrpc": "2.0", "id": 1, "result": {} }), 1)
+        .unwrap();
+    assert_eq!(rec.tool.as_deref(), Some("unlisted"));
 }
 
 #[test]

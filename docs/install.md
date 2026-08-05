@@ -81,11 +81,15 @@ hosts, `localhost`, and nonregistrable hosts become the constants `ip`,
 tool's own input schema declared the value as an enum.
 
 Server names must be bounded ASCII labels and methods must use bounded
-slash-separated labels. Tool names remain queryable only after `tools/list`
-declares them; pre-discovery or undeclared calls use `unlisted`. The store
-revalidates these fields before serialization. Argument keys, schema-declared
-enum values, numeric and boolean arguments, and registrable domains remain
-queryable. There is no verbose or raw-payload mode.
+slash-separated labels. A tool name remains queryable whenever it satisfies
+the same bounded-identifier grammar, whether or not `tools/list` ever declared
+it — servers that load schemas on demand still get a usable tool dimension;
+a call whose tool name is prose (spaces, slashes, and the like) uses
+`unlisted` instead. Enum learning still requires a declared schema: only a
+value a tool's own `tools/list` schema named as an enum member is kept
+verbatim. The store revalidates these fields before serialization. Argument
+keys, schema-declared enum values, numeric and boolean arguments, and
+registrable domains remain queryable. There is no verbose or raw-payload mode.
 
 ## Verify a live capture
 
@@ -109,22 +113,14 @@ queryable. There is no verbose or raw-payload mode.
 5. Scan the JSONL journal for common secret-bearing forms:
 
    ```sh
-   grep -Erni '@|/Users/|token=' "$MCPEVAL_HOME"/store/*.jsonl
+   mcpeval doctor --check-redaction
    ```
 
-   Expected: no output and exit status 1. Any match is a redaction bug; stop
-   capturing and inspect the journal before proceeding. This is a minimum smoke
-   scan, not proof that arbitrary metadata is non-sensitive.
-
-PowerShell users can perform the same scan with:
-
-```powershell
-$leaks = Get-ChildItem "$env:MCPEVAL_HOME\store\*.jsonl" |
-  Select-String -Pattern '@', '/Users/', 'token=' -CaseSensitive:$false
-$leaks.Count
-```
-
-Expected: `0`.
+   Expected: exit status 0, with the scanned file count and no findings
+   printed. Any finding names a file and line number — never the matched
+   text — and is a redaction bug; stop capturing and inspect that line
+   before proceeding. This is a minimum smoke scan, not proof that arbitrary
+   metadata is non-sensitive.
 
 ## Bobby Browser live validation — 2026-08-04
 

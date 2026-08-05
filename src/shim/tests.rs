@@ -304,7 +304,9 @@ fn shutdown_drains_completion_emitted_while_input_pump_is_joined() {
     let body = std::fs::read_to_string(path).unwrap();
     let record: serde_json::Value = serde_json::from_str(body.trim_end()).unwrap();
     assert_eq!(record["method"], "tools/call");
-    assert_eq!(record["tool"], "unlisted");
+    // "late" satisfies the identifier grammar, so it is kept even though no
+    // tools/list ever declared it (Task 3: gate is grammar, not declaration).
+    assert_eq!(record["tool"], "late");
     assert_eq!(record["outcome"], "ok");
 
     std::fs::remove_dir_all(root).unwrap();

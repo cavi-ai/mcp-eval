@@ -358,6 +358,7 @@ fn distinct_error_fingerprints_stay_distinct_rows() {
     let mut store = Store::open(Some(dir.clone())).unwrap();
 
     let mut first = rec(1, "error");
+    first.tool = Some("click".into());
     first.error = Some(mcpeval::record::ErrorInfo {
         code: Some(serde_json::json!("browserCommandFailed")),
         layer: None,
@@ -367,6 +368,7 @@ fn distinct_error_fingerprints_stay_distinct_rows() {
         template_id: Some("aaaaaaaaaaaaaaaa".into()),
     });
     let mut second = rec(2, "error");
+    second.tool = Some("click".into());
     second.error = Some(mcpeval::record::ErrorInfo {
         code: Some(serde_json::json!("browserCommandFailed")),
         layer: None,
@@ -388,6 +390,48 @@ fn distinct_error_fingerprints_stay_distinct_rows() {
         )
         .unwrap();
     assert_eq!(distinct, 2, "two causes must not collapse into one issue");
+}
+
+#[test]
+fn same_tool_and_fingerprint_collapse_to_one_issue() {
+    // Same server, tool, code, and fingerprint: this is the same issue twice,
+    // and must count as a single distinct row.
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+
+    let mut first = rec(1, "error");
+    first.tool = Some("click".into());
+    first.error = Some(mcpeval::record::ErrorInfo {
+        code: Some(serde_json::json!("browserCommandFailed")),
+        layer: None,
+        retryable: Some(false),
+        kind: None,
+        template: Some("{message}".into()),
+        template_id: Some("aaaaaaaaaaaaaaaa".into()),
+    });
+    let mut second = rec(2, "error");
+    second.tool = Some("click".into());
+    second.error = Some(mcpeval::record::ErrorInfo {
+        code: Some(serde_json::json!("browserCommandFailed")),
+        layer: None,
+        retryable: Some(false),
+        kind: None,
+        template: Some("{message}".into()),
+        template_id: Some("aaaaaaaaaaaaaaaa".into()),
+    });
+    store.append(&first).unwrap();
+    store.append(&second).unwrap();
+
+    index::build(&dir).unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let distinct: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT server, tool, err_code, err_template_id FROM calls WHERE outcome = 'error')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(distinct, 1, "the same cause twice must collapse into one issue");
 }
 
 #[test]

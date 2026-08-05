@@ -51,7 +51,7 @@ impl Correlator {
         let params = v.get("params");
         let requested_tool = params.and_then(|p| p.get("name")).and_then(Value::as_str);
         let tool = requested_tool.map(|name| {
-            if self.declared_tools.contains(name) {
+            if privacy::valid_tool(name) {
                 name.to_string()
             } else {
                 "unlisted".into()

@@ -41,4 +41,11 @@ pub enum Command {
         #[arg(long)]
         note: String,
     },
+    /// Run store-hygiene checks against the capture root.
+    Doctor {
+        /// Scan every `*.jsonl` under the store for text that looks
+        /// unredacted and exit non-zero if any is found.
+        #[arg(long)]
+        check_redaction: bool,
+    },
 }

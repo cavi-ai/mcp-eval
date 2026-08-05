@@ -37,7 +37,14 @@ CREATE INDEX IF NOT EXISTS annotations_call ON annotations (session, seq);
 
 pub fn build(root: &Path) -> anyhow::Result<Stats> {
     let mut records = load_records(root)?;
-    records.sort_by(|left, right| left.session.cmp(&right.session));
+    // Sort by (session, seq): session alone leaves ties to fall back on file
+    // read order, which is wrong when two processes share a session id and
+    // their records interleave across files or within one.
+    records.sort_by(|left, right| {
+        left.session
+            .cmp(&right.session)
+            .then(left.seq.cmp(&right.seq))
+    });
 
     let failures = records
         .iter()

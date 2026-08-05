@@ -1,4 +1,4 @@
-use mcpeval::privacy::valid_identifier;
+use mcpeval::privacy::{valid_identifier, valid_tool};
 
 #[test]
 fn empty_string_is_rejected() {
@@ -27,4 +27,35 @@ fn sixty_five_bytes_is_rejected() {
 #[test]
 fn a_space_is_rejected() {
     assert!(!valid_identifier("browser command failed"));
+}
+
+// `valid_tool` is the actual gate `correlate::Correlator` uses (and
+// `Store::append` re-validates with), not `valid_identifier` — see I6 in
+// the final-review-findings fix wave. It is a different, wider grammar:
+// non-empty, at most 128 bytes, ASCII alphanumeric plus `_`, `-`, `.`, `:`,
+// with no leading-letter requirement.
+
+#[test]
+fn valid_tool_accepts_128_bytes() {
+    let value = "a".repeat(128);
+    assert_eq!(value.len(), 128);
+    assert!(valid_tool(&value));
+}
+
+#[test]
+fn valid_tool_rejects_129_bytes() {
+    let value = "a".repeat(129);
+    assert_eq!(value.len(), 129);
+    assert!(!valid_tool(&value));
+}
+
+#[test]
+fn valid_tool_accepts_a_leading_digit() {
+    // Unlike `valid_identifier`, `valid_tool` has no leading-letter rule.
+    assert!(valid_tool("1browserCommandFailed"));
+}
+
+#[test]
+fn valid_tool_rejects_punctuation_outside_its_grammar() {
+    assert!(!valid_tool("!!!"));
 }

@@ -72,8 +72,17 @@ inbound server notifications, its journal keeps metadata and shaped
 Every invalid or otherwise unparseable frame produces a content-free record with
 only `ts`, `session`, `seq`, `server`, an `unparsed/{direction}` method, the
 `unparsed` outcome, `shim_self_us`, and `kind`. The direction is `outbound` or
-`inbound`; the frame's raw bytes are forwarded unchanged but never stored. Human
-error messages always become the constant `{message}`.
+`inbound`; the frame's raw bytes are forwarded unchanged but never stored.
+
+Human error messages are never stored as text. Every error becomes the
+constant `{message}`, plus `template_id` — a salted, non-invertible
+fingerprint of the message with UUIDs, quoted runs, URLs, paths, and digits
+collapsed out first, used only to tell whether two failures share the same
+underlying defect; a constant `{message}` alone cannot do that, since it
+collapses every distinct defect into one bucket. String error codes, layers,
+and kinds become length buckets, except a string code shaped like an
+identifier — non-empty, ASCII, starting with a letter, at most 64 bytes —
+which is kept verbatim instead. Scalar numeric and boolean codes may remain.
 
 HTTP(S) URLs retain only the true public-suffix registrable domain. Literal IP
 hosts, `localhost`, and nonregistrable hosts become the constants `ip`,
@@ -82,14 +91,37 @@ tool's own input schema declared the value as an enum.
 
 Server names must be bounded ASCII labels and methods must use bounded
 slash-separated labels. A tool name remains queryable whenever it satisfies
-the same bounded-identifier grammar, whether or not `tools/list` ever declared
-it — servers that load schemas on demand still get a usable tool dimension;
-a call whose tool name is prose (spaces, slashes, and the like) uses
-`unlisted` instead. Enum learning still requires a declared schema: only a
-value a tool's own `tools/list` schema named as an enum member is kept
-verbatim. The store revalidates these fields before serialization. Argument
-keys, schema-declared enum values, numeric and boolean arguments, and
-registrable domains remain queryable. There is no verbose or raw-payload mode.
+the tool-name grammar — non-empty, ASCII alphanumeric plus `_`, `-`, `.`, or
+`:`, at most 128 bytes, with no leading-letter rule — whether or not
+`tools/list` ever declared it. This is a different, wider grammar than the
+64-byte identifier grammar error codes use above; servers that load schemas
+on demand still get a usable tool dimension either way. A call whose tool
+name doesn't fit it (prose: spaces, slashes, and the like) uses `unlisted`
+instead. Enum learning still requires a declared schema: only a value a
+tool's own `tools/list` schema named as an enum member is kept verbatim. The
+store revalidates these fields before serialization. Argument keys,
+schema-declared enum values, numeric and boolean arguments, and registrable
+domains remain queryable. There is no verbose or raw-payload mode.
+
+An agent may also record an `annotation`: a short, typed observation (`kind`
+is one of a fixed set, e.g. `false-success`, `workaround`) tied to a
+`(session, seq)` call, plus `note` — a free-text field bounded to 240
+characters and scrubbed of control characters. `note` is the one deliberate
+prose channel in the store, written to `annotations-*.jsonl` alongside the
+`calls-*.jsonl` journal; every other field described above is structured,
+content-free metadata.
+
+## Where the fingerprint salt lives
+
+`template_id` is non-invertible only while its salt stays secret: the
+skeleton space of MCP error messages is small and guessable, so salt plus
+journal would let someone recover which messages produced which fingerprint.
+The salt is generated once and stored at `<MCPEVAL_HOME>/.salt` (mode 0600 on
+Unix) — a dotfile sibling of `store/`, deliberately outside it.
+
+**Only `<MCPEVAL_HOME>/store/` is safe to share.** Never copy, tar, or attach
+`.salt` alongside it. `mcpeval doctor --check-redaction` prints the salt path
+on its own line as a must-not-share reminder every time it runs.
 
 ## Verify a live capture
 
@@ -116,11 +148,17 @@ registrable domains remain queryable. There is no verbose or raw-payload mode.
    mcpeval doctor --check-redaction
    ```
 
-   Expected: exit status 0, with the scanned file count and no findings
-   printed. Any finding names a file and line number — never the matched
-   text — and is a redaction bug; stop capturing and inspect that line
-   before proceeding. This is a minimum smoke scan, not proof that arbitrary
-   metadata is non-sensitive.
+   Expected: exit status 0, with the scanned file count, no findings, and a
+   line naming the salt path as a must-not-share item. Any finding names a
+   file and line number — never the matched text — and is a redaction bug;
+   stop capturing and inspect that line before proceeding.
+
+   Exit 0 is an automatic guarantee for `calls-*.jsonl` only. `note` in
+   `annotations-*.jsonl` is deliberately exempt from every detector — it is
+   free-form prose by design — so `doctor` separately prints how many notes
+   are present (without failing the check) and asks for a human pass over
+   them before that file is shared. This is a minimum smoke scan, not proof
+   that arbitrary metadata is non-sensitive.
 
 ## Bobby Browser live validation — 2026-08-04
 

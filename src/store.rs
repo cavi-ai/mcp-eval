@@ -4,7 +4,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 
-use crate::privacy;
 use crate::record::{AnnotationRecord, CallRecord};
 
 pub struct Store {
@@ -30,7 +29,8 @@ impl Store {
     }
 
     pub fn append(&mut self, rec: &CallRecord) -> anyhow::Result<()> {
-        let day = rec.ts.get(..10).unwrap_or("unknown");
+        let safe = rec.sanitized();
+        let day = safe.ts.get(..10).unwrap_or("unknown");
         let path = self.root.join("store").join(format!("calls-{day}.jsonl"));
         let mut file = OpenOptions::new()
             .create(true)
@@ -40,21 +40,6 @@ impl Store {
             .with_context(|| format!("opening {}", path.display()))?;
         file.lock()
             .with_context(|| format!("locking {}", path.display()))?;
-        let mut safe = rec.clone();
-        safe.session = privacy::opaque_session(&safe.session);
-        if !privacy::valid_server(&safe.server) {
-            safe.server = "invalid".into();
-        }
-        if !privacy::valid_method(&safe.method) {
-            safe.method = "unparsed/metadata".into();
-        }
-        if safe
-            .tool
-            .as_deref()
-            .is_some_and(|tool| !privacy::valid_tool(tool))
-        {
-            safe.tool = None;
-        }
         let mut line = serde_json::to_string(&safe)?;
         line.push('\n');
         file.write_all(line.as_bytes())?;
@@ -84,7 +69,7 @@ impl Store {
         file.lock()
             .with_context(|| format!("locking {}", path.display()))?;
         let mut safe = rec.clone();
-        safe.session = privacy::opaque_session(&safe.session);
+        safe.session = crate::privacy::opaque_session(&safe.session);
         if !crate::record::ANNOTATION_KINDS.contains(&safe.kind.as_str()) {
             safe.kind = "invalid".into();
         }

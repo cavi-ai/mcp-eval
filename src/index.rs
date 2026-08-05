@@ -179,7 +179,10 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
 }
 
 fn load_records(root: &Path) -> anyhow::Result<Vec<CallRecord>> {
-    load_jsonl(root, "calls-")
+    Ok(load_jsonl(root, "calls-")?
+        .into_iter()
+        .map(|record: CallRecord| record.sanitized())
+        .collect())
 }
 
 fn load_annotations(root: &Path) -> anyhow::Result<Vec<AnnotationRecord>> {

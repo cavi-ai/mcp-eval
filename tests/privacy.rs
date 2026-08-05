@@ -1,4 +1,9 @@
-use mcpeval::privacy::{valid_identifier, valid_tool};
+use mcpeval::privacy::{valid_identifier, valid_server, valid_tool};
+
+#[test]
+fn server_labels_reject_embedded_nul_delimiters() {
+    assert!(!valid_server("alpha\0beta"));
+}
 
 #[test]
 fn empty_string_is_rejected() {

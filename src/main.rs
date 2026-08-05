@@ -18,6 +18,29 @@ fn main() -> anyhow::Result<()> {
             );
             Ok(())
         }
+        cli::Command::Promote { threshold } => {
+            let store = mcpeval::store::Store::open(None)?;
+            let threshold = mcpeval::promote::resolve_threshold(store.root(), threshold)?;
+            let stats = mcpeval::promote::promote(
+                store.root(),
+                mcpeval::promote::PromotionConfig {
+                    threshold,
+                    now: chrono::Utc::now(),
+                },
+            )?;
+            println!("promoted {} of {} issues", stats.findings, stats.issues);
+            Ok(())
+        }
+        cli::Command::Findings { format } => {
+            let store = mcpeval::store::Store::open(None)?;
+            let format = match format {
+                cli::FindingsFormat::Agent => mcpeval::report::ReportFormat::Agent,
+                cli::FindingsFormat::Md => mcpeval::report::ReportFormat::Md,
+                cli::FindingsFormat::Json => mcpeval::report::ReportFormat::Json,
+            };
+            print!("{}", mcpeval::report::render(store.root(), format)?);
+            Ok(())
+        }
         cli::Command::Annotate {
             session,
             seq,

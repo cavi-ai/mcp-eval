@@ -22,6 +22,8 @@ pub struct Stats {
 /// because it holds a `REFERENCES calls(id)` foreign key and `foreign_keys`
 /// is on for this connection.
 const DROP_SCHEMA: &str = "
+DROP TABLE IF EXISTS findings;
+DROP TABLE IF EXISTS issues;
 DROP INDEX IF EXISTS calls_issue;
 DROP INDEX IF EXISTS annotations_call;
 DROP TABLE IF EXISTS windows;

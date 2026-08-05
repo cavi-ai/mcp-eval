@@ -3,8 +3,8 @@
 `mcp-eval` captures what MCP servers cost agents and turns repeated friction into
 queryable evidence a development agent can act on.
 
-Phase 1 ships the capture path: a privacy-bounded, redacting stdio shim and a
-SQLite index over its JSONL journal.
+Phase 2 adds issue aggregation, Wilson-bounded promotion, seed-calibrated
+thresholds, and privacy-safe findings reports to the capture path.
 
 ## Quick start
 
@@ -12,6 +12,8 @@ SQLite index over its JSONL journal.
 cargo build --release
 ./target/release/mcpeval shim --server demo -- your-mcp-server --flags
 ./target/release/mcpeval index
+./target/release/mcpeval promote
+./target/release/mcpeval findings --format agent
 ```
 
 Set `MCPEVAL_HOME` to choose the capture root. If it is unset, `mcp-eval` uses
@@ -22,6 +24,23 @@ a generated UUID for that process.
 The stdio shim targets Unix and Windows and expects newline-delimited JSON-RPC.
 See [the installation guide](docs/install.md) for MCP client configuration and
 live verification.
+
+Promotion groups failures by server, tool, error code, and salted template
+identifier. Its score combines the 95% Wilson lower bound of the observed rate,
+fourteen-day recency decay, median failure-window turns, and distinct-tool blast
+radius. An issue never becomes a finding until it appears in two distinct
+sessions, even with a zero threshold.
+
+The default threshold is calibrated from the checked-in synthetic seed corpus.
+Set `promotion_threshold` in `<MCPEVAL_HOME>/config.json` to configure it, or use
+`mcpeval promote --threshold <number>` for a one-run override. The CLI override
+takes precedence. Thresholds must be finite and non-negative.
+
+`mcpeval findings --format agent|md|json` reports only sanitized identifiers,
+aggregate metrics, and already-shaped arguments. It never emits raw error
+templates, annotation notes, session identifiers, the fingerprint salt, or raw
+argument values. Run `mcpeval index` again after new capture data, then rerun
+`mcpeval promote` before reading refreshed findings.
 
 ## What is recorded
 
@@ -89,5 +108,6 @@ someone recover which messages produced which fingerprint. `mcpeval doctor
 --check-redaction` prints the salt path on its own line as a must-not-share
 reminder every time it runs.
 
-See [the Phase 1 design](docs/design/2026-08-04-mcp-eval.md) for the complete
+See [the original design](docs/design/2026-08-04-mcp-eval.md) and the
+[Phase 2 design](docs/design/2026-08-05-mcp-eval-phase2.md) for the complete
 data model and scope.

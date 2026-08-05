@@ -65,6 +65,50 @@ fn rejects_an_overlong_or_multiline_note() {
 }
 
 #[test]
+fn store_coerces_an_unvalidated_unknown_kind_to_a_sentinel() {
+    use mcpeval::record::AnnotationRecord;
+    use mcpeval::store::Store;
+
+    // `Store::append` re-validates `server`, `method`, and `tool` at the
+    // store layer precisely because upstream validation is not trusted.
+    // `kind` is the one field on `AnnotationRecord` that is not free-form by
+    // design, so a direct `append_annotation` call that skips
+    // `AnnotationRecord::validate` (as the CLI path always calls it first)
+    // must not persist an unrecognized kind verbatim.
+    let home = tempdir();
+    let mut store = Store::open(Some(home.clone())).unwrap();
+    store
+        .append_annotation(&AnnotationRecord {
+            ts: "2026-08-04T12:00:00Z".into(),
+            session: "s1".into(),
+            seq: 1,
+            kind: "not-a-real-kind".into(),
+            note: "n".into(),
+        })
+        .unwrap();
+
+    let mut found = None;
+    for entry in std::fs::read_dir(home.join("store")).unwrap() {
+        let path = entry.unwrap().path();
+        if path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("annotations-")
+        {
+            found = Some(std::fs::read_to_string(path).unwrap());
+        }
+    }
+    let body = found.expect("an annotations file must exist");
+    let value: serde_json::Value = serde_json::from_str(body.lines().next().unwrap()).unwrap();
+    assert_eq!(
+        value["kind"], "invalid",
+        "an unrecognized kind must be coerced to a sentinel, not stored verbatim"
+    );
+}
+
+#[test]
 fn index_loads_annotations_and_links_them_to_calls() {
     use mcpeval::record::{AnnotationRecord, CallRecord};
     use mcpeval::store::Store;

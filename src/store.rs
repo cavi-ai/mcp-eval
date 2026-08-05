@@ -64,7 +64,11 @@ impl Store {
     }
 
     /// Mirrors `append`: same directory, same file locking, session hashed
-    /// through `privacy::opaque_session`, one JSON line per call.
+    /// through `privacy::opaque_session`, one JSON line per call. `kind` is
+    /// re-validated here too — the CLI path calls `AnnotationRecord::validate`
+    /// first, but this is the same defense-in-depth layer `append` applies
+    /// to `server`/`method`/`tool`, for callers that reach the store
+    /// directly without validating first.
     pub fn append_annotation(&mut self, rec: &AnnotationRecord) -> anyhow::Result<()> {
         let day = rec.ts.get(..10).unwrap_or("unknown");
         let path = self
@@ -81,6 +85,9 @@ impl Store {
             .with_context(|| format!("locking {}", path.display()))?;
         let mut safe = rec.clone();
         safe.session = privacy::opaque_session(&safe.session);
+        if !crate::record::ANNOTATION_KINDS.contains(&safe.kind.as_str()) {
+            safe.kind = "invalid".into();
+        }
         let mut line = serde_json::to_string(&safe)?;
         line.push('\n');
         file.write_all(line.as_bytes())?;

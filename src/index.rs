@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 use rusqlite::{params, Connection};
 
-use crate::record::CallRecord;
+use crate::record::{AnnotationRecord, CallRecord};
 
 #[derive(Debug, Eq, PartialEq)]
 pub struct Stats {
@@ -28,6 +28,11 @@ CREATE TABLE IF NOT EXISTS windows (
   PRIMARY KEY (failure_id, neighbour_id)
 );
 CREATE INDEX IF NOT EXISTS calls_issue ON calls (server, tool, err_code, err_template_id);
+CREATE TABLE IF NOT EXISTS annotations (
+  session TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT NOT NULL,
+  kind TEXT NOT NULL, note TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS annotations_call ON annotations (session, seq);
 ";
 
 pub fn build(root: &Path) -> anyhow::Result<Stats> {
@@ -44,6 +49,7 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
     transaction.execute_batch(SCHEMA)?;
     transaction.execute("DELETE FROM windows", [])?;
     transaction.execute("DELETE FROM calls", [])?;
+    transaction.execute("DELETE FROM annotations", [])?;
 
     let mut ids = Vec::with_capacity(records.len());
     for record in &records {
@@ -116,6 +122,20 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
         }
     }
 
+    let annotations = load_annotations(root)?;
+    for annotation in &annotations {
+        transaction.execute(
+            "INSERT INTO annotations (session, seq, ts, kind, note) VALUES (?1,?2,?3,?4,?5)",
+            params![
+                annotation.session,
+                annotation.seq,
+                annotation.ts,
+                annotation.kind,
+                annotation.note,
+            ],
+        )?;
+    }
+
     transaction.commit().context("committing index rebuild")?;
     Ok(Stats {
         calls: records.len(),
@@ -124,11 +144,23 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
 }
 
 fn load_records(root: &Path) -> anyhow::Result<Vec<CallRecord>> {
+    load_jsonl(root, "calls-")
+}
+
+fn load_annotations(root: &Path) -> anyhow::Result<Vec<AnnotationRecord>> {
+    load_jsonl(root, "annotations-")
+}
+
+/// Loads every `<prefix>*.jsonl` file in `<root>/store`, in deterministic
+/// name order. Tolerates an unterminated trailing line from an active
+/// writer, but a malformed *complete* line is a hard error — the caller
+/// rolls back rather than indexing a partial, silently-wrong picture.
+fn load_jsonl<T: serde::de::DeserializeOwned>(root: &Path, prefix: &str) -> anyhow::Result<Vec<T>> {
     let store_dir = root.join("store");
     let mut paths = std::fs::read_dir(&store_dir)
         .with_context(|| format!("reading {}", store_dir.display()))?
         .filter_map(|entry| match entry {
-            Ok(entry) => match is_call_file(&entry) {
+            Ok(entry) => match is_prefixed_jsonl_file(&entry, prefix) {
                 Ok(true) => Some(Ok(entry.path())),
                 Ok(false) => None,
                 Err(error) => Some(Err(error)),
@@ -166,7 +198,7 @@ fn load_records(root: &Path) -> anyhow::Result<Vec<CallRecord>> {
     Ok(records)
 }
 
-fn is_call_file(entry: &DirEntry) -> anyhow::Result<bool> {
+fn is_prefixed_jsonl_file(entry: &DirEntry, prefix: &str) -> anyhow::Result<bool> {
     if !entry
         .file_type()
         .with_context(|| format!("reading file type for {}", entry.path().display()))?
@@ -178,5 +210,5 @@ fn is_call_file(entry: &DirEntry) -> anyhow::Result<bool> {
     let Some(name) = name.to_str() else {
         return Ok(false);
     };
-    Ok(name.starts_with("calls-") && name.ends_with(".jsonl"))
+    Ok(name.starts_with(prefix) && name.ends_with(".jsonl"))
 }

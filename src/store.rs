@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 use crate::privacy;
-use crate::record::CallRecord;
+use crate::record::{AnnotationRecord, CallRecord};
 
 pub struct Store {
     root: PathBuf,
@@ -55,6 +55,32 @@ impl Store {
         {
             safe.tool = None;
         }
+        let mut line = serde_json::to_string(&safe)?;
+        line.push('\n');
+        file.write_all(line.as_bytes())?;
+        file.unlock()
+            .with_context(|| format!("unlocking {}", path.display()))?;
+        Ok(())
+    }
+
+    /// Mirrors `append`: same directory, same file locking, session hashed
+    /// through `privacy::opaque_session`, one JSON line per call.
+    pub fn append_annotation(&mut self, rec: &AnnotationRecord) -> anyhow::Result<()> {
+        let day = rec.ts.get(..10).unwrap_or("unknown");
+        let path = self
+            .root
+            .join("store")
+            .join(format!("annotations-{day}.jsonl"));
+        let mut file = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("opening {}", path.display()))?;
+        file.lock()
+            .with_context(|| format!("locking {}", path.display()))?;
+        let mut safe = rec.clone();
+        safe.session = privacy::opaque_session(&safe.session);
         let mut line = serde_json::to_string(&safe)?;
         line.push('\n');
         file.write_all(line.as_bytes())?;

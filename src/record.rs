@@ -25,6 +25,73 @@ pub struct CallRecord {
     pub kind: String,
 }
 
+/// The kinds of finding only an agent can observe — a call succeeded but
+/// changed nothing, a documented path turned out to be blocked, and so on.
+pub const ANNOTATION_KINDS: [&str; 5] = [
+    "blocked-optimal-path",
+    "undocumented-behavior",
+    "false-success",
+    "instruction-divergence",
+    "workaround",
+];
+
+const MAX_NOTE_LEN: usize = 240;
+
+/// An agent-authored observation about a call, identified by `(session, seq)`.
+/// Unlike every other stored field, `note` is free-form prose by design; it is
+/// bounded and scrubbed of control characters so it can neither smuggle a
+/// payload nor corrupt the JSONL framing it is written into.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnnotationRecord {
+    pub ts: String,
+    pub session: String,
+    pub seq: u64,
+    pub kind: String,
+    #[serde(serialize_with = "serialize_bounded_note")]
+    pub note: String,
+}
+
+/// Re-derives a safe projection of `note` at serialize time regardless of how
+/// the record was constructed: strips control characters (newlines included)
+/// and truncates to `MAX_NOTE_LEN` characters. Mirrors `ErrorInfo`'s
+/// serializers, which never trust that validation already ran upstream.
+fn serialize_bounded_note<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let bounded: String = value
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_NOTE_LEN)
+        .collect();
+    bounded.serialize(serializer)
+}
+
+impl AnnotationRecord {
+    /// Checks `kind` against `ANNOTATION_KINDS` and `note` against the length
+    /// and control-character bounds. Returns a descriptive error listing the
+    /// valid kinds when `kind` is unrecognized.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !ANNOTATION_KINDS.contains(&self.kind.as_str()) {
+            anyhow::bail!(
+                "unknown annotation kind {:?}; valid kinds are: {}",
+                self.kind,
+                ANNOTATION_KINDS.join(", ")
+            );
+        }
+        if self.note.chars().count() > MAX_NOTE_LEN {
+            anyhow::bail!(
+                "note exceeds {MAX_NOTE_LEN} characters (got {})",
+                self.note.chars().count()
+            );
+        }
+        if self.note.chars().any(char::is_control) {
+            anyhow::bail!("note must not contain control characters or newlines");
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct ErrorInfo {
     #[serde(

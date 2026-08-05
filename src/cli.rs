@@ -24,4 +24,21 @@ pub enum Command {
     },
     /// Load JSONL records into the SQLite index and derive failure windows.
     Index,
+    /// Record an agent-authored observation about a call, identified by
+    /// (session, seq): a documented path was blocked, a call reported
+    /// success but changed nothing, and so on.
+    Annotate {
+        /// The session the annotated call belongs to.
+        #[arg(long)]
+        session: String,
+        /// The seq of the call within that session.
+        #[arg(long)]
+        seq: u64,
+        /// One of `record::ANNOTATION_KINDS`.
+        #[arg(long)]
+        kind: String,
+        /// Free-text note: at most 240 characters, no control characters.
+        #[arg(long)]
+        note: String,
+    },
 }

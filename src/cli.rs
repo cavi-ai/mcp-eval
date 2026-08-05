@@ -1,4 +1,11 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum FindingsFormat {
+    Agent,
+    Md,
+    Json,
+}
 
 #[derive(Parser, Debug)]
 #[command(
@@ -24,6 +31,18 @@ pub enum Command {
     },
     /// Load JSONL records into the SQLite index and derive failure windows.
     Index,
+    /// Aggregate indexed failures into issues and promote supported findings.
+    Promote {
+        /// Override config.json's promotion_threshold for this run.
+        #[arg(long)]
+        threshold: Option<f64>,
+    },
+    /// Render promoted findings without exposing captured private content.
+    Findings {
+        /// Output format for agents, people, or structured consumers.
+        #[arg(long, value_enum, default_value_t = FindingsFormat::Agent)]
+        format: FindingsFormat,
+    },
     /// Record an agent-authored observation about a call, identified by
     /// (session, seq): a documented path was blocked, a call reported
     /// success but changed nothing, and so on.

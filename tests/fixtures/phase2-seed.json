@@ -1,0 +1,11 @@
+[
+  {"name":"false success","class":"blocker","observations":2,"failures":4,"calls":5,"age_days":0.0,"cost":4.0,"blast":2},
+  {"name":"error opacity","class":"blocker","observations":3,"failures":5,"calls":8,"age_days":7.0,"cost":3.0,"blast":2},
+  {"name":"degradation over N","class":"blocker","observations":1,"failures":3,"calls":4,"age_days":3.0,"cost":5.0,"blast":2},
+  {"name":"recovery gaps","class":"blocker","observations":2,"failures":4,"calls":7,"age_days":4.0,"cost":4.0,"blast":3},
+  {"name":"contention","class":"blocker","observations":1,"failures":3,"calls":5,"age_days":2.0,"cost":4.0,"blast":2},
+  {"name":"schema guessability","class":"blocker","observations":3,"failures":5,"calls":9,"age_days":5.0,"cost":4.0,"blast":2},
+  {"name":"undiscoverable constraint","class":"blocker","observations":2,"failures":4,"calls":8,"age_days":6.0,"cost":3.0,"blast":2},
+  {"name":"single deferred-tool annoyance","class":"annoyance","observations":1,"failures":1,"calls":20,"age_days":0.0,"cost":1.0,"blast":1},
+  {"name":"stale harness annoyance","class":"annoyance","observations":2,"failures":2,"calls":12,"age_days":45.0,"cost":2.0,"blast":1}
+]

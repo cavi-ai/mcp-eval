@@ -160,6 +160,40 @@ on its own line as a must-not-share reminder every time it runs.
    them before that file is shared. This is a minimum smoke scan, not proof
    that arbitrary metadata is non-sensitive.
 
+## Promote issues and read findings
+
+After indexing at least two real sessions, aggregate and score the indexed
+calls:
+
+```sh
+mcpeval promote
+mcpeval findings --format agent
+```
+
+Use `--format md` for a human-facing report or `--format json` for structured
+output. Promotion requires both a score at or above the active threshold and
+failures in at least two distinct sessions. The two-session rule cannot be
+disabled by setting the threshold to zero.
+
+The default threshold is recalibrated from the bundled synthetic seed corpus.
+To configure it, create `<MCPEVAL_HOME>/config.json`:
+
+```json
+{
+  "promotion_threshold": 0.15
+}
+```
+
+`mcpeval promote --threshold 0.2` overrides that value for one run. Values must
+be finite and non-negative. Running `mcpeval index` removes stale derived issue
+and finding tables, so rerun `mcpeval promote` whenever the journal is rebuilt.
+
+Findings contain aggregate counts, score components, sanitized server/tool and
+error identifiers, and shape-level arguments. They exclude raw error templates,
+annotation prose, sessions, paths, salt, and raw request values. This makes the
+report safe by the same automated boundary as indexed calls; the underlying
+`annotations-*.jsonl` files still require the human review described above.
+
 ## Bobby Browser live validation — 2026-08-04
 
 The release shim was validated against a fresh Bobby Browser stdio gateway child

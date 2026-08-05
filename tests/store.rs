@@ -211,7 +211,11 @@ fn serialization_sanitizes_directly_constructed_error_info() {
     let text = serde_json::to_string(&direct).unwrap();
     // "directCodeCanary" is identifier-shaped, so it is expected to survive
     // serialization verbatim; only the non-identifier fields must be scrubbed.
-    for canary in ["directLayerCanary", "directKindCanary", "directMessageCanary"] {
+    for canary in [
+        "directLayerCanary",
+        "directKindCanary",
+        "directMessageCanary",
+    ] {
         assert!(
             !text.contains(canary),
             "leaked direct-construction canary: {canary}"
@@ -235,7 +239,11 @@ fn serialization_sanitizes_directly_constructed_error_info() {
         .unwrap()
         .path();
     let body = std::fs::read_to_string(path).unwrap();
-    for canary in ["directLayerCanary", "directKindCanary", "directMessageCanary"] {
+    for canary in [
+        "directLayerCanary",
+        "directKindCanary",
+        "directMessageCanary",
+    ] {
         assert!(
             !body.contains(canary),
             "persisted direct-construction canary: {canary}"
@@ -256,9 +264,9 @@ fn template_id_survives_serialization_only_when_it_is_a_valid_fingerprint() {
 
     for bogus in [
         "short",
-        "0123456789abcdeg",    // wrong length is fine, but this char isn't hex
-        "0123456789ABCDEF",    // uppercase hex is not "lowercase hex"
-        "0123456789abcdef0",   // 17 chars, too long
+        "0123456789abcdeg",  // wrong length is fine, but this char isn't hex
+        "0123456789ABCDEF",  // uppercase hex is not "lowercase hex"
+        "0123456789abcdef0", // 17 chars, too long
         "the raw message leaked here!!!",
     ] {
         let direct = ErrorInfo {
@@ -325,6 +333,37 @@ fn store_sanitizes_directly_constructed_identifier_fields() {
     assert_eq!(stored["server"], "invalid");
     assert_eq!(stored["method"], "unparsed/metadata");
     assert!(stored.get("tool").is_none());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn store_sanitizes_every_directly_constructed_persistence_field() {
+    let dir = tempdir();
+    let canary = "CANARY /Users/private?token=secret";
+    let mut rec = sample(10);
+    rec.ts = canary.into();
+    rec.args = Some(json!({"path": canary, "header": canary, "count": 42}));
+    rec.outcome = canary.into();
+    rec.kind = canary.into();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store.append(&rec).unwrap();
+
+    let paths: Vec<_> = std::fs::read_dir(dir.join("store"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(paths.len(), 1);
+    assert_eq!(paths[0].file_name().unwrap(), "calls-unknown.jsonl");
+    let body = std::fs::read_to_string(&paths[0]).unwrap();
+    assert!(!body.contains("CANARY"));
+    assert!(!body.contains("/Users/private"));
+    assert!(!body.contains("token=secret"));
+    let stored: serde_json::Value = serde_json::from_str(body.trim()).unwrap();
+    assert_eq!(stored["ts"], "unknown");
+    assert_eq!(stored["args"]["path"], "str<128");
+    assert_eq!(stored["args"]["count"], "num:42");
+    assert_eq!(stored["outcome"], "unknown");
+    assert_eq!(stored["kind"], "unparsed");
     std::fs::remove_dir_all(dir).unwrap();
 }
 

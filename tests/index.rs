@@ -320,7 +320,7 @@ fn preserves_privacy_safe_serialized_values() {
         .unwrap();
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&stored.0).unwrap(),
-        json!({"shape": {"name": "str<32", "retries": "int"}})
+        json!({"shape": {"name": "str<32", "retries": "str<8"}})
     );
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&stored.1).unwrap(),
@@ -328,6 +328,80 @@ fn preserves_privacy_safe_serialized_values() {
     );
     assert_eq!(stored.2, "{message}");
     assert_eq!(stored.3, 0);
+}
+
+#[test]
+fn index_resanitizes_an_externally_constructed_journal() {
+    let dir = tempdir();
+    std::fs::create_dir_all(dir.join("store")).unwrap();
+    let canary = "CANARY /Users/private?token=secret";
+    let record = json!({
+        "ts": canary,
+        "session": canary,
+        "seq": 1,
+        "server": canary,
+        "method": canary,
+        "tool": canary,
+        "args": {"path": canary, "header": canary, "count": 42},
+        "latency_ms": 5,
+        "outcome": canary,
+        "error": {
+            "code": canary,
+            "layer": canary,
+            "retryable": false,
+            "kind": canary,
+            "template": canary,
+            "template_id": canary
+        },
+        "shim_self_us": 10,
+        "kind": canary
+    });
+    std::fs::write(
+        dir.join("store/calls-external.jsonl"),
+        format!("{}\n", serde_json::to_string(&record).unwrap()),
+    )
+    .unwrap();
+
+    index::build(&dir).unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let stored: (
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        String,
+        String,
+        String,
+    ) = db
+        .query_row(
+            "SELECT ts, session, server, method, tool, args, outcome, kind FROM calls",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                ))
+            },
+        )
+        .unwrap();
+    let persisted = format!("{stored:?}");
+    assert!(!persisted.contains("CANARY"));
+    assert!(!persisted.contains("/Users/private"));
+    assert!(!persisted.contains("token=secret"));
+    assert_eq!(stored.0, "unknown");
+    assert!(stored.1.starts_with("session:"));
+    assert_eq!(stored.2, "invalid");
+    assert_eq!(stored.3, "unparsed/metadata");
+    assert_eq!(stored.4, None);
+    assert_eq!(stored.6, "unknown");
+    assert_eq!(stored.7, "unparsed");
 }
 
 #[test]
@@ -461,7 +535,10 @@ fn same_tool_and_fingerprint_collapse_to_one_issue() {
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(distinct, 1, "the same cause twice must collapse into one issue");
+    assert_eq!(
+        distinct, 1,
+        "the same cause twice must collapse into one issue"
+    );
 }
 
 #[test]
@@ -482,7 +559,9 @@ fn windows_follow_sequence_not_file_order() {
     index::build(&dir).unwrap();
     let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
     let neighbours: Vec<i64> = db
-        .prepare("SELECT c.seq FROM windows w JOIN calls c ON c.id = w.neighbour_id ORDER BY w.offset")
+        .prepare(
+            "SELECT c.seq FROM windows w JOIN calls c ON c.id = w.neighbour_id ORDER BY w.offset",
+        )
         .unwrap()
         .query_map([], |r| r.get(0))
         .unwrap()

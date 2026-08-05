@@ -25,6 +25,46 @@ pub struct CallRecord {
     pub kind: String,
 }
 
+impl CallRecord {
+    /// Returns the only representation allowed to cross a persistence boundary.
+    /// Applying this projection repeatedly is safe, so both JSONL writes and
+    /// later index rebuilds enforce the same boundary independently.
+    pub fn sanitized(&self) -> Self {
+        let mut safe = self.clone();
+        if chrono::DateTime::parse_from_rfc3339(&safe.ts).is_err() {
+            safe.ts = "unknown".into();
+        }
+        safe.session = privacy::opaque_session(&safe.session);
+        if !privacy::valid_server(&safe.server) {
+            safe.server = "invalid".into();
+        }
+        if !privacy::valid_method(&safe.method) {
+            safe.method = "unparsed/metadata".into();
+        }
+        if safe
+            .tool
+            .as_deref()
+            .is_some_and(|tool| !privacy::valid_tool(tool))
+        {
+            safe.tool = None;
+        }
+        safe.args = safe.args.as_ref().map(sanitize_shape);
+        if !matches!(
+            safe.outcome.as_str(),
+            "ok" | "error" | "unparsed" | "unknown"
+        ) {
+            safe.outcome = "unknown".into();
+        }
+        safe.kind = match safe.kind.as_str() {
+            "real" => "real".into(),
+            "unparsed" => "unparsed".into(),
+            _ => "unparsed".into(),
+        };
+        safe.error = safe.error.as_ref().map(ErrorInfo::sanitized);
+        safe
+    }
+}
+
 /// The kinds of finding only an agent can observe — a call succeeded but
 /// changed nothing, a documented path turned out to be blocked, and so on.
 pub const ANNOTATION_KINDS: [&str; 5] = [
@@ -123,6 +163,81 @@ pub struct ErrorInfo {
         serialize_with = "serialize_template_id"
     )]
     pub template_id: Option<String>,
+}
+
+impl ErrorInfo {
+    fn sanitized(&self) -> Self {
+        Self {
+            code: self.code.as_ref().map(privacy_safe_code),
+            layer: self.layer.as_deref().map(safe_string_bucket),
+            retryable: self.retryable,
+            kind: self.kind.as_deref().map(safe_string_bucket),
+            template: self.template.as_deref().map(errtemplate::normalize),
+            template_id: self
+                .template_id
+                .as_deref()
+                .filter(|id| is_valid_template_id(id))
+                .map(str::to_owned),
+        }
+    }
+}
+
+fn sanitize_shape(value: &Value) -> Value {
+    match value {
+        Value::String(value) if is_canonical_shape(value) => value.clone().into(),
+        Value::String(value) => Value::String(shape::string_bucket(value)),
+        Value::Null => json!("null"),
+        Value::Bool(value) => json!(format!("bool:{value}")),
+        Value::Number(value) => json!(format!("num:{value}")),
+        Value::Array(items) => json!({
+            "array": items.len(),
+            "items": items.first().map(sanitize_shape).unwrap_or_else(|| json!("empty"))
+        }),
+        Value::Object(fields) => Value::Object(
+            fields
+                .iter()
+                .map(|(key, value)| {
+                    let safe_value = if matches!(key.as_str(), "array" | "object") && value.is_u64()
+                    {
+                        value.clone()
+                    } else {
+                        sanitize_shape(value)
+                    };
+                    (key.clone(), safe_value)
+                })
+                .collect(),
+        ),
+    }
+}
+
+fn is_canonical_shape(value: &str) -> bool {
+    if matches!(
+        value,
+        "null"
+            | "bool:true"
+            | "bool:false"
+            | "uuid"
+            | "empty"
+            | "str<8"
+            | "str<32"
+            | "str<128"
+            | "str<512"
+            | "str<4096"
+            | "str>4096"
+    ) {
+        return true;
+    }
+    if let Some(number) = value.strip_prefix("num:") {
+        return number.parse::<serde_json::Number>().is_ok();
+    }
+    if let Some(domain) = value.strip_prefix("url:") {
+        return !domain.is_empty()
+            && domain.len() <= 253
+            && domain
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-'));
+    }
+    value.strip_prefix("enum:").is_some_and(privacy::valid_tool)
 }
 
 /// Lifts the four allowed keys out of an error payload and replaces every

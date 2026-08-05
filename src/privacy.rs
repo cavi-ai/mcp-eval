@@ -51,10 +51,15 @@ fn valid_segments(value: &str, slash: bool) -> bool {
     if value.is_empty() || value.len() > MAX_LABEL {
         return false;
     }
-    value.split(if slash { '/' } else { '\0' }).all(|segment| {
+    let valid_segment = |segment: &str| {
         !segment.is_empty()
             && segment
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
-    })
+    };
+    if slash {
+        value.split('/').all(valid_segment)
+    } else {
+        valid_segment(value)
+    }
 }

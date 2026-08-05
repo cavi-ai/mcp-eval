@@ -15,5 +15,25 @@ fn main() -> anyhow::Result<()> {
             println!("indexed {} calls, {} failures", stats.calls, stats.failures);
             Ok(())
         }
+        cli::Command::Annotate {
+            session,
+            seq,
+            kind,
+            note,
+        } => {
+            let record = mcpeval::record::AnnotationRecord {
+                ts: chrono::Utc::now()
+                    .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+                    .to_string(),
+                session,
+                seq,
+                kind,
+                note,
+            };
+            record.validate()?;
+            let mut store = mcpeval::store::Store::open(None)?;
+            store.append_annotation(&record)?;
+            Ok(())
+        }
     }
 }

@@ -10,10 +10,27 @@ use crate::record::{AnnotationRecord, CallRecord};
 pub struct Stats {
     pub calls: usize,
     pub failures: usize,
+    pub annotations: usize,
 }
 
+/// Dropped ahead of `SCHEMA` on every rebuild, oldest-dependent-first: a
+/// Phase 1 `index.db` predates `err_template_id` and `annotations` entirely,
+/// so `CREATE TABLE IF NOT EXISTS` is a no-op against it and the INSERT
+/// below would fail on an unrecognized column. The index is pure derived
+/// state — nothing here is ever read before this function rebuilds it — so
+/// dropping and recreating is safe. `windows` is dropped before `calls`
+/// because it holds a `REFERENCES calls(id)` foreign key and `foreign_keys`
+/// is on for this connection.
+const DROP_SCHEMA: &str = "
+DROP INDEX IF EXISTS calls_issue;
+DROP INDEX IF EXISTS annotations_call;
+DROP TABLE IF EXISTS windows;
+DROP TABLE IF EXISTS calls;
+DROP TABLE IF EXISTS annotations;
+";
+
 const SCHEMA: &str = "
-CREATE TABLE IF NOT EXISTS calls (
+CREATE TABLE calls (
   id INTEGER PRIMARY KEY,
   ts TEXT NOT NULL, session TEXT NOT NULL, seq INTEGER NOT NULL,
   server TEXT NOT NULL, method TEXT NOT NULL, tool TEXT,
@@ -21,25 +38,33 @@ CREATE TABLE IF NOT EXISTS calls (
   err_code TEXT, err_template TEXT, err_template_id TEXT, err_retryable INTEGER,
   args TEXT, kind TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS windows (
+CREATE TABLE windows (
   failure_id INTEGER NOT NULL REFERENCES calls(id),
   neighbour_id INTEGER NOT NULL REFERENCES calls(id),
   offset INTEGER NOT NULL,
   PRIMARY KEY (failure_id, neighbour_id)
 );
-CREATE INDEX IF NOT EXISTS calls_issue ON calls (server, tool, err_code, err_template_id);
-CREATE TABLE IF NOT EXISTS annotations (
+CREATE INDEX calls_issue ON calls (server, tool, err_code, err_template_id);
+CREATE TABLE annotations (
   session TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT NOT NULL,
   kind TEXT NOT NULL, note TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS annotations_call ON annotations (session, seq);
+CREATE INDEX annotations_call ON annotations (session, seq);
 ";
 
 pub fn build(root: &Path) -> anyhow::Result<Stats> {
     let mut records = load_records(root)?;
-    // Sort by (session, seq): session alone leaves ties to fall back on file
-    // read order, which is wrong when two processes share a session id and
-    // their records interleave across files or within one.
+    // Sort by (session, seq). What this actually fixes: within one shim
+    // process, seq is assigned in call order, but `load_jsonl` reads files
+    // back in file-name (date) order, so a session whose calls span
+    // multiple daily files would otherwise interleave in file order rather
+    // than logical order. Sorting by seq within a session restores that.
+    //
+    // Known limitation, not fixed by this sort: two shim processes started
+    // with the same MCPEVAL_SESSION each number their own calls from seq 1,
+    // so (session, seq) is not unique across them and their windows can
+    // interleave — see `shared_session_sequence_values_from_different_servers_remain_distinct`
+    // and `duplicate_session_server_sequence_occurrences_are_preserved_on_every_rebuild`.
     records.sort_by(|left, right| {
         left.session
             .cmp(&right.session)
@@ -53,10 +78,12 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
     let mut db = Connection::open(root.join("index.db")).context("opening index.db")?;
     db.pragma_update(None, "foreign_keys", "ON")?;
     let transaction = db.transaction().context("starting index rebuild")?;
-    transaction.execute_batch(SCHEMA)?;
-    transaction.execute("DELETE FROM windows", [])?;
-    transaction.execute("DELETE FROM calls", [])?;
-    transaction.execute("DELETE FROM annotations", [])?;
+    transaction
+        .execute_batch(DROP_SCHEMA)
+        .context("dropping prior index schema")?;
+    transaction
+        .execute_batch(SCHEMA)
+        .context("creating index schema")?;
 
     let mut ids = Vec::with_capacity(records.len());
     for record in &records {
@@ -147,6 +174,7 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
     Ok(Stats {
         calls: records.len(),
         failures,
+        annotations: annotations.len(),
     })
 }
 

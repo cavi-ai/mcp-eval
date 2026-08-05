@@ -345,9 +345,39 @@ fn index_command_prints_the_indexed_counts() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        "indexed 1 calls, 1 failures\n"
+        "indexed 1 calls, 1 failures, 0 annotations\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn index_command_prints_the_annotation_count() {
+    use mcpeval::record::AnnotationRecord;
+
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store.append(&rec(1, "ok")).unwrap();
+    store
+        .append_annotation(&AnnotationRecord {
+            ts: "2026-08-04T12:00:00Z".into(),
+            session: "s1".into(),
+            seq: 1,
+            kind: "workaround".into(),
+            note: "found a way around it".into(),
+        })
+        .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+        .arg("index")
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap(),
+        "indexed 1 calls, 0 failures, 1 annotations\n"
+    );
 }
 
 #[test]
@@ -463,6 +493,62 @@ fn windows_follow_sequence_not_file_order() {
         vec![1, 3],
         "the failure at seq 2 has seq 1 before it and seq 3 after it"
     );
+}
+
+#[test]
+fn build_migrates_a_hand_patched_phase_1_index_db() {
+    // C2: a Phase 1 `index.db` has a `calls` table with no `err_template_id`
+    // column, no `annotations` table, and `calls_issue` keyed on
+    // `(server, tool, err_template)`. `CREATE TABLE IF NOT EXISTS` is a
+    // no-op against it, so `build` must drop and recreate rather than
+    // assume the schema already matches.
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store.append(&rec(1, "error")).unwrap();
+
+    {
+        let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+        db.execute_batch(
+            "CREATE TABLE calls (
+              id INTEGER PRIMARY KEY,
+              ts TEXT NOT NULL, session TEXT NOT NULL, seq INTEGER NOT NULL,
+              server TEXT NOT NULL, method TEXT NOT NULL, tool TEXT,
+              latency_ms INTEGER, outcome TEXT NOT NULL,
+              err_code TEXT, err_template TEXT, err_retryable INTEGER,
+              args TEXT, kind TEXT NOT NULL
+            );
+            CREATE TABLE windows (
+              failure_id INTEGER NOT NULL REFERENCES calls(id),
+              neighbour_id INTEGER NOT NULL REFERENCES calls(id),
+              offset INTEGER NOT NULL,
+              PRIMARY KEY (failure_id, neighbour_id)
+            );
+            CREATE INDEX calls_issue ON calls (server, tool, err_template);",
+        )
+        .unwrap();
+    }
+
+    let stats = index::build(&dir).expect("build must migrate a Phase 1 index.db, not fail");
+    assert_eq!(stats.calls, 1);
+    assert_eq!(stats.failures, 1);
+
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let index_sql: String = db
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'calls_issue'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        index_sql.contains("err_template_id"),
+        "calls_issue must be rebuilt to cover err_template_id, got: {index_sql}"
+    );
+
+    let annotation_count: i64 = db
+        .query_row("SELECT COUNT(*) FROM annotations", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(annotation_count, 0, "annotations table must now exist");
 }
 
 #[test]

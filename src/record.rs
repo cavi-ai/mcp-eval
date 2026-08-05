@@ -51,7 +51,10 @@ pub struct ErrorInfo {
         serialize_with = "serialize_template"
     )]
     pub template: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_template_id"
+    )]
     pub template_id: Option<String>,
 }
 
@@ -141,5 +144,26 @@ where
     value
         .as_deref()
         .map(errtemplate::normalize)
+        .serialize(serializer)
+}
+
+/// A `template_id` is only ever a fingerprint minted by
+/// `fingerprint::template_id`: exactly 16 lowercase hex characters. A
+/// directly-constructed value that doesn't match this shape could carry
+/// arbitrary content, so it is dropped rather than serialized verbatim.
+fn is_valid_template_id(value: &str) -> bool {
+    value.len() == 16
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn serialize_template_id<S>(value: &Option<String>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    value
+        .as_deref()
+        .filter(|id| is_valid_template_id(id))
         .serialize(serializer)
 }

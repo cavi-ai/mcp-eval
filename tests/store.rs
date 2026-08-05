@@ -245,6 +245,40 @@ fn serialization_sanitizes_directly_constructed_error_info() {
 }
 
 #[test]
+fn template_id_survives_serialization_only_when_it_is_a_valid_fingerprint() {
+    let valid = ErrorInfo {
+        template_id: Some("0123456789abcdef".into()),
+        ..Default::default()
+    };
+    let text = serde_json::to_string(&valid).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(value["template_id"], "0123456789abcdef");
+
+    for bogus in [
+        "short",
+        "0123456789abcdeg",    // wrong length is fine, but this char isn't hex
+        "0123456789ABCDEF",    // uppercase hex is not "lowercase hex"
+        "0123456789abcdef0",   // 17 chars, too long
+        "the raw message leaked here!!!",
+    ] {
+        let direct = ErrorInfo {
+            template_id: Some(bogus.into()),
+            ..Default::default()
+        };
+        let text = serde_json::to_string(&direct).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert!(
+            value["template_id"].is_null(),
+            "invalid template_id was not dropped: {bogus}"
+        );
+        assert!(
+            !text.contains(bogus),
+            "leaked invalid template_id text: {bogus}"
+        );
+    }
+}
+
+#[test]
 fn store_sanitizes_directly_constructed_identifier_fields() {
     let dir = tempdir();
     let canary = "CANARY /Users/private?token=secret";

@@ -438,9 +438,14 @@ fn same_tool_and_fingerprint_collapse_to_one_issue() {
 fn windows_follow_sequence_not_file_order() {
     let dir = tempdir();
     let mut store = Store::open(Some(dir.clone())).unwrap();
-    // Append out of sequence order on purpose.
-    for seq in [3u64, 1, 2] {
-        let outcome = if seq == 3 { "error" } else { "ok" };
+    // Append the error (seq 2) first, so file order and logical seq order
+    // disagree. Under the old session-only sort the file order [2,3,1] is
+    // preserved, the failure sits at index 0 with no backward neighbours,
+    // and the (wrong) forward-only window yields [3, 1]. Sorting by
+    // (session, seq) reorders to [1,2,3], giving the failure one neighbour
+    // on each side: [1, 3].
+    for seq in [2u64, 3, 1] {
+        let outcome = if seq == 2 { "error" } else { "ok" };
         store.append(&rec(seq, outcome)).unwrap();
     }
 
@@ -453,7 +458,11 @@ fn windows_follow_sequence_not_file_order() {
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    assert_eq!(neighbours, vec![1, 2], "the failure at seq 3 follows seqs 1 and 2");
+    assert_eq!(
+        neighbours,
+        vec![1, 3],
+        "the failure at seq 2 has seq 1 before it and seq 3 after it"
+    );
 }
 
 #[test]

@@ -41,3 +41,42 @@ fn fails_when_a_store_file_contains_content() {
         .unwrap();
     assert!(!out.status.success(), "an email address must be reported");
 }
+
+#[test]
+fn a_legitimate_note_containing_an_at_sign_is_not_flagged() {
+    let home = tempdir();
+    std::fs::write(
+        home.join("store").join("annotations-2026-08-04.jsonl"),
+        "{\"ts\":\"2026-08-04T00:00:00Z\",\"session\":\"session:ab\",\"seq\":1,\"kind\":\"workaround\",\"note\":\"reach me at someone@example.com if this repeats\"}\n",
+    )
+    .unwrap();
+    let out = Command::new(bin())
+        .args(["doctor", "--check-redaction"])
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "note is free-form prose and must be exempt: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
+fn a_leak_in_a_non_note_annotation_field_is_still_flagged() {
+    let home = tempdir();
+    std::fs::write(
+        home.join("store").join("annotations-2026-08-04.jsonl"),
+        "{\"ts\":\"2026-08-04T00:00:00Z\",\"session\":\"someone@example.com\",\"seq\":1,\"kind\":\"workaround\",\"note\":\"nothing sensitive here\"}\n",
+    )
+    .unwrap();
+    let out = Command::new(bin())
+        .args(["doctor", "--check-redaction"])
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(
+        !out.status.success(),
+        "a leak outside note must still be reported"
+    );
+}

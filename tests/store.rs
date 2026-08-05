@@ -1,3 +1,4 @@
+use mcpeval::fingerprint::Salt;
 use mcpeval::record::{error_info, CallRecord, ErrorInfo};
 use mcpeval::store::Store;
 use serde_json::json;
@@ -89,38 +90,47 @@ fn concurrent_store_writers_produce_complete_json_lines() {
 #[test]
 fn error_info_buckets_strings_and_drops_unapproved_keys() {
     let payload = sensitive_error_payload();
-    let info = error_info(&payload);
+    let info = error_info(&payload, &Salt::for_tests());
 
-    assert_eq!(info.code, Some(json!("str<32")));
+    // "browserCommandFailed" is an identifier-shaped code, so it is kept
+    // verbatim rather than bucketed; see identifier_error_codes_are_kept_and_prose_codes_are_bucketed.
+    assert_eq!(info.code, Some(json!("browserCommandFailed")));
     assert_eq!(info.layer.as_deref(), Some("str<32"));
     assert_eq!(info.retryable, Some(false));
     assert_eq!(info.kind.as_deref(), Some("str<32"));
     assert_eq!(info.template.as_deref(), Some("{message}"));
+    assert_eq!(info.template_id.as_deref().map(str::len), Some(16));
 
     let text = serde_json::to_string(&info).unwrap();
     assert_safe_error_text(&text);
     let serialized: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(serialized.as_object().unwrap().len(), 5);
+    assert_eq!(serialized.as_object().unwrap().len(), 6);
 }
 
 #[test]
 fn error_info_keeps_scalar_codes_and_reduces_composites_to_container_shape() {
     for scalar in [json!(null), json!(false), json!(404)] {
-        let info = error_info(&json!({ "code": scalar.clone() }));
+        let info = error_info(&json!({ "code": scalar.clone() }), &Salt::for_tests());
         assert_eq!(info.code, Some(scalar));
     }
 
-    let array = error_info(&json!({
-        "code": ["array-code-canary", { "nested-key-canary": "nested-value-canary" }]
-    }));
+    let array = error_info(
+        &json!({
+            "code": ["array-code-canary", { "nested-key-canary": "nested-value-canary" }]
+        }),
+        &Salt::for_tests(),
+    );
     assert_eq!(array.code, Some(json!({ "array": 2 })));
 
-    let object = error_info(&json!({
-        "code": {
-            "object-key-canary": "object-value-canary",
-            "nested-object-canary": { "secret-key-canary": "secret-value-canary" }
-        }
-    }));
+    let object = error_info(
+        &json!({
+            "code": {
+                "object-key-canary": "object-value-canary",
+                "nested-object-canary": { "secret-key-canary": "secret-value-canary" }
+            }
+        }),
+        &Salt::for_tests(),
+    );
     assert_eq!(object.code, Some(json!({ "object": 2 })));
 
     let text = serde_json::to_string(&(array, object)).unwrap();
@@ -145,7 +155,7 @@ fn error_info_keeps_scalar_codes_and_reduces_composites_to_container_shape() {
 fn persisted_call_record_round_trip_distinguishes_null_from_missing_error_code() {
     let dir = tempdir();
     let mut rec = sample(5);
-    rec.error = Some(error_info(&json!({ "code": null })));
+    rec.error = Some(error_info(&json!({ "code": null }), &Salt::for_tests()));
 
     let mut store = Store::open(Some(dir.clone())).unwrap();
     store.append(&rec).unwrap();
@@ -170,7 +180,7 @@ fn jsonl_record_does_not_persist_error_canaries() {
     let dir = tempdir();
     let mut rec = sample(3);
     rec.outcome = "error".into();
-    rec.error = Some(error_info(&sensitive_error_payload()));
+    rec.error = Some(error_info(&sensitive_error_payload(), &Salt::for_tests()));
 
     let mut store = Store::open(Some(dir.clone())).unwrap();
     store.append(&rec).unwrap();
@@ -195,22 +205,20 @@ fn serialization_sanitizes_directly_constructed_error_info() {
         retryable: Some(true),
         kind: Some("directKindCanary".into()),
         template: Some("directMessageCanary".into()),
+        template_id: None,
     };
 
     let text = serde_json::to_string(&direct).unwrap();
-    for canary in [
-        "directCodeCanary",
-        "directLayerCanary",
-        "directKindCanary",
-        "directMessageCanary",
-    ] {
+    // "directCodeCanary" is identifier-shaped, so it is expected to survive
+    // serialization verbatim; only the non-identifier fields must be scrubbed.
+    for canary in ["directLayerCanary", "directKindCanary", "directMessageCanary"] {
         assert!(
             !text.contains(canary),
             "leaked direct-construction canary: {canary}"
         );
     }
     let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-    assert_eq!(value["code"], "str<32");
+    assert_eq!(value["code"], "directCodeCanary");
     assert_eq!(value["layer"], "str<32");
     assert_eq!(value["kind"], "str<32");
     assert_eq!(value["template"], "{message}");
@@ -227,12 +235,7 @@ fn serialization_sanitizes_directly_constructed_error_info() {
         .unwrap()
         .path();
     let body = std::fs::read_to_string(path).unwrap();
-    for canary in [
-        "directCodeCanary",
-        "directLayerCanary",
-        "directKindCanary",
-        "directMessageCanary",
-    ] {
+    for canary in ["directLayerCanary", "directKindCanary", "directMessageCanary"] {
         assert!(
             !body.contains(canary),
             "persisted direct-construction canary: {canary}"
@@ -269,6 +272,48 @@ fn store_sanitizes_directly_constructed_identifier_fields() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[test]
+fn identifier_error_codes_are_kept_and_prose_codes_are_bucketed() {
+    use mcpeval::fingerprint::Salt;
+    use serde_json::json;
+
+    let salt = Salt::for_tests();
+    let identifier = mcpeval::record::error_info(
+        &json!({ "code": "browserCommandFailed", "message": "boom" }),
+        &salt,
+    );
+    assert_eq!(identifier.code.unwrap(), json!("browserCommandFailed"));
+
+    let prose = mcpeval::record::error_info(
+        &json!({ "code": "Cannot upload /Users/someone/private.pdf", "message": "boom" }),
+        &salt,
+    );
+    let stored = serde_json::to_string(&prose).unwrap();
+    assert!(!stored.contains("private"), "prose code leaked: {stored}");
+    assert!(!stored.contains("Users"), "prose code leaked: {stored}");
+}
+
+#[test]
+fn error_info_carries_a_fingerprint_and_still_hides_the_message() {
+    use mcpeval::fingerprint::Salt;
+    use serde_json::json;
+
+    let info = mcpeval::record::error_info(
+        &json!({ "code": -32000, "message": "session 0be9b59c-af70-47b0-9169-d9de92330600 gone" }),
+        &Salt::for_tests(),
+    );
+    assert_eq!(info.template.as_deref(), Some("{message}"));
+
+    // Serialize while `info` is still whole; `template_id.unwrap()` below
+    // would otherwise partially move it out from under this borrow.
+    let stored = serde_json::to_string(&info).unwrap();
+    assert!(!stored.contains("gone"));
+    assert!(!stored.contains("0be9b59c"));
+
+    let id = info.template_id.unwrap();
+    assert_eq!(id.len(), 16);
+}
+
 fn sensitive_error_payload() -> serde_json::Value {
     json!({
         "error": {
@@ -284,8 +329,10 @@ fn sensitive_error_payload() -> serde_json::Value {
 }
 
 fn assert_safe_error_text(text: &str) {
+    // "browserCommandFailed" is deliberately excluded: it is an
+    // identifier-shaped code, which this task keeps verbatim rather than
+    // bucketing (see identifier_error_codes_are_kept_and_prose_codes_are_bucketed).
     for canary in [
-        "browserCommandFailed",
         "driverCanary",
         "transportCanary",
         "message-canary",

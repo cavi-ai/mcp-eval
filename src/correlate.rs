@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use serde_json::Value;
 
+use crate::fingerprint::Salt;
 use crate::privacy;
 use crate::record::{error_info, CallRecord};
 use crate::shape::{self, EnumIndex};
@@ -21,10 +22,11 @@ pub struct Correlator {
     enums: EnumIndex,
     declared_tools: HashSet<String>,
     pending: HashMap<String, Pending>,
+    salt: Salt,
 }
 
 impl Correlator {
-    pub fn new(server: String, session: String) -> Self {
+    pub fn new(server: String, session: String, salt: Salt) -> Self {
         Self {
             server,
             session: privacy::opaque_session(&session),
@@ -32,6 +34,7 @@ impl Correlator {
             enums: EnumIndex::new(),
             declared_tools: HashSet::new(),
             pending: HashMap::new(),
+            salt,
         }
     }
 
@@ -105,7 +108,11 @@ impl Correlator {
                     } else {
                         "ok".into()
                     },
-                    error: if is_error { Some(error_info(v)) } else { None },
+                    error: if is_error {
+                        Some(error_info(v, &self.salt))
+                    } else {
+                        None
+                    },
                     shim_self_us: p.shim_self_us,
                     kind: "real".into(),
                 })

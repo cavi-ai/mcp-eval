@@ -1,6 +1,8 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{json, Value};
 
+use crate::fingerprint::{self, Salt};
+use crate::privacy;
 use crate::{errtemplate, shape};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,12 +51,17 @@ pub struct ErrorInfo {
         serialize_with = "serialize_template"
     )]
     pub template: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template_id: Option<String>,
 }
 
 /// Lifts the four allowed keys out of an error payload and replaces every
-/// string with content-free metadata. Every other key is dropped.
-pub fn error_info(payload: &Value) -> ErrorInfo {
+/// string with content-free metadata. Every other key is dropped. The salt
+/// is used only to derive `template_id`; the raw message never leaves this
+/// function.
+pub fn error_info(payload: &Value, salt: &Salt) -> ErrorInfo {
     let inner = payload.get("error").unwrap_or(payload);
+    let message = inner.get("message").and_then(Value::as_str);
     ErrorInfo {
         code: inner.get("code").map(privacy_safe_code),
         layer: inner
@@ -66,16 +73,18 @@ pub fn error_info(payload: &Value) -> ErrorInfo {
             .get("kind")
             .and_then(Value::as_str)
             .map(safe_string_bucket),
-        template: inner
-            .get("message")
-            .and_then(Value::as_str)
-            .map(errtemplate::normalize),
+        template: message.map(errtemplate::normalize),
+        template_id: message.map(|message| fingerprint::template_id(salt, message)),
     }
 }
 
 fn privacy_safe_code(value: &Value) -> Value {
     match value {
-        Value::String(value) => Value::String(safe_string_bucket(value)),
+        Value::String(value) => Value::String(if privacy::valid_identifier(value) {
+            value.clone()
+        } else {
+            safe_string_bucket(value)
+        }),
         Value::Array(items) => json!({ "array": items.len() }),
         Value::Object(fields) if is_container_shape(fields) => value.clone(),
         Value::Object(fields) => json!({ "object": fields.len() }),

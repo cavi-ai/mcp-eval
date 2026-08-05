@@ -25,6 +25,7 @@ use windows_sys::Win32::Foundation::ERROR_NOT_FOUND;
 use windows_sys::Win32::System::IO::CancelSynchronousIo;
 
 use crate::correlate::Correlator;
+use crate::fingerprint::Salt;
 use crate::frame::{read_frame, Frame};
 use crate::record::CallRecord;
 use crate::store::Store;
@@ -422,6 +423,7 @@ pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
     }
     let (program, args) = cmd.split_first().context("empty server command")?;
     let mut store = Store::open(None).context("opening recording store")?;
+    let salt = Salt::load(store.root()).context("loading fingerprint salt")?;
     let session =
         std::env::var("MCPEVAL_SESSION").unwrap_or_else(|_| uuid::Uuid::new_v4().to_string());
 
@@ -482,7 +484,7 @@ pub fn run(server: String, cmd: Vec<String>) -> anyhow::Result<i32> {
         }
     };
 
-    let mut correlator = Correlator::new(server, session);
+    let mut correlator = Correlator::new(server, session, salt);
     let mut output_finished = false;
     let mut child_status = None;
     let mut operation_error = None;

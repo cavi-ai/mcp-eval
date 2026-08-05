@@ -304,6 +304,7 @@ fn preserves_privacy_safe_serialized_values() {
         retryable: Some(false),
         kind: Some("str<32".into()),
         template: Some("{message}".into()),
+        template_id: None,
     });
     store.append(&record).unwrap();
 
@@ -347,6 +348,46 @@ fn index_command_prints_the_indexed_counts() {
         "indexed 1 calls, 1 failures\n"
     );
     assert!(output.stderr.is_empty());
+}
+
+#[test]
+fn distinct_error_fingerprints_stay_distinct_rows() {
+    // Build two failures on the same server and tool with different fingerprints,
+    // index them, and assert the issue key separates them.
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+
+    let mut first = rec(1, "error");
+    first.error = Some(mcpeval::record::ErrorInfo {
+        code: Some(serde_json::json!("browserCommandFailed")),
+        layer: None,
+        retryable: Some(false),
+        kind: None,
+        template: Some("{message}".into()),
+        template_id: Some("aaaaaaaaaaaaaaaa".into()),
+    });
+    let mut second = rec(2, "error");
+    second.error = Some(mcpeval::record::ErrorInfo {
+        code: Some(serde_json::json!("browserCommandFailed")),
+        layer: None,
+        retryable: Some(false),
+        kind: None,
+        template: Some("{message}".into()),
+        template_id: Some("bbbbbbbbbbbbbbbb".into()),
+    });
+    store.append(&first).unwrap();
+    store.append(&second).unwrap();
+
+    index::build(&dir).unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let distinct: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM (SELECT DISTINCT server, tool, err_code, err_template_id FROM calls WHERE outcome = 'error')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(distinct, 2, "two causes must not collapse into one issue");
 }
 
 #[test]

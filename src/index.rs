@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS calls (
   ts TEXT NOT NULL, session TEXT NOT NULL, seq INTEGER NOT NULL,
   server TEXT NOT NULL, method TEXT NOT NULL, tool TEXT,
   latency_ms INTEGER, outcome TEXT NOT NULL,
-  err_code TEXT, err_template TEXT, err_retryable INTEGER,
+  err_code TEXT, err_template TEXT, err_template_id TEXT, err_retryable INTEGER,
   args TEXT, kind TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS windows (
@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS windows (
   offset INTEGER NOT NULL,
   PRIMARY KEY (failure_id, neighbour_id)
 );
-CREATE INDEX IF NOT EXISTS calls_issue ON calls (server, tool, err_template);
+CREATE INDEX IF NOT EXISTS calls_issue ON calls (server, tool, err_code, err_template_id);
 ";
 
 pub fn build(root: &Path) -> anyhow::Result<Stats> {
@@ -60,8 +60,8 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
         transaction.execute(
             "INSERT INTO calls
              (ts, session, seq, server, method, tool, latency_ms, outcome,
-              err_code, err_template, err_retryable, args, kind)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+              err_code, err_template, err_template_id, err_retryable, args, kind)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
             params![
                 record.ts,
                 record.session,
@@ -73,6 +73,7 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
                 record.outcome,
                 error_code,
                 error.and_then(|value| value.template.as_ref()),
+                error.and_then(|value| value.template_id.as_ref()),
                 error.and_then(|value| value.retryable).map(i64::from),
                 args,
                 record.kind,

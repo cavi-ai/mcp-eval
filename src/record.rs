@@ -119,7 +119,7 @@ pub struct ErrorInfo {
     )]
     pub template: Option<String>,
     #[serde(
-        skip_serializing_if = "Option::is_none",
+        skip_serializing_if = "is_missing_or_invalid_template_id",
         serialize_with = "serialize_template_id"
     )]
     pub template_id: Option<String>,
@@ -233,4 +233,14 @@ where
         .as_deref()
         .filter(|id| is_valid_template_id(id))
         .serialize(serializer)
+}
+
+/// `skip_serializing_if` must agree with what `serialize_template_id`
+/// actually serializes, or an invalid value is written as an explicit
+/// `null` instead of being omitted like every other dropped field: `serde`
+/// only consults `skip_serializing_if` on the raw field, before
+/// `serialize_with` runs, so it has to independently reject the same
+/// invalid shapes.
+fn is_missing_or_invalid_template_id(value: &Option<String>) -> bool {
+    !value.as_deref().is_some_and(is_valid_template_id)
 }

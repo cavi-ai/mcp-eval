@@ -279,6 +279,28 @@ fn template_id_survives_serialization_only_when_it_is_a_valid_fingerprint() {
 }
 
 #[test]
+fn a_rejected_template_id_is_omitted_not_serialized_as_explicit_null() {
+    // M8: `value["template_id"].is_null()` is also true when the key is
+    // simply absent, so that assertion alone can't tell "omitted" from
+    // "present as null". Every other dropped field is omitted, not written
+    // as `null`; this must match.
+    let direct = ErrorInfo {
+        template_id: Some("the raw message leaked here!!!".into()),
+        ..Default::default()
+    };
+    let text = serde_json::to_string(&direct).unwrap();
+    assert!(
+        !text.contains("template_id"),
+        "an invalid template_id must be omitted entirely, not serialized as null: {text}"
+    );
+    let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert!(
+        !value.as_object().unwrap().contains_key("template_id"),
+        "template_id key must be absent, not present with a null value"
+    );
+}
+
+#[test]
 fn store_sanitizes_directly_constructed_identifier_fields() {
     let dir = tempdir();
     let canary = "CANARY /Users/private?token=secret";

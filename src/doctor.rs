@@ -1,9 +1,11 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use anyhow::Context;
 use regex::Regex;
 use serde_json::Value;
+
+use crate::fingerprint::SALT_FILENAME;
 
 /// Result of a redaction sweep over every `*.jsonl` file under `<root>/store`.
 ///
@@ -12,21 +14,36 @@ use serde_json::Value;
 pub struct Report {
     pub files: usize,
     pub findings: Vec<String>,
+    /// Count of non-empty annotation `note` fields seen across every
+    /// `annotations-*.jsonl` file. `note` is deliberately exempt from every
+    /// detector below (it is free-form prose by design), so this is not a
+    /// failing check — it is a heads-up count so a mistyped or omitted
+    /// review step doesn't silently pass on prose nobody read.
+    pub notes_requiring_review: usize,
+    /// Path to the fingerprint salt. Never inside `store/`; must never
+    /// accompany the store when it is shared.
+    pub salt_path: PathBuf,
 }
 
 static EMAIL_AT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\w@\w").expect("valid email-at regex"));
 
 /// Strings at or under this length are never flagged by the oversized-string
-/// check, matching `shape::string_bucket`'s smallest non-trivial bucket.
+/// check. This is an arbitrary judgment call — the size above which an
+/// unrecognized string is presumed to be unredacted content — not a value
+/// derived from `shape::string_bucket`'s bucket ladder (`[8, 32, 128, 512,
+/// 4096]`), of which 128 is merely the third of five, not the smallest.
 const MAX_SAFE_STRING: usize = 128;
 
-/// Prefixes of every shaped-string form produced by `shape::of` and
-/// `record::safe_string_bucket`. A string starting with one of these is
-/// content-free metadata, not raw payload, however long it is.
-const SHAPE_TOKEN_PREFIXES: [&str; 6] = ["bool:", "num:", "str<", "str>", "enum:", "url:"];
-/// Exact shaped-string forms with no length component.
-const SHAPE_TOKEN_EXACT: [&str; 2] = ["null", "uuid"];
+/// Exact shaped-string forms with no variable component: `null`, `uuid`, and
+/// every rung of `shape::string_bucket`'s closed bucket ladder. These must
+/// match exactly, not by prefix — the bucket ladder is a fixed, finite set
+/// (`str<8`, `str<32`, `str<128`, `str<512`, `str<4096`, `str>4096`), so a
+/// prefix match would let arbitrary trailing bytes hide behind a
+/// legitimate-looking token, e.g. `str<8` followed by 4KB of unredacted text.
+const SHAPE_TOKEN_EXACT: [&str; 8] = [
+    "null", "uuid", "str<8", "str<32", "str<128", "str<512", "str<4096", "str>4096",
+];
 
 /// Scans every `*.jsonl` file directly under `<root>/store` for text that
 /// looks unredacted: an `@` between word characters, a home-directory path,
@@ -48,6 +65,7 @@ pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
     paths.sort();
 
     let mut findings = Vec::new();
+    let mut notes_requiring_review = 0usize;
     for path in &paths {
         // `annotations-*.jsonl` carries one intentionally free-form field
         // (`note`); every other file's content is fully in scope.
@@ -62,6 +80,9 @@ pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
                 continue;
             }
             let flagged = if is_annotations {
+                if line_has_nonempty_note(line) {
+                    notes_requiring_review += 1;
+                }
                 annotation_line_looks_unredacted(line)
             } else {
                 line_looks_unredacted(line)
@@ -75,7 +96,22 @@ pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
     Ok(Report {
         files: paths.len(),
         findings,
+        notes_requiring_review,
+        salt_path: root.join(SALT_FILENAME),
     })
+}
+
+/// Whether this annotation line carries a non-empty `note`. Used only to
+/// count prose that automated redaction cannot vouch for — never to decide
+/// pass/fail, since `note` is exempt from every detector by design.
+fn line_has_nonempty_note(line: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return false;
+    };
+    value
+        .get("note")
+        .and_then(Value::as_str)
+        .is_some_and(|note| !note.trim().is_empty())
 }
 
 fn line_looks_unredacted(line: &str) -> bool {
@@ -125,9 +161,44 @@ fn has_oversized_string(value: &Value) -> bool {
     }
 }
 
+/// Whether `s` is content-free shaped metadata rather than raw payload.
+/// The closed forms (`null`, `uuid`, the bucket ladder) must match exactly.
+/// `bool:`, `num:`, and `url:` are validated past the prefix because their
+/// suffix is meaningful, not free text: `shape::of` only ever emits `true`
+/// or `false` after `bool:`, a JSON-number literal after `num:`, and a
+/// host — `ip`, `localhost`, `host`, or a registrable domain — after `url:`.
+/// `enum:` stays prefix-based: a schema-declared enum member is retained
+/// verbatim by design and can legitimately be long.
 fn is_shape_token(s: &str) -> bool {
-    SHAPE_TOKEN_EXACT.contains(&s)
-        || SHAPE_TOKEN_PREFIXES
-            .iter()
-            .any(|prefix| s.starts_with(prefix))
+    if SHAPE_TOKEN_EXACT.contains(&s) {
+        return true;
+    }
+    if let Some(rest) = s.strip_prefix("bool:") {
+        return rest == "true" || rest == "false";
+    }
+    if let Some(rest) = s.strip_prefix("num:") {
+        return rest.parse::<f64>().is_ok();
+    }
+    if let Some(rest) = s.strip_prefix("url:") {
+        return looks_like_host(rest);
+    }
+    s.starts_with("enum:")
+}
+
+/// Whether `s` is `ip`, `localhost`, `host`, or a plausible DNS name: one or
+/// more dot-separated labels of ASCII letters, digits, and hyphens, each
+/// 1-63 bytes, within the 253-byte overall DNS limit. Not a full RFC 1035
+/// validator — just enough to reject a `url:`-prefixed value that is really
+/// unredacted content rather than the short host strings `shape::of` emits.
+fn looks_like_host(s: &str) -> bool {
+    if matches!(s, "ip" | "localhost" | "host") {
+        return true;
+    }
+    !s.is_empty()
+        && s.len() <= 253
+        && s.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= 63
+                && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        })
 }

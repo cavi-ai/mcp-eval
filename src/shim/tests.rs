@@ -21,6 +21,7 @@ use super::{
 #[cfg(unix)]
 use super::{complete_frame, forward, shutdown_pumps_and_drain, ShutdownCancellation};
 use crate::correlate::Correlator;
+use crate::fingerprint::Salt;
 use crate::store::Store;
 
 fn metadata(direction: Direction, value: Value, observed_ms: u64) -> FrameMetadata {
@@ -34,7 +35,7 @@ fn metadata(direction: Direction, value: Value, observed_ms: u64) -> FrameMetada
 #[test]
 fn reused_id_request_cannot_overtake_the_response_that_triggered_it() {
     let mut order = FrameOrder::default();
-    let mut correlator = Correlator::new("demo".into(), "session".into());
+    let mut correlator = Correlator::new("demo".into(), "session".into(), Salt::for_tests());
 
     order
         .reserve(
@@ -99,7 +100,7 @@ fn reused_id_request_cannot_overtake_the_response_that_triggered_it() {
 #[test]
 fn tools_list_response_is_applied_before_the_causal_next_tool_call() {
     let mut order = FrameOrder::default();
-    let mut correlator = Correlator::new("demo".into(), "session".into());
+    let mut correlator = Correlator::new("demo".into(), "session".into(), Salt::for_tests());
 
     order
         .reserve(
@@ -181,7 +182,7 @@ fn tools_list_response_is_applied_before_the_causal_next_tool_call() {
 fn shutdown_drains_completion_emitted_while_input_pump_is_joined() {
     let root = std::env::temp_dir().join(format!("mcpeval-final-event-{}", uuid::Uuid::new_v4()));
     let mut store = Store::open(Some(root.clone())).unwrap();
-    let mut correlator = Correlator::new("demo".into(), "session".into());
+    let mut correlator = Correlator::new("demo".into(), "session".into(), Salt::for_tests());
     let mut frame_order = FrameOrder::default();
     let mut output_finished = false;
     let mut operation_error = None;
@@ -411,7 +412,7 @@ fn cancelled_partial_frame_is_retired_before_later_completed_frame_is_recorded()
         uuid::Uuid::new_v4()
     ));
     let mut store = Store::open(Some(root.clone())).unwrap();
-    let mut correlator = Correlator::new("demo".into(), "session".into());
+    let mut correlator = Correlator::new("demo".into(), "session".into(), Salt::for_tests());
     correlator.on_outbound(
         &json!({ "jsonrpc": "2.0", "id": 2, "method": "survivor" }),
         20,

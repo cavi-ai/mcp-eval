@@ -29,6 +29,24 @@ pub fn valid_tool(value: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
 }
 
+const MAX_IDENTIFIER: usize = 64;
+
+/// An identifier-shaped error code: non-empty, at most 64 bytes, starting
+/// with a letter and containing only `[A-Za-z0-9_.:-]` afterward. These are
+/// symbolic labels rather than prose, so they may be kept verbatim instead
+/// of being reduced to a length bucket.
+pub fn valid_identifier(value: &str) -> bool {
+    if value.is_empty() || value.len() > MAX_IDENTIFIER {
+        return false;
+    }
+    let mut bytes = value.bytes();
+    let Some(first) = bytes.next() else {
+        return false;
+    };
+    first.is_ascii_alphabetic()
+        && bytes.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b':'))
+}
+
 fn valid_segments(value: &str, slash: bool) -> bool {
     if value.is_empty() || value.len() > MAX_LABEL {
         return false;

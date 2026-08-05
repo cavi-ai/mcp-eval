@@ -1,9 +1,10 @@
 use mcpeval::correlate::Correlator;
+use mcpeval::fingerprint::Salt;
 use serde_json::json;
 
 #[test]
 fn matches_a_response_to_its_request_and_measures_latency() {
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     c.on_outbound(
         &json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/call",
                  "params": { "name": "click", "arguments": { "note": "hello" } } }),
@@ -25,8 +26,8 @@ fn matches_a_response_to_its_request_and_measures_latency() {
 
 #[test]
 fn sessions_are_stable_opaque_tokens_and_unlisted_tools_are_not_persisted() {
-    let mut first = Correlator::new("demo".into(), "session secret /Users/a".into());
-    let mut second = Correlator::new("demo".into(), "session secret /Users/a".into());
+    let mut first = Correlator::new("demo".into(), "session secret /Users/a".into(), Salt::for_tests());
+    let mut second = Correlator::new("demo".into(), "session secret /Users/a".into(), Salt::for_tests());
     for c in [&mut first, &mut second] {
         c.on_outbound(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"CANARY?token=x","arguments":{}}}), 0);
     }
@@ -44,7 +45,7 @@ fn sessions_are_stable_opaque_tokens_and_unlisted_tools_are_not_persisted() {
 
 #[test]
 fn completed_call_carries_outbound_parse_and_forward_overhead() {
-    let mut c = Correlator::new("demo".into(), "session".into());
+    let mut c = Correlator::new("demo".into(), "session".into(), Salt::for_tests());
     c.on_outbound_with_overhead(&json!({"jsonrpc":"2.0","id":1,"method":"ping"}), 0, 777);
     let record = c
         .on_inbound(&json!({"jsonrpc":"2.0","id":1,"result":{}}), 1)
@@ -56,7 +57,7 @@ fn completed_call_carries_outbound_parse_and_forward_overhead() {
 fn an_error_response_records_code_and_template_only() {
     const SENSITIVE_MESSAGE: &str = "session 0be9b59c-af70-47b0-9169-d9de92330600 gone";
 
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     c.on_outbound(
         &json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
                  "params": { "name": "navigate", "arguments": {} } }),
@@ -81,7 +82,7 @@ fn an_error_response_records_code_and_template_only() {
 
 #[test]
 fn tools_list_teaches_enums_used_by_later_calls() {
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     c.on_outbound(
         &json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
         0,
@@ -107,7 +108,7 @@ fn tools_list_teaches_enums_used_by_later_calls() {
 
 #[test]
 fn notifications_emit_immediately() {
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     let rec = c
         .on_inbound(
             &json!({ "jsonrpc": "2.0", "method": "notifications/message" }),
@@ -120,7 +121,7 @@ fn notifications_emit_immediately() {
 
 #[test]
 fn sequence_numbers_increase_per_record() {
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     c.on_outbound(&json!({ "jsonrpc": "2.0", "id": 1, "method": "ping" }), 0);
     let a = c
         .on_inbound(&json!({ "jsonrpc": "2.0", "id": 1, "result": {} }), 1)
@@ -134,7 +135,7 @@ fn sequence_numbers_increase_per_record() {
 
 #[test]
 fn inbound_server_request_with_colliding_id_does_not_consume_pending() {
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     c.on_outbound(
         &json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/call",
                  "params": { "name": "click", "arguments": {} } }),
@@ -161,7 +162,7 @@ fn inbound_server_request_with_colliding_id_does_not_consume_pending() {
 
 #[test]
 fn outbound_response_does_not_create_a_ghost_pending_request() {
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     c.on_outbound(
         &json!({ "jsonrpc": "2.0", "id": 7, "result": { "accepted": true } }),
         10,
@@ -177,7 +178,7 @@ fn outbound_response_does_not_create_a_ghost_pending_request() {
 
 #[test]
 fn outbound_response_does_not_overwrite_a_pending_request() {
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     c.on_outbound(&json!({ "jsonrpc": "2.0", "id": 7, "method": "ping" }), 10);
     c.on_outbound(
         &json!({ "jsonrpc": "2.0", "id": 7, "result": { "accepted": true } }),
@@ -196,7 +197,7 @@ fn outbound_response_does_not_overwrite_a_pending_request() {
 
 #[test]
 fn numeric_and_string_ids_do_not_collide() {
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     c.on_outbound(
         &json!({ "jsonrpc": "2.0", "id": 7, "method": "numeric" }),
         10,
@@ -221,7 +222,7 @@ fn numeric_and_string_ids_do_not_collide() {
 
 #[test]
 fn unmatched_response_does_not_affect_pending_state_or_sequence() {
-    let mut c = Correlator::new("demo".into(), "sess".into());
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
     c.on_outbound(&json!({ "jsonrpc": "2.0", "id": 7, "method": "ping" }), 10);
 
     assert!(c

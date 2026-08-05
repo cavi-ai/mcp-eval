@@ -31,8 +31,11 @@ const SHAPE_TOKEN_EXACT: [&str; 2] = ["null", "uuid"];
 /// Scans every `*.jsonl` file directly under `<root>/store` for text that
 /// looks unredacted: an `@` between word characters, a home-directory path,
 /// `token=`, `password`, or a string value longer than 128 bytes that isn't
-/// one of the known shape tokens. This is a minimum smoke scan, not proof
-/// that arbitrary stored metadata is non-sensitive.
+/// one of the known shape tokens. In `annotations-*.jsonl` files, the
+/// intentionally free-form `note` field is exempt from every detector; all
+/// other fields there, and every field in every other file, are in scope.
+/// This is a minimum smoke scan, not proof that arbitrary stored metadata is
+/// non-sensitive.
 pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
     let store_dir = root.join("store");
     let mut paths: Vec<_> = std::fs::read_dir(&store_dir)
@@ -46,13 +49,24 @@ pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
 
     let mut findings = Vec::new();
     for path in &paths {
+        // `annotations-*.jsonl` carries one intentionally free-form field
+        // (`note`); every other file's content is fully in scope.
+        let is_annotations = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("annotations-"));
         let body =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
         for (index, line) in body.lines().enumerate() {
             if line.trim().is_empty() {
                 continue;
             }
-            if line_looks_unredacted(line) {
+            let flagged = if is_annotations {
+                annotation_line_looks_unredacted(line)
+            } else {
+                line_looks_unredacted(line)
+            };
+            if flagged {
                 findings.push(format!("{}:{}", path.display(), index + 1));
             }
         }
@@ -65,16 +79,38 @@ pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
 }
 
 fn line_looks_unredacted(line: &str) -> bool {
-    if EMAIL_AT.is_match(line) {
+    text_patterns_match(line) || value_has_oversized_string(line)
+}
+
+/// Same detectors as `line_looks_unredacted`, but with the annotation
+/// record's `note` field excluded first: `note` is deliberately free-form
+/// prose (see `record::AnnotationRecord`), so an `@` or a long sentence in
+/// it is not a redaction bug. Every other field in the line — `ts`,
+/// `session`, `seq`, `kind`, and anything else present — is still checked.
+/// A line that fails to parse as a JSON object can't have its `note` safely
+/// isolated, so it falls back to the full, unscoped scan.
+fn annotation_line_looks_unredacted(line: &str) -> bool {
+    let Ok(Value::Object(mut fields)) = serde_json::from_str::<Value>(line) else {
+        return line_looks_unredacted(line);
+    };
+    fields.remove("note");
+    let without_note = Value::Object(fields);
+    let serialized = serde_json::to_string(&without_note).unwrap_or_default();
+    text_patterns_match(&serialized) || has_oversized_string(&without_note)
+}
+
+fn text_patterns_match(text: &str) -> bool {
+    if EMAIL_AT.is_match(text) {
         return true;
     }
-    let lower = line.to_ascii_lowercase();
-    if lower.contains("/users/") || lower.contains("/home/") {
-        return true;
-    }
-    if lower.contains("token=") || lower.contains("password") {
-        return true;
-    }
+    let lower = text.to_ascii_lowercase();
+    lower.contains("/users/")
+        || lower.contains("/home/")
+        || lower.contains("token=")
+        || lower.contains("password")
+}
+
+fn value_has_oversized_string(line: &str) -> bool {
     serde_json::from_str::<Value>(line)
         .map(|value| has_oversized_string(&value))
         .unwrap_or(false)

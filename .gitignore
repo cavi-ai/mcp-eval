@@ -1,2 +1,6 @@
 /target
 /.worktrees
+.code-review-graph
+.claude/
+.worktrees/
+.DS_Store

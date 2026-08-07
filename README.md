@@ -5,9 +5,9 @@
 `mcp-eval` captures what MCP servers cost agents and turns repeated friction into
 queryable evidence a development agent can act on.
 
-Phase 3 adds a deterministic probe battery, beginning with
-`degradation-over-n` and `instruction-fidelity`, plus strict sandbox declarations
-that keep mutating probes opt-in.
+Phase 4 connects the deterministic probe battery to persistent finding lifecycles.
+A finding closes only after three consecutive green verification runs and reopens
+automatically on regression, without discarding its probe history.
 
 ## Quick start
 
@@ -19,6 +19,9 @@ cargo build --release
 ./target/release/mcpeval findings --format agent
 ./target/release/mcpeval probe --server demo \
   --manifest mcp-eval.manifest.json -- your-mcp-server --flags
+./target/release/mcpeval verify --finding finding-0123456789abcdef \
+  --case literal-status --manifest mcp-eval.manifest.json \
+  -- your-mcp-server --flags
 ```
 
 Set `MCPEVAL_HOME` to choose the capture root. If it is unset, `mcp-eval` uses
@@ -53,6 +56,17 @@ aggregate metrics, and already-shaped arguments. It never emits raw error
 templates, annotation notes, session identifiers, the fingerprint salt, or raw
 argument values. Run `mcpeval index` again after new capture data, then rerun
 `mcpeval promote` before reading refreshed findings.
+
+Each promoted finding has a deterministic, privacy-safe `finding-*` identifier and
+a lifecycle state: `open`, `fix-claimed`, `verifying`, or `closed`. Use `mcpeval
+verify --finding <id> --case <manifest-case>` to run exactly one matching probe.
+The first green moves a finding to `verifying`; the third consecutive green closes
+it. A red verification resets the streak and reopens a verifying or closed finding.
+History is append-only and survives index/promotion rebuilds. Findings without an
+attached probe remain open, require manual closure, and are capped at medium
+severity. Verification performs finding, case, and tool checks before launching the
+server. Mutating verification still requires both a declared sandbox and
+`--allow-mutation`.
 
 ## What is recorded
 

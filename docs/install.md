@@ -276,3 +276,26 @@ launch. `instruction-fidelity` is deterministic and structural in Phase 3; it do
 not invoke an LLM or disclose data to a network service. Manifest arguments and
 sandbox descriptions may themselves be sensitive. They are never persisted by
 mcp-eval, but the manifest file is not a share-safe artifact.
+
+## Verify and close a finding
+
+`mcpeval findings` emits a stable `finding-*` identifier, lifecycle state, attached
+probe ID, and consecutive-pass count. Verify a finding with exactly one manifest
+case whose tool matches the finding:
+
+```sh
+mcpeval verify --finding finding-0123456789abcdef \
+  --case literal-status --manifest mcp-eval.manifest.json \
+  -- your-server
+```
+
+A failing first run records `fix-claimed`. Passing runs move the finding through
+`verifying` and close it after three consecutive greens. Any later failure reopens
+the finding and resets the streak. Verification history is append-only and survives
+`index` and `promote` rebuilds. A missing finding, unknown case, or tool mismatch is
+rejected before the server launches.
+
+Findings without a probe remain open for manual handling and are capped at medium
+severity. The `verify` command inherits the probe battery's privacy boundary and
+read-only default. For a mutating case, the manifest must declare its sandbox and
+the command must include `--allow-mutation`; verification never weakens either gate.

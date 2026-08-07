@@ -30,6 +30,7 @@ fn main() -> anyhow::Result<()> {
                     server,
                     manifest_path: manifest,
                     selected_probe,
+                    selected_case: None,
                     allow_mutation,
                     command: cmd,
                 },
@@ -58,6 +59,56 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             if !report.passed() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+        cli::Command::Verify {
+            finding,
+            case,
+            manifest,
+            allow_mutation,
+            cmd,
+        } => {
+            let declaration = mcpeval::manifest::Manifest::load(&manifest)?;
+            let selected = declaration
+                .probes
+                .iter()
+                .find(|candidate| candidate.id() == case)
+                .ok_or_else(|| anyhow::anyhow!("probe case is not declared in the manifest"))?;
+            let mut store = mcpeval::store::Store::open(None)?;
+            let server = mcpeval::lifecycle::prepare(
+                store.root(),
+                &finding,
+                selected.id(),
+                selected.tool(),
+            )?;
+            let report = mcpeval::probe::run(
+                mcpeval::probe::ProbeOptions {
+                    server,
+                    manifest_path: manifest,
+                    selected_probe: None,
+                    selected_case: Some(case.clone()),
+                    allow_mutation,
+                    command: cmd,
+                },
+                &mut store,
+            )?;
+            let passed = report.cases[0].passed();
+            let status = mcpeval::lifecycle::record(
+                store.root(),
+                &finding,
+                &case,
+                passed,
+                chrono::Utc::now(),
+            )?;
+            println!(
+                "{finding} state={} probe={} consecutive_passes={}",
+                status.state.as_str(),
+                case,
+                status.consecutive_passes
+            );
+            if !passed {
                 std::process::exit(1);
             }
             Ok(())

@@ -26,6 +26,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for both calls.
 - Streamable HTTP probe transport with JSON and SSE responses, session propagation,
   bounded I/O, and loopback-first endpoint policy.
+- Loopback-only Streamable HTTP capture proxy with bounded forwarding and the existing
+  privacy-safe call-record boundary.
 
 ### Security
 

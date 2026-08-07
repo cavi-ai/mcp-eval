@@ -205,8 +205,8 @@ fn main() -> anyhow::Result<()> {
             output,
             force,
         } => {
-            let store = mcpeval::store::Store::open(None)?;
-            let probe_id = mcpeval::generate::run(store.root(), &finding, &output, force)?;
+            let root = mcpeval::store::Store::resolve_root(None);
+            let probe_id = mcpeval::generate::run(&root, &finding, &output, force)?;
             println!("generated probe={probe_id}");
             Ok(())
         }

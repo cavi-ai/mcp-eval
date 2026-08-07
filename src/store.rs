@@ -11,15 +11,18 @@ pub struct Store {
 }
 
 impl Store {
-    pub fn open(root: Option<PathBuf>) -> anyhow::Result<Self> {
-        let root = root
-            .or_else(|| std::env::var_os("MCPEVAL_HOME").map(PathBuf::from))
+    pub fn resolve_root(root: Option<PathBuf>) -> PathBuf {
+        root.or_else(|| std::env::var_os("MCPEVAL_HOME").map(PathBuf::from))
             .unwrap_or_else(|| {
                 let home = std::env::var_os("HOME")
                     .map(PathBuf::from)
                     .unwrap_or_default();
                 home.join(".mcp-eval")
-            });
+            })
+    }
+
+    pub fn open(root: Option<PathBuf>) -> anyhow::Result<Self> {
+        let root = Self::resolve_root(root);
         create_dir_all(root.join("store")).context("creating store directory")?;
         Ok(Self { root })
     }

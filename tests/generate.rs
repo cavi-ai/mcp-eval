@@ -191,6 +191,24 @@ fn generate_cli_prints_only_the_generated_probe_for_an_eligible_finding() {
 }
 
 #[test]
+fn generate_cli_writes_the_requested_manifest_without_creating_a_store_directory() {
+    let root = TempDir::new();
+    let finding_id = promoted_finding(&root.path, json!({}));
+    std::fs::remove_dir_all(root.path.join("store")).unwrap();
+    let output = root.path.join("generated.json");
+
+    let result = generate_cli(&root.path, &finding_id, &output, false);
+
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert!(output.is_file());
+    assert!(!root.path.join("store").exists());
+}
+
+#[test]
 fn generate_cli_rejects_ineligible_findings_without_canaries_or_absolute_paths() {
     let root = TempDir::new();
     let finding_id = promoted_finding(&root.path, json!({"target": "synthetic-canary-value"}));

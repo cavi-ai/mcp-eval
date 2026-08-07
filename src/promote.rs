@@ -167,7 +167,7 @@ const DERIVED_SCHEMA: &str = "
 DROP TABLE IF EXISTS findings;
 DROP TABLE IF EXISTS issues;
 CREATE TABLE issues (
-  id INTEGER PRIMARY KEY,
+  id INTEGER PRIMARY KEY, finding_id TEXT NOT NULL UNIQUE,
   server TEXT NOT NULL, tool TEXT, err_code TEXT, err_template_id TEXT,
   failures INTEGER NOT NULL, calls INTEGER NOT NULL, sessions INTEGER NOT NULL,
   last_seen TEXT NOT NULL, cost REAL NOT NULL, blast INTEGER NOT NULL,
@@ -176,7 +176,10 @@ CREATE TABLE issues (
   args TEXT
 );
 CREATE INDEX issues_score ON issues(score DESC);
-CREATE TABLE findings (issue_id INTEGER PRIMARY KEY REFERENCES issues(id));
+CREATE TABLE findings (
+  issue_id INTEGER PRIMARY KEY REFERENCES issues(id),
+  finding_id TEXT NOT NULL UNIQUE
+);
 ";
 
 pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<PromotionStats> {
@@ -216,6 +219,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
     }
 
     let transaction = db.transaction()?;
+    transaction.execute_batch(crate::lifecycle::SCHEMA)?;
     transaction.execute_batch(DERIVED_SCHEMA)?;
     let mut findings = 0usize;
     for (key, failures) in grouped {
@@ -296,6 +300,20 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
             cost,
             blast,
         })?;
+        let finding_id = crate::lifecycle::finding_id(
+            &key.server,
+            key.tool.as_deref(),
+            key.err_code.as_deref(),
+            key.err_template_id.as_deref(),
+        );
+        let has_probe: bool = transaction
+            .query_row(
+                "SELECT probe_id IS NOT NULL FROM finding_lifecycle WHERE finding_id=?1",
+                [&finding_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(false);
         let mut severity_rank = if parts.score >= config.threshold * 4.0 {
             2
         } else if parts.score >= config.threshold * 2.0 {
@@ -306,14 +324,18 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         if uplift {
             severity_rank = (severity_rank + 1).min(2);
         }
+        if !has_probe {
+            severity_rank = severity_rank.min(1);
+        }
         let severity = ["low", "medium", "high"][severity_rank];
         let args = failures.iter().find_map(|failure| failure.args.as_deref());
         transaction.execute(
             "INSERT INTO issues
-             (server,tool,err_code,err_template_id,failures,calls,sessions,last_seen,
+             (finding_id,server,tool,err_code,err_template_id,failures,calls,sessions,last_seen,
               cost,blast,rate,confidence,recency,score,threshold,severity,args)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)",
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
             params![
+                finding_id,
                 key.server,
                 key.tool,
                 key.err_code,
@@ -334,9 +356,24 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
             ],
         )?;
         if sessions >= 2 && parts.score >= config.threshold {
+            let issue_id = transaction.last_insert_rowid();
             transaction.execute(
-                "INSERT INTO findings(issue_id) VALUES (?1)",
-                [transaction.last_insert_rowid()],
+                "INSERT INTO findings(issue_id,finding_id) VALUES (?1,?2)",
+                params![issue_id, finding_id],
+            )?;
+            transaction.execute(
+                "INSERT INTO finding_lifecycle
+                 (finding_id,server,tool,err_code,err_template_id,state,consecutive_passes,updated_at)
+                 VALUES (?1,?2,?3,?4,?5,'open',0,?6)
+                 ON CONFLICT(finding_id) DO NOTHING",
+                params![
+                    finding_id,
+                    key.server,
+                    key.tool,
+                    key.err_code,
+                    key.err_template_id,
+                    config.now.to_rfc3339_opts(SecondsFormat::Millis, true),
+                ],
             )?;
             findings += 1;
         }

@@ -118,7 +118,7 @@ fn report_agent_and_markdown_formats_are_focused_and_annotation_uplifts_severity
     let dir = promoted_home();
     let agent = render(&dir, ReportFormat::Agent).unwrap();
     let markdown = render(&dir, ReportFormat::Md).unwrap();
-    assert!(agent.contains("finding demo/click"));
+    assert!(agent.contains(" demo/click state=open probe=none"));
     assert!(agent.contains("severity=medium"));
     for field in ["rate=", "confidence=", "recency=", "threshold="] {
         assert!(
@@ -143,7 +143,7 @@ fn report_agent_and_markdown_formats_are_focused_and_annotation_uplifts_severity
 }
 
 #[test]
-fn zero_threshold_uses_the_mathematical_relative_bands() {
+fn unprobeable_findings_are_capped_at_medium() {
     let dir = promoted_home();
     promote(
         &dir,
@@ -154,5 +154,6 @@ fn zero_threshold_uses_the_mathematical_relative_bands() {
     )
     .unwrap();
     let agent = render(&dir, ReportFormat::Agent).unwrap();
-    assert!(agent.lines().any(|line| line.contains("severity=high")));
+    assert!(agent.lines().all(|line| !line.contains("severity=high")));
+    assert!(agent.lines().any(|line| line.contains("severity=medium")));
 }

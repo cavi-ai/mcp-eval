@@ -69,6 +69,7 @@ fn options(home: &TestHome, mode: &str, selected_probe: Option<ProbeKind>) -> Pr
         server: "fixture".into(),
         manifest_path: write_manifest(home, false),
         selected_probe,
+        selected_case: None,
         allow_mutation: false,
         command: vec!["python3".into(), FIXTURE.into(), mode.into()],
     }

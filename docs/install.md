@@ -250,6 +250,21 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
   --probe degradation-over-n -- your-server
 ```
 
+For a Streamable HTTP server, replace the stdio command with a loopback endpoint:
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json \
+  --url http://127.0.0.1:8080/mcp
+```
+
+The client accepts `application/json` and `text/event-stream` POST responses, carries
+the negotiated session header, sends the MCP protocol-version header, disables
+redirects, bounds responses to 8 MiB, and applies five-second network timeouts. Remote
+hosts require both HTTPS and `--allow-remote-http`. URLs containing credentials, query
+strings, or fragments are rejected. If authorization is required, provide the complete
+header value through `MCPEVAL_HTTP_AUTHORIZATION`; it is used in memory only and never
+stored or printed. Manifest mutation gates apply identically to stdio and HTTP.
+
 The command exits zero only when every selected case passes. Summaries contain case
 IDs, probe kinds, attempt counts, first-failure positions, and fixed reason labels;
 they never contain actual arguments, responses, or errors. Probe calls are recorded

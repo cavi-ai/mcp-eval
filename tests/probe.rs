@@ -72,6 +72,8 @@ fn options(home: &TestHome, mode: &str, selected_probe: Option<ProbeKind>) -> Pr
         selected_case: None,
         allow_mutation: false,
         command: vec!["python3".into(), FIXTURE.into(), mode.into()],
+        http_url: None,
+        allow_remote_http: false,
     }
 }
 

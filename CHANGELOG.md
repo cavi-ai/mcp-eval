@@ -24,6 +24,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   fixed failure reasons, and clean/broken fixture coverage.
 - Two-client `contention` probes with synchronized execution and sanitized records
   for both calls.
+- Streamable HTTP probe transport with JSON and SSE responses, session propagation,
+  bounded I/O, and loopback-first endpoint policy.
 
 ### Security
 

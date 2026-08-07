@@ -57,6 +57,7 @@ impl CallRecord {
         }
         safe.kind = match safe.kind.as_str() {
             "real" => "real".into(),
+            "synthetic" => "synthetic".into(),
             "unparsed" => "unparsed".into(),
             _ => "unparsed".into(),
         };

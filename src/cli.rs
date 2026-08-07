@@ -7,6 +7,12 @@ pub enum FindingsFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum ProbeSelection {
+    DegradationOverN,
+    InstructionFidelity,
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "mcpeval",
@@ -25,6 +31,24 @@ pub enum Command {
         /// Name this server is recorded under.
         #[arg(long)]
         server: String,
+        /// The server command, after `--`.
+        #[arg(last = true, required = true)]
+        cmd: Vec<String>,
+    },
+    /// Run deterministic, privacy-safe probes against an MCP stdio server.
+    Probe {
+        /// Name this server is recorded under.
+        #[arg(long)]
+        server: String,
+        /// Strict versioned probe and sandbox declaration.
+        #[arg(long, default_value = "mcp-eval.manifest.json")]
+        manifest: std::path::PathBuf,
+        /// Run only one probe kind.
+        #[arg(long, value_enum)]
+        probe: Option<ProbeSelection>,
+        /// Explicitly authorize manifest-declared sandbox mutations.
+        #[arg(long)]
+        allow_mutation: bool,
         /// The server command, after `--`.
         #[arg(last = true, required = true)]
         cmd: Vec<String>,

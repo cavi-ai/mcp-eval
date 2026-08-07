@@ -39,10 +39,11 @@ fn shim_rejects_server_labels_that_could_carry_content() {
 fn promotion_home() -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("mcpeval-cli-{}", uuid::Uuid::new_v4()));
     let mut store = Store::open(Some(dir.clone())).unwrap();
+    let ts = chrono::Utc::now().to_rfc3339();
     for (session, seq) in [("s1", 1), ("s2", 1)] {
         store
             .append(&CallRecord {
-                ts: "2026-08-05T00:00:00Z".into(),
+                ts: ts.clone(),
                 session: session.into(),
                 seq,
                 server: "demo".into(),

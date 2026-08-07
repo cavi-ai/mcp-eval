@@ -9,6 +9,59 @@ fn main() -> anyhow::Result<()> {
             let code = mcpeval::shim::run(server, cmd)?;
             std::process::exit(code);
         }
+        cli::Command::Probe {
+            server,
+            manifest,
+            probe,
+            allow_mutation,
+            cmd,
+        } => {
+            let selected_probe = probe.map(|probe| match probe {
+                cli::ProbeSelection::DegradationOverN => {
+                    mcpeval::manifest::ProbeKind::DegradationOverN
+                }
+                cli::ProbeSelection::InstructionFidelity => {
+                    mcpeval::manifest::ProbeKind::InstructionFidelity
+                }
+            });
+            let mut store = mcpeval::store::Store::open(None)?;
+            let report = mcpeval::probe::run(
+                mcpeval::probe::ProbeOptions {
+                    server,
+                    manifest_path: manifest,
+                    selected_probe,
+                    allow_mutation,
+                    command: cmd,
+                },
+                &mut store,
+            )?;
+            for case in &report.cases {
+                let probe = match case.probe {
+                    mcpeval::manifest::ProbeKind::DegradationOverN => "degradation-over-n",
+                    mcpeval::manifest::ProbeKind::InstructionFidelity => "instruction-fidelity",
+                };
+                if case.passed() {
+                    println!("{} {probe} pass attempts={}", case.id, case.attempts);
+                } else {
+                    let reason = match case.reason.expect("failed case has a reason") {
+                        mcpeval::probe::FailureReason::UnexpectedOutcome => "unexpected-outcome",
+                        mcpeval::probe::FailureReason::MissingField => "missing-field",
+                        mcpeval::probe::FailureReason::ValueMismatch => "value-mismatch",
+                        mcpeval::probe::FailureReason::ErrorCodeMismatch => "error-code-mismatch",
+                    };
+                    println!(
+                        "{} {probe} fail attempts={} first_failure={} reason={reason}",
+                        case.id,
+                        case.attempts,
+                        case.first_failure.expect("failed case has a failure index")
+                    );
+                }
+            }
+            if !report.passed() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         cli::Command::Index => {
             let store = mcpeval::store::Store::open(None)?;
             let stats = mcpeval::index::build(store.root())?;

@@ -368,6 +368,37 @@ fn store_sanitizes_every_directly_constructed_persistence_field() {
 }
 
 #[test]
+fn synthetic_probe_records_keep_their_kind_without_persisting_canaries() {
+    let dir = tempdir();
+    let mut rec = sample(11);
+    rec.kind = "synthetic".into();
+    rec.args = Some(json!({"secret": "CANARY-argument"}));
+    rec.error = Some(ErrorInfo {
+        code: Some(json!("CANARY error prose")),
+        layer: Some("CANARY-layer".into()),
+        retryable: Some(false),
+        kind: Some("CANARY-kind".into()),
+        template: Some("CANARY-template".into()),
+        template_id: Some("not-a-fingerprint".into()),
+    });
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store.append(&rec).unwrap();
+
+    let path = std::fs::read_dir(dir.join("store"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let body = std::fs::read_to_string(path).unwrap();
+    assert!(!body.contains("CANARY"), "synthetic record leaked: {body}");
+    let stored: serde_json::Value = serde_json::from_str(body.trim()).unwrap();
+    assert_eq!(stored["kind"], "synthetic");
+    assert_eq!(stored["args"]["secret"], "str<32");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn identifier_error_codes_are_kept_and_prose_codes_are_bucketed() {
     use mcpeval::fingerprint::Salt;
     use serde_json::json;

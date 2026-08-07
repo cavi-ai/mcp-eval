@@ -194,21 +194,85 @@ annotation prose, sessions, paths, salt, and raw request values. This makes the
 report safe by the same automated boundary as indexed calls; the underlying
 `annotations-*.jsonl` files still require the human review described above.
 
-## Bobby Browser live validation — 2026-08-04
+## Run the Phase 3 probe battery
 
-The release shim was validated against a fresh Bobby Browser stdio gateway child
-connected to the already-running service on `127.0.0.1:7777`; the service and its
-repository were not changed, stopped, or reconfigured.
+Create a strict `mcp-eval.manifest.json` beside the server project. Unknown fields,
+unsupported versions, unsafe access/sandbox combinations, and invalid expectations
+are rejected before the server process starts:
 
-The MCP 2025-11-25 handshake succeeded, `tools/list` returned 43 tools, and the
-selected `runtime_info` tool was annotated read-only and non-destructive. Its
-normal `tools/call` succeeded. A separate invalid-argument request to that same
-read-only tool exercised redaction without executing a browser action.
+```json
+{
+  "version": 1,
+  "probes": [
+    {
+      "id": "repeat-read",
+      "probe": "degradation-over-n",
+      "tool": "read_counter",
+      "access": "read_only",
+      "arguments": {},
+      "max_attempts": 5
+    },
+    {
+      "id": "literal-status",
+      "probe": "instruction-fidelity",
+      "tool": "describe_status",
+      "access": "read_only",
+      "arguments": {},
+      "expect": {
+        "outcome": "ok",
+        "required_result_fields": ["status"],
+        "equals": {"status": "ready"}
+      }
+    }
+  ]
+}
+```
 
-`mcpeval index` printed `indexed 4 calls, 1 failures`. SQLite then confirmed that
-all 4 records were real and belonged to 1 session, with 3 successful calls, 1
-error, and 3 failure-window rows. The planted-value scan and the common-pattern
-scan above each found 0 persisted matches. The redaction-probe arguments contained
-only string buckets, `url:example.co.uk`, `url:ip`, `url:localhost`, and
-`url:host`. Its error fields contained a scalar code and the constant `{message}`;
-no raw request or response payload is included here.
+Run every case or select one probe kind:
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json -- your-server
+mcpeval probe --server demo --manifest mcp-eval.manifest.json \
+  --probe degradation-over-n -- your-server
+```
+
+The command exits zero only when every selected case passes. Summaries contain case
+IDs, probe kinds, attempt counts, first-failure positions, and fixed reason labels;
+they never contain actual arguments, responses, or errors. Probe calls are recorded
+as privacy-sanitized `synthetic` calls.
+
+Mutation has two independent gates. The manifest must declare a named sandbox and the
+case must reference it:
+
+```json
+{
+  "version": 1,
+  "sandboxes": {
+    "fixture": {"description": "isolated disposable fixture state"}
+  },
+  "probes": [
+    {
+      "id": "reset-fixture",
+      "probe": "instruction-fidelity",
+      "tool": "reset_counter",
+      "access": "mutating",
+      "sandbox": "fixture",
+      "arguments": {},
+      "expect": {"outcome": "ok", "equals": {"reset": true}}
+    }
+  ]
+}
+```
+
+The operator must then opt in explicitly:
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json \
+  --allow-mutation -- your-server
+```
+
+Use only an isolated, disposable target. Without both gates, mcp-eval fails before
+launch. `instruction-fidelity` is deterministic and structural in Phase 3; it does
+not invoke an LLM or disclose data to a network service. Manifest arguments and
+sandbox descriptions may themselves be sensitive. They are never persisted by
+mcp-eval, but the manifest file is not a share-safe artifact.

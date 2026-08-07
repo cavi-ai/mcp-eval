@@ -40,6 +40,21 @@ pub enum Command {
         #[arg(last = true, required = true)]
         cmd: Vec<String>,
     },
+    /// Proxy a Streamable HTTP MCP endpoint and record sanitized call metadata.
+    ShimHttp {
+        /// Name this server is recorded under.
+        #[arg(long)]
+        server: String,
+        /// Loopback socket address to accept MCP requests on.
+        #[arg(long)]
+        listen: String,
+        /// Streamable HTTP endpoint to forward requests to.
+        #[arg(long)]
+        upstream: String,
+        /// Allow an explicitly selected remote HTTPS upstream.
+        #[arg(long)]
+        allow_remote_http: bool,
+    },
     /// Run deterministic, privacy-safe probes against an MCP server.
     Probe {
         /// Name this server is recorded under.

@@ -4,6 +4,7 @@ pub mod errtemplate;
 pub mod fingerprint;
 pub mod frame;
 pub mod http_client;
+pub mod http_proxy;
 pub mod index;
 pub mod lifecycle;
 pub mod manifest;

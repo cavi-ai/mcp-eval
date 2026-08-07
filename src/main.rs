@@ -9,6 +9,12 @@ fn main() -> anyhow::Result<()> {
             let code = mcpeval::shim::run(server, cmd)?;
             std::process::exit(code);
         }
+        cli::Command::ShimHttp {
+            server,
+            listen,
+            upstream,
+            allow_remote_http,
+        } => mcpeval::http_proxy::run(server, listen, upstream, allow_remote_http),
         cli::Command::Probe {
             server,
             manifest,

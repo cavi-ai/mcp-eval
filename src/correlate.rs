@@ -42,7 +42,21 @@ impl Correlator {
         self.on_outbound_with_overhead(v, now_ms, 0);
     }
 
+    pub fn on_outbound_scoped(&mut self, v: &Value, now_ms: u64, scope: &str) {
+        self.on_outbound_scoped_with_overhead(v, now_ms, 0, scope);
+    }
+
     pub fn on_outbound_with_overhead(&mut self, v: &Value, now_ms: u64, base_us: u64) {
+        self.on_outbound_scoped_with_overhead(v, now_ms, base_us, "");
+    }
+
+    fn on_outbound_scoped_with_overhead(
+        &mut self,
+        v: &Value,
+        now_ms: u64,
+        base_us: u64,
+        scope: &str,
+    ) {
         let started = std::time::Instant::now();
         let Some(method) = v.get("method").and_then(Value::as_str) else {
             return;
@@ -67,7 +81,7 @@ impl Correlator {
             )
         });
         self.pending.insert(
-            id,
+            format!("{scope}:{id}"),
             Pending {
                 method: method.to_string(),
                 tool,
@@ -79,10 +93,14 @@ impl Correlator {
     }
 
     pub fn on_inbound(&mut self, v: &Value, now_ms: u64) -> Option<CallRecord> {
+        self.on_inbound_scoped(v, now_ms, "")
+    }
+
+    pub fn on_inbound_scoped(&mut self, v: &Value, now_ms: u64, scope: &str) -> Option<CallRecord> {
         let is_response = v.get("result").is_some() || v.get("error").is_some();
         if let Some(result) = v.get("result") {
             if let Some(id) = id_key(v) {
-                if let Some(p) = self.pending.get(&id) {
+                if let Some(p) = self.pending.get(&format!("{scope}:{id}")) {
                     if p.method == "tools/list" {
                         self.learn_tools(result);
                     }
@@ -91,7 +109,7 @@ impl Correlator {
         }
         match id_key(v) {
             Some(id) if is_response => {
-                let p = self.pending.remove(&id)?;
+                let p = self.pending.remove(&format!("{scope}:{id}"))?;
                 let is_error = v.get("error").is_some();
                 self.seq += 1;
                 Some(CallRecord {

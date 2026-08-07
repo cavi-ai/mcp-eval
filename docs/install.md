@@ -194,7 +194,7 @@ annotation prose, sessions, paths, salt, and raw request values. This makes the
 report safe by the same automated boundary as indexed calls; the underlying
 `annotations-*.jsonl` files still require the human review described above.
 
-## Run the Phase 3 probe battery
+## Run the probe battery
 
 Create a strict `mcp-eval.manifest.json` beside the server project. Unknown fields,
 unsupported versions, unsafe access/sandbox combinations, and invalid expectations
@@ -204,6 +204,20 @@ are rejected before the server process starts:
 {
   "version": 1,
   "probes": [
+    {
+      "id": "bounded-discovery",
+      "probe": "discovery-cost",
+      "access": "read_only",
+      "max_tools": 10,
+      "max_schema_bytes": 1000
+    },
+    {
+      "id": "naive-status",
+      "probe": "schema-guessability",
+      "tool": "describe_status",
+      "access": "read_only",
+      "arguments": {}
+    },
     {
       "id": "repeat-read",
       "probe": "degradation-over-n",
@@ -240,6 +254,13 @@ The command exits zero only when every selected case passes. Summaries contain c
 IDs, probe kinds, attempt counts, first-failure positions, and fixed reason labels;
 they never contain actual arguments, responses, or errors. Probe calls are recorded
 as privacy-sanitized `synthetic` calls.
+
+`discovery-cost` measures the number of declared tools and encoded bytes in the
+`tools/list` catalog against manifest limits. `schema-guessability` validates the
+selected tool's object schema, checks that required fields exist in both `properties`
+and the declared naive arguments, then requires that call to succeed. Tool descriptions
+and full schemas are held only for the process lifetime; output contains counts and
+fixed failure reasons, never catalog text or schema content.
 
 Mutation has two independent gates. The manifest must declare a named sandbox and the
 case must reference it:

@@ -51,6 +51,21 @@ pub struct Expectation {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "probe", deny_unknown_fields)]
 pub enum ProbeCase {
+    #[serde(rename = "discovery-cost")]
+    DiscoveryCost {
+        id: String,
+        access: Access,
+        max_tools: u64,
+        max_schema_bytes: u64,
+    },
+    #[serde(rename = "schema-guessability")]
+    SchemaGuessability {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        arguments: Value,
+    },
     #[serde(rename = "degradation-over-n")]
     DegradationOverN {
         id: String,
@@ -73,6 +88,8 @@ pub enum ProbeCase {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProbeKind {
+    DiscoveryCost,
+    SchemaGuessability,
     DegradationOverN,
     InstructionFidelity,
 }
@@ -80,41 +97,53 @@ pub enum ProbeKind {
 impl ProbeCase {
     pub fn id(&self) -> &str {
         match self {
-            Self::DegradationOverN { id, .. } | Self::InstructionFidelity { id, .. } => id,
+            Self::DiscoveryCost { id, .. }
+            | Self::SchemaGuessability { id, .. }
+            | Self::DegradationOverN { id, .. }
+            | Self::InstructionFidelity { id, .. } => id,
         }
     }
 
-    pub fn tool(&self) -> &str {
+    pub fn tool(&self) -> Option<&str> {
         match self {
-            Self::DegradationOverN { tool, .. } | Self::InstructionFidelity { tool, .. } => tool,
+            Self::DiscoveryCost { .. } => None,
+            Self::SchemaGuessability { tool, .. }
+            | Self::DegradationOverN { tool, .. }
+            | Self::InstructionFidelity { tool, .. } => Some(tool),
         }
     }
 
     pub fn access(&self) -> Access {
         match self {
-            Self::DegradationOverN { access, .. } | Self::InstructionFidelity { access, .. } => {
-                *access
-            }
+            Self::DiscoveryCost { access, .. }
+            | Self::SchemaGuessability { access, .. }
+            | Self::DegradationOverN { access, .. }
+            | Self::InstructionFidelity { access, .. } => *access,
         }
     }
 
     pub fn sandbox(&self) -> Option<&str> {
         match self {
-            Self::DegradationOverN { sandbox, .. } | Self::InstructionFidelity { sandbox, .. } => {
-                sandbox.as_deref()
-            }
+            Self::DiscoveryCost { .. } => None,
+            Self::SchemaGuessability { sandbox, .. }
+            | Self::DegradationOverN { sandbox, .. }
+            | Self::InstructionFidelity { sandbox, .. } => sandbox.as_deref(),
         }
     }
 
-    pub fn arguments(&self) -> &Value {
+    pub fn arguments(&self) -> Option<&Value> {
         match self {
-            Self::DegradationOverN { arguments, .. }
-            | Self::InstructionFidelity { arguments, .. } => arguments,
+            Self::DiscoveryCost { .. } => None,
+            Self::SchemaGuessability { arguments, .. }
+            | Self::DegradationOverN { arguments, .. }
+            | Self::InstructionFidelity { arguments, .. } => Some(arguments),
         }
     }
 
     pub fn kind(&self) -> ProbeKind {
         match self {
+            Self::DiscoveryCost { .. } => ProbeKind::DiscoveryCost,
+            Self::SchemaGuessability { .. } => ProbeKind::SchemaGuessability,
             Self::DegradationOverN { .. } => ProbeKind::DegradationOverN,
             Self::InstructionFidelity { .. } => ProbeKind::InstructionFidelity,
         }
@@ -123,14 +152,14 @@ impl ProbeCase {
     pub fn max_attempts(&self) -> Option<u64> {
         match self {
             Self::DegradationOverN { max_attempts, .. } => Some(*max_attempts),
-            Self::InstructionFidelity { .. } => None,
+            _ => None,
         }
     }
 
     pub fn expectation(&self) -> Option<&Expectation> {
         match self {
             Self::InstructionFidelity { expect, .. } => Some(expect),
-            Self::DegradationOverN { .. } => None,
+            _ => None,
         }
     }
 }
@@ -168,10 +197,13 @@ impl Manifest {
             if !ids.insert(case.id()) {
                 bail!("probe ids must be unique");
             }
-            if !privacy::valid_tool(case.tool()) {
+            if case.tool().is_some_and(|tool| !privacy::valid_tool(tool)) {
                 bail!("probe tool is invalid");
             }
-            if !case.arguments().is_object() {
+            if case
+                .arguments()
+                .is_some_and(|arguments| !arguments.is_object())
+            {
                 bail!("probe arguments must be an object");
             }
             match (case.access(), case.sandbox()) {
@@ -184,6 +216,22 @@ impl Manifest {
                 (Access::Mutating, Some(_)) => {}
             }
             match case {
+                ProbeCase::DiscoveryCost {
+                    access,
+                    max_tools,
+                    max_schema_bytes,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("discovery-cost must be read-only");
+                    }
+                    if !(1..=10_000).contains(max_tools)
+                        || !(1..=10_000_000).contains(max_schema_bytes)
+                    {
+                        bail!("discovery limits are out of range");
+                    }
+                }
+                ProbeCase::SchemaGuessability { .. } => {}
                 ProbeCase::DegradationOverN { max_attempts, .. } => {
                     if !(2..=100).contains(max_attempts) {
                         bail!("max_attempts must be between 2 and 100");

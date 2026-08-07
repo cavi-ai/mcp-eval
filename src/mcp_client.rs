@@ -17,6 +17,18 @@ pub enum ToolResponse {
     Error { code: i64, payload: Value },
 }
 
+#[derive(Debug)]
+pub struct ToolDefinition {
+    pub name: String,
+    pub input_schema: Value,
+}
+
+#[derive(Debug)]
+pub struct ToolCatalog {
+    pub tools: Vec<ToolDefinition>,
+    pub encoded_bytes: usize,
+}
+
 pub struct McpClient {
     child: Child,
     stdin: Option<ChildStdin>,
@@ -78,13 +90,23 @@ impl McpClient {
     }
 
     pub fn list_tools(&mut self) -> anyhow::Result<Vec<String>> {
+        Ok(self
+            .list_tools_catalog()?
+            .tools
+            .into_iter()
+            .map(|tool| tool.name)
+            .collect())
+    }
+
+    pub fn list_tools_catalog(&mut self) -> anyhow::Result<ToolCatalog> {
         let response = self.request("tools/list", json!({}))?;
         let tools = response
             .get("result")
             .and_then(|result| result.get("tools"))
             .and_then(Value::as_array)
             .context("tools/list response is missing tools")?;
-        tools
+        let encoded_bytes = serde_json::to_vec(tools)?.len();
+        let tools = tools
             .iter()
             .map(|tool| {
                 let name = tool
@@ -94,9 +116,23 @@ impl McpClient {
                 if !privacy::valid_tool(name) {
                     bail!("tool entry has an invalid name");
                 }
-                Ok(name.to_owned())
+                let input_schema = tool
+                    .get("inputSchema")
+                    .cloned()
+                    .context("tool entry is missing inputSchema")?;
+                if !input_schema.is_object() {
+                    bail!("tool inputSchema is not an object");
+                }
+                Ok(ToolDefinition {
+                    name: name.to_owned(),
+                    input_schema,
+                })
             })
-            .collect()
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        Ok(ToolCatalog {
+            tools,
+            encoded_bytes,
+        })
     }
 
     pub fn call_tool(&mut self, tool: &str, arguments: &Value) -> anyhow::Result<ToolResponse> {

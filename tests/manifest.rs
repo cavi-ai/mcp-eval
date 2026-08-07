@@ -148,3 +148,25 @@ fn fidelity_expectations_are_structural_and_outcome_specific() {
     success_code["probes"][1]["expect"]["error_code"] = json!(-32000);
     assert!(parse(&success_code).is_err());
 }
+
+#[test]
+fn discovery_cost_is_read_only_and_has_bounded_limits() {
+    let mut value = valid_manifest();
+    value["probes"] = json!([{
+        "id": "bounded-discovery",
+        "probe": "discovery-cost",
+        "access": "read_only",
+        "max_tools": 10,
+        "max_schema_bytes": 1000
+    }]);
+    assert!(parse(&value).is_ok());
+
+    for (field, invalid) in [("max_tools", 0), ("max_schema_bytes", 10_000_001)] {
+        let mut invalid_value = value.clone();
+        invalid_value["probes"][0][field] = json!(invalid);
+        assert!(parse(&invalid_value).is_err());
+    }
+
+    value["probes"][0]["access"] = json!("mutating");
+    assert!(parse(&value).is_err());
+}

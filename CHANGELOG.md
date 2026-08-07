@@ -18,6 +18,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Stable privacy-safe finding IDs and persistent finding lifecycle state.
 - Targeted `verify` runs with three-consecutive-green closure, automatic
   regression reopening, and append-only probe history.
+- Deterministic `discovery-cost` and `schema-guessability` probes with bounded,
+  privacy-safe measurements.
 
 ### Security
 

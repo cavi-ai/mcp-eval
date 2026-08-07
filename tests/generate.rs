@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use chrono::{TimeZone, Utc};
 use mcpeval::generate;
@@ -7,6 +8,10 @@ use mcpeval::promote::{promote, PromotionConfig};
 use mcpeval::record::{CallRecord, ErrorInfo};
 use mcpeval::store::Store;
 use serde_json::json;
+
+fn bin() -> &'static str {
+    env!("CARGO_BIN_EXE_mcpeval")
+}
 
 struct TempDir {
     path: PathBuf,
@@ -70,6 +75,23 @@ fn promoted_finding(root: &Path, arguments: serde_json::Value) -> String {
         .unwrap()
         .query_row("SELECT finding_id FROM findings", [], |row| row.get(0))
         .unwrap()
+}
+
+fn generate_cli(root: &Path, finding_id: &str, output: &Path, force: bool) -> Output {
+    let mut command = Command::new(bin());
+    command
+        .args([
+            "generate",
+            "--finding",
+            finding_id,
+            "--output",
+            output.to_str().unwrap(),
+        ])
+        .env("MCPEVAL_HOME", root);
+    if force {
+        command.arg("--force");
+    }
+    command.output().unwrap()
 }
 
 #[test]
@@ -145,4 +167,72 @@ fn rejects_promoted_findings_with_non_empty_arguments_without_leaking_them() {
     .to_string();
 
     assert!(!error.contains("synthetic-canary-value"));
+}
+
+#[test]
+fn generate_cli_prints_only_the_generated_probe_for_an_eligible_finding() {
+    let root = TempDir::new();
+    let finding_id = promoted_finding(&root.path, json!({}));
+    let output = root.path.join("generated.json");
+
+    let result = generate_cli(&root.path, &finding_id, &output, false);
+
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(result.stdout).unwrap(),
+        format!("generated probe={finding_id}\n")
+    );
+    assert!(result.stderr.is_empty());
+    mcpeval::manifest::Manifest::load(&output).unwrap();
+}
+
+#[test]
+fn generate_cli_rejects_ineligible_findings_without_canaries_or_absolute_paths() {
+    let root = TempDir::new();
+    let finding_id = promoted_finding(&root.path, json!({"target": "synthetic-canary-value"}));
+    let output = root.path.join("generated.json");
+
+    let result = generate_cli(&root.path, &finding_id, &output, false);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&result.stdout),
+        String::from_utf8_lossy(&result.stderr)
+    );
+
+    assert!(!result.status.success());
+    assert!(text.contains("finding arguments must be exactly {}"));
+    assert!(!text.contains("synthetic-canary"));
+    assert!(!text.contains(root.path.to_str().unwrap()));
+}
+
+#[test]
+fn generate_cli_requires_force_to_replace_an_existing_output() {
+    let root = TempDir::new();
+    let finding_id = promoted_finding(&root.path, json!({}));
+    let output = root.path.join("generated.json");
+    std::fs::write(&output, "existing manifest\n").unwrap();
+
+    let denied = generate_cli(&root.path, &finding_id, &output, false);
+
+    assert!(!denied.status.success());
+    assert_eq!(
+        std::fs::read_to_string(&output).unwrap(),
+        "existing manifest\n"
+    );
+
+    let forced = generate_cli(&root.path, &finding_id, &output, true);
+
+    assert!(
+        forced.status.success(),
+        "{}",
+        String::from_utf8_lossy(&forced.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(forced.stdout).unwrap(),
+        format!("generated probe={finding_id}\n")
+    );
 }

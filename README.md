@@ -20,6 +20,8 @@ cargo build --release
 ./target/release/mcpeval index
 ./target/release/mcpeval promote
 ./target/release/mcpeval findings --format agent
+./target/release/mcpeval generate --finding finding-0123456789abcdef \
+  --output generated.manifest.json
 ./target/release/mcpeval probe --server demo \
   --manifest mcp-eval.manifest.json -- your-mcp-server --flags
 ./target/release/mcpeval probe --server demo \
@@ -102,6 +104,12 @@ attached probe remain open, require manual closure, and are capped at medium
 severity. Verification performs finding, case, and tool checks before launching the
 server. Mutating verification still requires both a declared sandbox and
 `--allow-mutation`.
+
+`mcpeval generate --finding <id> --output <path>` creates a deterministic manifest
+for an eligible promoted finding. Eligibility requires a valid tool and exactly empty
+captured arguments; the generated case is a read-only `degradation-over-n` probe.
+Generation writes only the requested manifest file and never replaces an existing
+file unless `--force` is passed.
 
 ## What is recorded
 

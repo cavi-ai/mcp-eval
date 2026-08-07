@@ -200,6 +200,16 @@ fn main() -> anyhow::Result<()> {
             println!("promoted {} of {} issues", stats.findings, stats.issues);
             Ok(())
         }
+        cli::Command::Generate {
+            finding,
+            output,
+            force,
+        } => {
+            let store = mcpeval::store::Store::open(None)?;
+            let probe_id = mcpeval::generate::run(store.root(), &finding, &output, force)?;
+            println!("generated probe={probe_id}");
+            Ok(())
+        }
         cli::Command::Findings { format } => {
             let store = mcpeval::store::Store::open(None)?;
             let format = match format {

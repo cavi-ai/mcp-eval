@@ -111,6 +111,18 @@ pub enum Command {
         #[arg(long)]
         threshold: Option<f64>,
     },
+    /// Generate a read-only manifest from an eligible promoted finding.
+    Generate {
+        /// Stable ID emitted by `mcpeval findings`.
+        #[arg(long)]
+        finding: String,
+        /// Path for the generated manifest.
+        #[arg(long)]
+        output: std::path::PathBuf,
+        /// Replace an existing output file.
+        #[arg(long)]
+        force: bool,
+    },
     /// Render promoted findings without exposing captured private content.
     Findings {
         /// Output format for agents, people, or structured consumers.

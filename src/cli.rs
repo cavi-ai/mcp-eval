@@ -53,6 +53,24 @@ pub enum Command {
         #[arg(last = true, required = true)]
         cmd: Vec<String>,
     },
+    /// Verify one finding with one manifest case and advance its lifecycle.
+    Verify {
+        /// Stable ID emitted by `mcpeval findings`.
+        #[arg(long)]
+        finding: String,
+        /// Probe case ID from the manifest.
+        #[arg(long)]
+        case: String,
+        /// Strict versioned probe and sandbox declaration.
+        #[arg(long, default_value = "mcp-eval.manifest.json")]
+        manifest: std::path::PathBuf,
+        /// Explicitly authorize a manifest-declared sandbox mutation.
+        #[arg(long)]
+        allow_mutation: bool,
+        /// The server command, after `--`.
+        #[arg(last = true, required = true)]
+        cmd: Vec<String>,
+    },
     /// Load JSONL records into the SQLite index and derive failure windows.
     Index,
     /// Aggregate indexed failures into issues and promote supported findings.

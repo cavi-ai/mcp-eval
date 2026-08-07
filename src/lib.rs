@@ -4,6 +4,7 @@ pub mod errtemplate;
 pub mod fingerprint;
 pub mod frame;
 pub mod index;
+pub mod lifecycle;
 pub mod manifest;
 pub mod mcp_client;
 pub mod privacy;

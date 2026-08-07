@@ -13,6 +13,7 @@ pub struct ProbeOptions {
     pub server: String,
     pub manifest_path: PathBuf,
     pub selected_probe: Option<ProbeKind>,
+    pub selected_case: Option<String>,
     pub allow_mutation: bool,
     pub command: Vec<String>,
 }
@@ -56,13 +57,20 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
         bail!("server label is invalid");
     }
     let manifest = Manifest::load(&options.manifest_path)?;
+    if options.selected_probe.is_some() && options.selected_case.is_some() {
+        bail!("select a probe kind or a probe case, not both");
+    }
     let cases: Vec<&ProbeCase> = manifest
         .probes
         .iter()
         .filter(|case| {
             options
-                .selected_probe
-                .is_none_or(|kind| case.kind() == kind)
+                .selected_case
+                .as_deref()
+                .is_none_or(|id| case.id() == id)
+                && options
+                    .selected_probe
+                    .is_none_or(|kind| case.kind() == kind)
         })
         .collect();
     if cases.is_empty() {

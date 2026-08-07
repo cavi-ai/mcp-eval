@@ -262,6 +262,17 @@ and the declared naive arguments, then requires that call to succeed. Tool descr
 and full schemas are held only for the process lifetime; output contains counts and
 fixed failure reasons, never catalog text or schema content.
 
+An `error-honesty` case declares a bounded retry count and expected retryability.
+The first call must fail, error codes must remain stable, retryability must match,
+and a retryable error must recover before the bound. A non-retryable error must remain
+stable across two observations. Output contains only attempt counts and fixed reasons.
+
+`state-recovery` declares three tools and argument objects: one that demonstrates the
+failure, one that performs recovery, and one that validates health afterward. The
+failure must fail and both later calls must succeed. All three calls are sanitized and
+recorded as synthetic. If the sequence mutates state, declare a sandbox and pass
+`--allow-mutation`; validation and authorization happen before server launch.
+
 Mutation has two independent gates. The manifest must declare a named sandbox and the
 case must reference it:
 

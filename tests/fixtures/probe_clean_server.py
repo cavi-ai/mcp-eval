@@ -5,6 +5,7 @@ import sys
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "clean"
 calls = 0
+flaky_calls = 0
 
 for line in sys.stdin:
     request = json.loads(line)
@@ -28,10 +29,24 @@ for line in sys.stdin:
         result = {"tools": [
             {"name": "read_counter", "description": "read", "inputSchema": {"type": "object", "properties": {}}},
             {"name": "describe_status", "description": "status", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "flaky_read", "description": "retry", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "break_session", "description": "break", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "recover_session", "description": "recover", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "session_status", "description": "validate", "inputSchema": {"type": "object", "properties": {}}},
         ]}
     elif method == "tools/call":
         calls += 1
         tool = request["params"]["name"]
+        if tool == "flaky_read":
+            flaky_calls += 1
+            if flaky_calls <= 2:
+                sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": response_id, "error": {"code": -32001, "message": "CANARY retry", "retryable": True}}) + "\n")
+                sys.stdout.flush()
+                continue
+        if tool == "break_session":
+            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": response_id, "error": {"code": -32002, "message": "CANARY broken", "retryable": False}}) + "\n")
+            sys.stdout.flush()
+            continue
         if mode == "broken" and tool == "read_counter" and calls == 3:
             sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": response_id, "error": {"code": -32000, "message": "CANARY raw fixture error"}}) + "\n")
             sys.stdout.flush()

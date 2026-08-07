@@ -16,7 +16,17 @@ fn initializes_lists_and_calls_a_real_stdio_server() {
     let mut client = McpClient::spawn(&command(None)).unwrap();
     client.initialize().unwrap();
     let tools = client.list_tools().unwrap();
-    assert_eq!(tools, vec!["read_counter", "describe_status"]);
+    assert_eq!(
+        tools,
+        vec![
+            "read_counter",
+            "describe_status",
+            "flaky_read",
+            "break_session",
+            "recover_session",
+            "session_status"
+        ]
+    );
     let response = client.call_tool("read_counter", &json!({})).unwrap();
     match response {
         ToolResponse::Success(value) => {

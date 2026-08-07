@@ -5,8 +5,8 @@
 `mcp-eval` captures what MCP servers cost agents and turns repeated friction into
 queryable evidence a development agent can act on.
 
-Phase 5 expands the deterministic battery with `discovery-cost` and
-`schema-guessability`. A finding closes only after three consecutive green
+The deterministic battery includes `discovery-cost`, `schema-guessability`,
+`error-honesty`, and `state-recovery`. A finding closes only after three consecutive green
 verification runs and reopens automatically on regression, without discarding its
 probe history.
 
@@ -45,6 +45,11 @@ catalog size. `schema-guessability` checks that the selected tool exposes a cohe
 object schema, that every required field is declared and supplied by the manifest's
 naive call, and that the call succeeds. Catalog descriptions and schemas are measured
 in memory but never persisted or printed.
+`error-honesty` verifies stable error codes, truthful retryability metadata, and
+eventual recovery within a declared bound. `state-recovery` executes an explicit
+failure, recovery, and validation sequence. Its calls use the normal sanitized
+synthetic-record boundary, and mutating sequences require both sandbox declaration
+and `--allow-mutation`.
 
 Promotion groups failures by server, tool, error code, and salted template
 identifier. Its score combines the 95% Wilson lower bound of the observed rate,

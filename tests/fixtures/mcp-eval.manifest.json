@@ -2,6 +2,15 @@
   "version": 1,
   "probes": [
     {
+      "id": "honest-retry",
+      "probe": "error-honesty",
+      "tool": "flaky_read",
+      "access": "read_only",
+      "arguments": {},
+      "max_attempts": 4,
+      "expect_retryable": true
+    },
+    {
       "id": "bounded-discovery",
       "probe": "discovery-cost",
       "access": "read_only",

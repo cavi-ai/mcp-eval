@@ -20,6 +20,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   regression reopening, and append-only probe history.
 - Deterministic `discovery-cost` and `schema-guessability` probes with bounded,
   privacy-safe measurements.
+- Deterministic `error-honesty` and `state-recovery` probes with bounded retries,
+  fixed failure reasons, and clean/broken fixture coverage.
 
 ### Security
 

@@ -17,6 +17,8 @@ fn main() -> anyhow::Result<()> {
             cmd,
         } => {
             let selected_probe = probe.map(|probe| match probe {
+                cli::ProbeSelection::ErrorHonesty => mcpeval::manifest::ProbeKind::ErrorHonesty,
+                cli::ProbeSelection::StateRecovery => mcpeval::manifest::ProbeKind::StateRecovery,
                 cli::ProbeSelection::DiscoveryCost => mcpeval::manifest::ProbeKind::DiscoveryCost,
                 cli::ProbeSelection::SchemaGuessability => {
                     mcpeval::manifest::ProbeKind::SchemaGuessability
@@ -42,6 +44,8 @@ fn main() -> anyhow::Result<()> {
             )?;
             for case in &report.cases {
                 let probe = match case.probe {
+                    mcpeval::manifest::ProbeKind::ErrorHonesty => "error-honesty",
+                    mcpeval::manifest::ProbeKind::StateRecovery => "state-recovery",
                     mcpeval::manifest::ProbeKind::DiscoveryCost => "discovery-cost",
                     mcpeval::manifest::ProbeKind::SchemaGuessability => "schema-guessability",
                     mcpeval::manifest::ProbeKind::DegradationOverN => "degradation-over-n",
@@ -69,6 +73,17 @@ fn main() -> anyhow::Result<()> {
                         mcpeval::probe::FailureReason::MissingRequiredArgument => {
                             "missing-required-argument"
                         }
+                        mcpeval::probe::FailureReason::ExpectedError => "expected-error",
+                        mcpeval::probe::FailureReason::UnstableErrorCode => "unstable-error-code",
+                        mcpeval::probe::FailureReason::RetryabilityMismatch => {
+                            "retryability-mismatch"
+                        }
+                        mcpeval::probe::FailureReason::RetryDidNotRecover => {
+                            "retry-did-not-recover"
+                        }
+                        mcpeval::probe::FailureReason::FailureNotObserved => "failure-not-observed",
+                        mcpeval::probe::FailureReason::RecoveryFailed => "recovery-failed",
+                        mcpeval::probe::FailureReason::ValidationFailed => "validation-failed",
                     };
                     if let (Some(tools), Some(bytes)) = (case.tool_count, case.schema_bytes) {
                         println!(

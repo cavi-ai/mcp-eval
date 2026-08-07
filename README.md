@@ -6,7 +6,7 @@
 queryable evidence a development agent can act on.
 
 The deterministic battery includes `discovery-cost`, `schema-guessability`,
-`error-honesty`, and `state-recovery`. A finding closes only after three consecutive green
+`error-honesty`, `state-recovery`, and `contention`. A finding closes only after three consecutive green
 verification runs and reopens automatically on regression, without discarding its
 probe history.
 
@@ -50,6 +50,9 @@ eventual recovery within a declared bound. `state-recovery` executes an explicit
 failure, recovery, and validation sequence. Its calls use the normal sanitized
 synthetic-record boundary, and mutating sequences require both sandbox declaration
 and `--allow-mutation`.
+`contention` synchronizes two independent MCP clients against the same declared tool
+and passes only when both calls succeed. Each call uses the sanitized synthetic-record
+boundary.
 
 Promotion groups failures by server, tool, error code, and salted template
 identifier. Its score combines the 95% Wilson lower bound of the observed rate,

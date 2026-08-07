@@ -2,6 +2,13 @@
   "version": 1,
   "probes": [
     {
+      "id": "parallel-read",
+      "probe": "contention",
+      "tool": "shared_read",
+      "access": "read_only",
+      "arguments": {"port": 49321}
+    },
+    {
       "id": "honest-retry",
       "probe": "error-honesty",
       "tool": "flaky_read",

@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::{mpsc, Arc, Barrier};
 use std::time::Instant;
 
 use crate::fingerprint::Salt;
@@ -34,6 +35,7 @@ pub enum FailureReason {
     FailureNotObserved,
     RecoveryFailed,
     ValidationFailed,
+    ContendedClientFailed,
 }
 
 #[derive(Debug)]
@@ -115,6 +117,7 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
         salt: &salt,
         client: &mut client,
         catalog: &catalog,
+        command: &options.command,
         store,
     };
     for case in cases {
@@ -130,11 +133,13 @@ struct RunContext<'a> {
     salt: &'a Salt,
     client: &'a mut McpClient,
     catalog: &'a ToolCatalog,
+    command: &'a [String],
     store: &'a mut Store,
 }
 
 fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
     match case {
+        ProbeCase::Contention { .. } => run_contention(case, context),
         ProbeCase::ErrorHonesty {
             max_attempts,
             expect_retryable,
@@ -248,6 +253,47 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 schema_bytes: None,
             })
         }
+    }
+}
+
+fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
+    let tool = case.tool().expect("contention has a tool").to_owned();
+    let arguments = case.arguments().expect("contention has arguments").clone();
+    let command = context.command.to_vec();
+    let barrier = Arc::new(Barrier::new(2));
+    let worker_barrier = Arc::clone(&barrier);
+    let (ready_tx, ready_rx) = mpsc::sync_channel(0);
+    let worker_tool = tool.clone();
+    let worker_arguments = arguments.clone();
+    let worker = std::thread::spawn(move || -> anyhow::Result<(ToolResponse, u64)> {
+        let mut client = McpClient::spawn(&command)?;
+        client.initialize()?;
+        let tools = client.list_tools()?;
+        if !tools.iter().any(|name| name == &worker_tool) {
+            bail!("contended client is missing the probe tool");
+        }
+        ready_tx
+            .send(())
+            .map_err(|_| anyhow::anyhow!("contention coordinator closed"))?;
+        worker_barrier.wait();
+        let started = Instant::now();
+        let response = client.call_tool(&worker_tool, &worker_arguments)?;
+        Ok((response, started.elapsed().as_millis() as u64))
+    });
+    ready_rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .map_err(|_| anyhow::anyhow!("contended client failed to initialize"))?;
+    barrier.wait();
+    let primary = call_named_and_record(&tool, &arguments, context)?;
+    let (secondary, latency_ms) = worker
+        .join()
+        .map_err(|_| anyhow::anyhow!("contended client terminated unexpectedly"))??;
+    record_response(&tool, &arguments, latency_ms, &secondary, context)?;
+    if matches!(primary, ToolResponse::Success(_)) && matches!(secondary, ToolResponse::Success(_))
+    {
+        Ok(passed_case(case, 2))
+    } else {
+        Ok(failed_case(case, 2, FailureReason::ContendedClientFailed))
     }
 }
 
@@ -365,10 +411,21 @@ fn call_named_and_record(
     arguments: &serde_json::Value,
     context: &mut RunContext<'_>,
 ) -> anyhow::Result<ToolResponse> {
-    *context.seq += 1;
     let started = Instant::now();
     let response = context.client.call_tool(tool, arguments)?;
     let latency_ms = started.elapsed().as_millis() as u64;
+    record_response(tool, arguments, latency_ms, &response, context)?;
+    Ok(response)
+}
+
+fn record_response(
+    tool: &str,
+    arguments: &serde_json::Value,
+    latency_ms: u64,
+    response: &ToolResponse,
+    context: &mut RunContext<'_>,
+) -> anyhow::Result<()> {
+    *context.seq += 1;
     let (outcome, error) = match &response {
         ToolResponse::Success(_) => ("ok", None),
         ToolResponse::Error { payload, .. } => ("error", Some(error_info(payload, context.salt))),
@@ -392,7 +449,7 @@ fn call_named_and_record(
             kind: "synthetic".into(),
         })
         .context("recording probe call")?;
-    Ok(response)
+    Ok(())
 }
 
 fn check_schema(

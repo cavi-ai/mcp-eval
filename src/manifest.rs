@@ -51,6 +51,14 @@ pub struct Expectation {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "probe", deny_unknown_fields)]
 pub enum ProbeCase {
+    #[serde(rename = "contention")]
+    Contention {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        arguments: Value,
+    },
     #[serde(rename = "error-honesty")]
     ErrorHonesty {
         id: String,
@@ -110,6 +118,7 @@ pub enum ProbeCase {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProbeKind {
+    Contention,
     ErrorHonesty,
     StateRecovery,
     DiscoveryCost,
@@ -121,7 +130,8 @@ pub enum ProbeKind {
 impl ProbeCase {
     pub fn id(&self) -> &str {
         match self {
-            Self::ErrorHonesty { id, .. }
+            Self::Contention { id, .. }
+            | Self::ErrorHonesty { id, .. }
             | Self::StateRecovery { id, .. }
             | Self::DiscoveryCost { id, .. }
             | Self::SchemaGuessability { id, .. }
@@ -133,6 +143,7 @@ impl ProbeCase {
     pub fn tool(&self) -> Option<&str> {
         match self {
             Self::DiscoveryCost { .. } => None,
+            Self::Contention { tool, .. } => Some(tool),
             Self::ErrorHonesty { tool, .. } => Some(tool),
             Self::StateRecovery { failure_tool, .. } => Some(failure_tool),
             Self::SchemaGuessability { tool, .. }
@@ -143,7 +154,8 @@ impl ProbeCase {
 
     pub fn access(&self) -> Access {
         match self {
-            Self::ErrorHonesty { access, .. }
+            Self::Contention { access, .. }
+            | Self::ErrorHonesty { access, .. }
             | Self::StateRecovery { access, .. }
             | Self::DiscoveryCost { access, .. }
             | Self::SchemaGuessability { access, .. }
@@ -155,6 +167,7 @@ impl ProbeCase {
     pub fn sandbox(&self) -> Option<&str> {
         match self {
             Self::DiscoveryCost { .. } => None,
+            Self::Contention { sandbox, .. } => sandbox.as_deref(),
             Self::ErrorHonesty { sandbox, .. } | Self::StateRecovery { sandbox, .. } => {
                 sandbox.as_deref()
             }
@@ -167,6 +180,7 @@ impl ProbeCase {
     pub fn arguments(&self) -> Option<&Value> {
         match self {
             Self::DiscoveryCost { .. } | Self::StateRecovery { .. } => None,
+            Self::Contention { arguments, .. } => Some(arguments),
             Self::ErrorHonesty { arguments, .. } => Some(arguments),
             Self::SchemaGuessability { arguments, .. }
             | Self::DegradationOverN { arguments, .. }
@@ -176,6 +190,7 @@ impl ProbeCase {
 
     pub fn kind(&self) -> ProbeKind {
         match self {
+            Self::Contention { .. } => ProbeKind::Contention,
             Self::ErrorHonesty { .. } => ProbeKind::ErrorHonesty,
             Self::StateRecovery { .. } => ProbeKind::StateRecovery,
             Self::DiscoveryCost { .. } => ProbeKind::DiscoveryCost,
@@ -270,6 +285,7 @@ impl Manifest {
                 (Access::Mutating, Some(_)) => {}
             }
             match case {
+                ProbeCase::Contention { .. } => {}
                 ProbeCase::ErrorHonesty { max_attempts, .. } => {
                     if !(2..=20).contains(max_attempts) {
                         bail!("error-honesty max_attempts must be between 2 and 20");

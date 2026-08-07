@@ -40,7 +40,7 @@ pub enum Command {
         #[arg(last = true, required = true)]
         cmd: Vec<String>,
     },
-    /// Run deterministic, privacy-safe probes against an MCP stdio server.
+    /// Run deterministic, privacy-safe probes against an MCP server.
     Probe {
         /// Name this server is recorded under.
         #[arg(long)]
@@ -54,8 +54,14 @@ pub enum Command {
         /// Explicitly authorize manifest-declared sandbox mutations.
         #[arg(long)]
         allow_mutation: bool,
+        /// Streamable HTTP endpoint instead of a stdio command.
+        #[arg(long)]
+        url: Option<String>,
+        /// Allow an explicitly selected remote HTTPS endpoint.
+        #[arg(long, requires = "url")]
+        allow_remote_http: bool,
         /// The server command, after `--`.
-        #[arg(last = true, required = true)]
+        #[arg(last = true)]
         cmd: Vec<String>,
     },
     /// Verify one finding with one manifest case and advance its lifecycle.
@@ -72,8 +78,14 @@ pub enum Command {
         /// Explicitly authorize a manifest-declared sandbox mutation.
         #[arg(long)]
         allow_mutation: bool,
+        /// Streamable HTTP endpoint instead of a stdio command.
+        #[arg(long)]
+        url: Option<String>,
+        /// Allow an explicitly selected remote HTTPS endpoint.
+        #[arg(long, requires = "url")]
+        allow_remote_http: bool,
         /// The server command, after `--`.
-        #[arg(last = true, required = true)]
+        #[arg(last = true)]
         cmd: Vec<String>,
     },
     /// Load JSONL records into the SQLite index and derive failure windows.

@@ -20,6 +20,8 @@ cargo build --release
 ./target/release/mcpeval findings --format agent
 ./target/release/mcpeval probe --server demo \
   --manifest mcp-eval.manifest.json -- your-mcp-server --flags
+./target/release/mcpeval probe --server demo \
+  --manifest mcp-eval.manifest.json --url http://127.0.0.1:8080/mcp
 ./target/release/mcpeval verify --finding finding-0123456789abcdef \
   --case literal-status --manifest mcp-eval.manifest.json \
   -- your-mcp-server --flags
@@ -31,6 +33,8 @@ a stable `session:<sha256>` token before persistence; otherwise the shim hashes
 a generated UUID for that process.
 
 The stdio shim targets Unix and Windows and expects newline-delimited JSON-RPC.
+The probe runner also supports MCP Streamable HTTP endpoints with JSON or SSE
+responses.
 See [the installation guide](docs/install.md) for MCP client configuration and
 live verification.
 
@@ -53,6 +57,12 @@ and `--allow-mutation`.
 `contention` synchronizes two independent MCP clients against the same declared tool
 and passes only when both calls succeed. Each call uses the sanitized synthetic-record
 boundary.
+
+HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS plus
+`--allow-remote-http`. Endpoint URLs must not contain credentials, query strings, or
+fragments; redirects are disabled. Optional authorization is read from
+`MCPEVAL_HTTP_AUTHORIZATION`, validated, and never persisted or printed. Responses are
+bounded to 8 MiB and use five-second connect/read/write timeouts.
 
 Promotion groups failures by server, tool, error code, and salted template
 identifier. Its score combines the 95% Wilson lower bound of the observed rate,

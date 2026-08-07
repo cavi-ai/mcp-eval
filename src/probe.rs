@@ -3,6 +3,7 @@ use std::sync::{mpsc, Arc, Barrier};
 use std::time::Instant;
 
 use crate::fingerprint::Salt;
+use crate::http_client::HttpMcpClient;
 use crate::manifest::{Access, Expectation, Manifest, OutcomeExpectation, ProbeCase, ProbeKind};
 use crate::mcp_client::{McpClient, ToolCatalog, ToolDefinition, ToolResponse};
 use crate::record::{error_info, CallRecord};
@@ -17,6 +18,83 @@ pub struct ProbeOptions {
     pub selected_case: Option<String>,
     pub allow_mutation: bool,
     pub command: Vec<String>,
+    pub http_url: Option<String>,
+    pub allow_remote_http: bool,
+}
+
+#[derive(Clone, Debug)]
+enum ClientTarget {
+    Stdio(Vec<String>),
+    Http {
+        endpoint: String,
+        allow_remote: bool,
+    },
+}
+
+enum ProbeClient {
+    Stdio(McpClient),
+    Http(HttpMcpClient),
+}
+
+impl ClientTarget {
+    fn from_options(options: &ProbeOptions) -> anyhow::Result<Self> {
+        match (&options.http_url, options.command.is_empty()) {
+            (None, false) => Ok(Self::Stdio(options.command.clone())),
+            (Some(endpoint), true) => Ok(Self::Http {
+                endpoint: endpoint.clone(),
+                allow_remote: options.allow_remote_http,
+            }),
+            (Some(_), false) => bail!("select an HTTP endpoint or a stdio command, not both"),
+            (None, true) => bail!("an HTTP endpoint or stdio command is required"),
+        }
+    }
+
+    fn connect(&self) -> anyhow::Result<ProbeClient> {
+        match self {
+            Self::Stdio(command) => Ok(ProbeClient::Stdio(McpClient::spawn(command)?)),
+            Self::Http {
+                endpoint,
+                allow_remote,
+            } => Ok(ProbeClient::Http(HttpMcpClient::connect(
+                endpoint,
+                *allow_remote,
+            )?)),
+        }
+    }
+}
+
+impl ProbeClient {
+    fn initialize(&mut self) -> anyhow::Result<()> {
+        match self {
+            Self::Stdio(client) => client.initialize(),
+            Self::Http(client) => client.initialize(),
+        }
+    }
+
+    fn list_tools(&mut self) -> anyhow::Result<Vec<String>> {
+        match self {
+            Self::Stdio(client) => client.list_tools(),
+            Self::Http(client) => client.list_tools(),
+        }
+    }
+
+    fn list_tools_catalog(&mut self) -> anyhow::Result<ToolCatalog> {
+        match self {
+            Self::Stdio(client) => client.list_tools_catalog(),
+            Self::Http(client) => client.list_tools_catalog(),
+        }
+    }
+
+    fn call_tool(
+        &mut self,
+        tool: &str,
+        arguments: &serde_json::Value,
+    ) -> anyhow::Result<ToolResponse> {
+        match self {
+            Self::Stdio(client) => client.call_tool(tool, arguments),
+            Self::Http(client) => client.call_tool(tool, arguments),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -93,11 +171,12 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     if cases.iter().any(|case| case.access() == Access::Mutating) && !options.allow_mutation {
         bail!("mutating probes require --allow-mutation");
     }
+    let target = ClientTarget::from_options(&options)?;
 
     let salt = Salt::load(store.root())?;
     let session = uuid::Uuid::new_v4().to_string();
     let mut seq = 0;
-    let mut client = McpClient::spawn(&options.command)?;
+    let mut client = target.connect()?;
     client.initialize()?;
     let catalog = client.list_tools_catalog()?;
     for case in &cases {
@@ -117,7 +196,7 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
         salt: &salt,
         client: &mut client,
         catalog: &catalog,
-        command: &options.command,
+        target: &target,
         store,
     };
     for case in cases {
@@ -131,9 +210,9 @@ struct RunContext<'a> {
     session: &'a str,
     seq: &'a mut u64,
     salt: &'a Salt,
-    client: &'a mut McpClient,
+    client: &'a mut ProbeClient,
     catalog: &'a ToolCatalog,
-    command: &'a [String],
+    target: &'a ClientTarget,
     store: &'a mut Store,
 }
 
@@ -259,14 +338,14 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
 fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
     let tool = case.tool().expect("contention has a tool").to_owned();
     let arguments = case.arguments().expect("contention has arguments").clone();
-    let command = context.command.to_vec();
+    let target = context.target.clone();
     let barrier = Arc::new(Barrier::new(2));
     let worker_barrier = Arc::clone(&barrier);
     let (ready_tx, ready_rx) = mpsc::sync_channel(0);
     let worker_tool = tool.clone();
     let worker_arguments = arguments.clone();
     let worker = std::thread::spawn(move || -> anyhow::Result<(ToolResponse, u64)> {
-        let mut client = McpClient::spawn(&command)?;
+        let mut client = target.connect()?;
         client.initialize()?;
         let tools = client.list_tools()?;
         if !tools.iter().any(|name| name == &worker_tool) {

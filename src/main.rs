@@ -14,6 +14,8 @@ fn main() -> anyhow::Result<()> {
             manifest,
             probe,
             allow_mutation,
+            url,
+            allow_remote_http,
             cmd,
         } => {
             let selected_probe = probe.map(|probe| match probe {
@@ -40,6 +42,8 @@ fn main() -> anyhow::Result<()> {
                     selected_case: None,
                     allow_mutation,
                     command: cmd,
+                    http_url: url,
+                    allow_remote_http,
                 },
                 &mut store,
             )?;
@@ -117,6 +121,8 @@ fn main() -> anyhow::Result<()> {
             case,
             manifest,
             allow_mutation,
+            url,
+            allow_remote_http,
             cmd,
         } => {
             let declaration = mcpeval::manifest::Manifest::load(&manifest)?;
@@ -142,6 +148,8 @@ fn main() -> anyhow::Result<()> {
                     selected_case: Some(case.clone()),
                     allow_mutation,
                     command: cmd,
+                    http_url: url,
+                    allow_remote_http,
                 },
                 &mut store,
             )?;

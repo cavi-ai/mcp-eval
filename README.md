@@ -3,8 +3,9 @@
 `mcp-eval` captures what MCP servers cost agents and turns repeated friction into
 queryable evidence a development agent can act on.
 
-Phase 2 adds issue aggregation, Wilson-bounded promotion, seed-calibrated
-thresholds, and privacy-safe findings reports to the capture path.
+Phase 3 adds a deterministic probe battery, beginning with
+`degradation-over-n` and `instruction-fidelity`, plus strict sandbox declarations
+that keep mutating probes opt-in.
 
 ## Quick start
 
@@ -14,6 +15,8 @@ cargo build --release
 ./target/release/mcpeval index
 ./target/release/mcpeval promote
 ./target/release/mcpeval findings --format agent
+./target/release/mcpeval probe --server demo \
+  --manifest mcp-eval.manifest.json -- your-mcp-server --flags
 ```
 
 Set `MCPEVAL_HOME` to choose the capture root. If it is unset, `mcp-eval` uses
@@ -24,6 +27,13 @@ a generated UUID for that process.
 The stdio shim targets Unix and Windows and expects newline-delimited JSON-RPC.
 See [the installation guide](docs/install.md) for MCP client configuration and
 live verification.
+
+Probe manifests are strict, versioned JSON. Unknown fields are rejected. A
+`mutating` case must name a declared sandbox and the operator must also pass
+`--allow-mutation`; a missing or invalid manifest, undeclared sandbox, or missing
+flag never authorizes mutation. `instruction-fidelity` currently checks declared,
+machine-readable result fields, scalar values, outcomes, and error codes. It does
+not send tool descriptions or results to an external LLM.
 
 Promotion groups failures by server, tool, error code, and salted template
 identifier. Its score combines the 95% Wilson lower bound of the observed rate,
@@ -99,6 +109,12 @@ enum values, numeric and boolean arguments, and registrable domains remain
 queryable. Server stderr is passed through unchanged to the client, not
 written to the journal. There is no verbose or raw-payload mode.
 
+Probe calls use the same persistence boundary and are tagged `synthetic`. Raw
+manifest arguments, response bodies, tool descriptions, sandbox descriptions, and
+raw errors are never stored or printed in summaries. Manifest files may still
+contain sensitive arguments or operational details, so they are not part of the
+share-safe `<MCPEVAL_HOME>/store/` boundary.
+
 The salt that makes `template_id` non-invertible is generated once and stored
 at `<MCPEVAL_HOME>/.salt` (mode 0600 on Unix) — a dotfile sibling of `store/`,
 deliberately outside it. **Only `<MCPEVAL_HOME>/store/` is safe to share** or
@@ -109,5 +125,6 @@ someone recover which messages produced which fingerprint. `mcpeval doctor
 reminder every time it runs.
 
 See [the original design](docs/design/2026-08-04-mcp-eval.md) and the
-[Phase 2 design](docs/design/2026-08-05-mcp-eval-phase2.md) for the complete
-data model and scope.
+[Phase 2 design](docs/design/2026-08-05-mcp-eval-phase2.md) for the promotion
+model. See the [Phase 3 design](docs/design/2026-08-06-mcp-eval-phase3.md) for
+the probe and sandbox contract.

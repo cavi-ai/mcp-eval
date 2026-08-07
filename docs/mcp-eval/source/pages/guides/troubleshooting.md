@@ -26,7 +26,7 @@ Run the hygiene scan:
 mcpeval doctor --check-redaction
 ```
 
-The command exits non-zero when a JSONL record looks unredacted. It also prints the salt path as a must-not-share reminder. Only `<MCPEVAL_HOME>/store/` is safe to share; do not include the sibling `.salt`, manifests, configuration, or `index.db`.
+The command exits non-zero when a non-note JSONL field looks unredacted and prints the salt path as a must-not-share reminder. Annotation notes are exempt from automated redaction detectors because they contain deliberate user prose. When notes exist, `doctor` prints a non-failing review warning and can still exit zero, so a successful check does not prove those notes are safe. Manually review or remove every annotation note before sharing store records. Never include the sibling `.salt`, manifests, configuration, or `index.db`.
 
 ## Generation is refused
 

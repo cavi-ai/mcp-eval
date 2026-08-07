@@ -40,7 +40,7 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
 
 Mutating cases are rejected unless each case names a declared sandbox and the invocation includes `--allow-mutation`. The flag authorizes only manifest-declared cases; it does not turn capture into a mutation capability.
 
-For an eligible promoted finding with empty shaped arguments, `generate` can write a deterministic read-only `degradation-over-n` manifest:
+For an eligible promoted finding with empty shaped arguments, `generate` can write a deterministic read-only manifest using the supplemental `degradation-over-n` probe:
 
 ```sh
 mcpeval generate --finding finding-0123456789abcdef \

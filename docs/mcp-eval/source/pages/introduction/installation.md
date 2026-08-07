@@ -15,6 +15,6 @@ Set `MCPEVAL_HOME` when you want a capture root other than the default:
 export MCPEVAL_HOME="$PWD/.mcp-eval"
 ```
 
-When `MCPEVAL_HOME` is unset, MCP Eval uses `$HOME/.mcp-eval` if `HOME` is available. Keep this directory private; only its `store/` child is designed as share-safe output.
+When `MCPEVAL_HOME` is unset, MCP Eval uses `$HOME/.mcp-eval` if `HOME` is available. Keep this directory private. Records in its `store/` child are content-minimized, but you must manually review or remove free-form annotation notes before sharing any store files.
 
 For HTTP transports, no extra runtime service is installed. `mcpeval shim-http` listens only on the explicit loopback socket you provide and forwards to the validated upstream endpoint for the life of that process.

@@ -2,13 +2,20 @@
 
 MCP Eval captures the operational cost that MCP servers impose on agents and turns repeated friction into privacy-safe, queryable findings. It can proxy stdio or Streamable HTTP traffic, index sanitized records, promote recurring failures, and run deterministic probes against declared server behavior.
 
-Version {{PRODUCT_VERSION}} evaluates these dimensions:
+## Headline evaluation dimensions
+
+Version {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions:
 
 - `discovery-cost`
 - `schema-guessability`
 - `error-honesty`
 - `state-recovery`
 - `contention`
+
+## Supplemental probes
+
+The CLI also exposes two supplemental probes. They are useful deterministic checks, but they are not additional headline evaluation dimensions for this release:
+
 - `degradation-over-n`
 - `instruction-fidelity`
 

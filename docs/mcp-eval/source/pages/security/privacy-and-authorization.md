@@ -6,7 +6,7 @@ Server labels, methods, tool names, keys, enum values, numeric and boolean value
 
 Probe records are tagged `synthetic` and use the same persistence boundary. Raw manifest arguments, response bodies, tool descriptions, sandbox descriptions, and raw errors are not stored or printed in summaries. Manifest files can still contain sensitive operational inputs and are outside the share-safe boundary.
 
-Only `<MCPEVAL_HOME>/store/` is safe to share. The fingerprint salt lives at `<MCPEVAL_HOME>/.salt`, outside `store/`, and must never accompany it. Do not share the entire capture root.
+Capture records under `<MCPEVAL_HOME>/store/` are content-minimized, but annotation notes are deliberate free-form user prose and are not automatically redacted. Before sharing any store records, you must manually review or remove every annotation note and inspect the remaining files. The fingerprint salt lives at `<MCPEVAL_HOME>/.salt`, outside `store/`, and must never accompany shared records. Do not share the entire capture root.
 
 Mutation requires two independent controls: the manifest case uses `"access": "mutating"` and names a declared sandbox, and the operator passes `--allow-mutation`. A missing or invalid manifest, undeclared sandbox, or missing flag never authorizes mutation. `generate --confirm-read-only` attests that an eligible tool is read-only and does not authorize mutation.
 

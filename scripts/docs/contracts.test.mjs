@@ -6,6 +6,23 @@ import test from "node:test";
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const SOURCE = path.join(ROOT, "docs/mcp-eval/source");
 
+function section(markdown, title) {
+  const marker = `## ${title}\n`;
+  const start = markdown.indexOf(marker);
+  assert.notEqual(start, -1, `missing section: ${title}`);
+  const remainder = markdown.slice(start + marker.length);
+  const end = remainder.search(/^## /mu);
+  return end === -1 ? remainder : remainder.slice(0, end);
+}
+
+function listProbeNames(markdown) {
+  return [...markdown.matchAll(/^- `([^`]+)`(?:[ \t].*)?$/gmu)].map((match) => match[1]);
+}
+
+function headingProbeNames(markdown) {
+  return [...markdown.matchAll(/^### `([^`]+)`$/gmu)].map((match) => match[1]);
+}
+
 test("release identity follows the Cargo package and binary contracts", async () => {
   const {
     CLI_BINARY,
@@ -49,7 +66,44 @@ test("navigation references every official source page exactly once", async () =
   }
 });
 
-test("official docs cover the evaluation, recovery, privacy, and authorization contracts", async () => {
+test("official docs publish exactly five headline dimensions and label supplemental probes separately", async () => {
+  const expectedHeadline = [
+    "discovery-cost",
+    "schema-guessability",
+    "error-honesty",
+    "state-recovery",
+    "contention",
+  ];
+  const expectedSupplemental = ["degradation-over-n", "instruction-fidelity"];
+  const overview = await readFile(path.join(SOURCE, "pages/introduction/overview.md"), "utf8");
+  const reference = await readFile(path.join(SOURCE, "pages/reference/evaluation-dimensions.md"), "utf8");
+  assert.deepEqual(listProbeNames(section(overview, "Headline evaluation dimensions")), expectedHeadline);
+  assert.deepEqual(listProbeNames(section(overview, "Supplemental probes")), expectedSupplemental);
+  assert.deepEqual(headingProbeNames(section(reference, "Headline evaluation dimensions")), expectedHeadline);
+  assert.deepEqual(headingProbeNames(section(reference, "Supplemental probes")), expectedSupplemental);
+});
+
+test("official docs require manual annotation review before sharing store records", async () => {
+  const security = await readFile(
+    path.join(SOURCE, "pages/security/privacy-and-authorization.md"),
+    "utf8",
+  );
+  const findings = await readFile(
+    path.join(SOURCE, "pages/guides/findings-and-verification.md"),
+    "utf8",
+  );
+  const troubleshooting = await readFile(
+    path.join(SOURCE, "pages/guides/troubleshooting.md"),
+    "utf8",
+  );
+  const text = [security, findings, troubleshooting].join("\n");
+  assert.doesNotMatch(text, /Only `<MCPEVAL_HOME>\/store\/` is safe to share/u);
+  assert.match(security, /manually review or remove every annotation note/u);
+  assert.match(findings, /Never put credentials, private paths, customer identifiers, or raw payload fragments in `--note`/u);
+  assert.match(troubleshooting, /`doctor` prints a non-failing review warning/u);
+});
+
+test("official docs cover recovery and authorization contracts", async () => {
   const navigation = JSON.parse(await readFile(path.join(SOURCE, "navigation.json"), "utf8"));
   const pages = await Promise.all(
     navigation.sections.flatMap((section) => section.pages).map((page) => (
@@ -67,7 +121,6 @@ test("official docs cover the evaluation, recovery, privacy, and authorization c
     "--allow-mutation",
     "declared sandbox",
     "MCPEVAL_HTTP_AUTHORIZATION",
-    "Only `<MCPEVAL_HOME>/store/` is safe to share",
     "--confirm-read-only",
   ]) {
     assert.ok(text.includes(phrase), phrase);

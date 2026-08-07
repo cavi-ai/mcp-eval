@@ -19,7 +19,7 @@ mcpeval annotate --session session-token --seq 4 \
   --kind workaround --note "Used the documented alternate tool"
 ```
 
-The note is the deliberate prose channel in the store: it is limited to 240 characters and cannot contain control characters. Use only one of the annotation kinds accepted by the binary.
+The note is the deliberate prose channel in the store: it is limited to 240 characters and cannot contain control characters, but those checks do not redact its content. Never put credentials, private paths, customer identifiers, or raw payload fragments in `--note`. Use only one of the annotation kinds accepted by the binary, and manually review or remove notes before sharing store records.
 
 To advance a finding lifecycle, select exactly one matching manifest case:
 

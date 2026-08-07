@@ -15,6 +15,6 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | `annotate` | `--session <SESSION> --seq <SEQ> --kind <KIND> --note <NOTE>` | Record a bounded agent-authored observation. |
 | `doctor` | optional `--check-redaction` | Run store-hygiene checks. |
 
-The default manifest path for `probe` and `verify` is `mcp-eval.manifest.json`. Valid `--probe` values are `contention`, `error-honesty`, `state-recovery`, `discovery-cost`, `schema-guessability`, `degradation-over-n`, and `instruction-fidelity`.
+The default manifest path for `probe` and `verify` is `mcp-eval.manifest.json`. The five headline evaluation dimension values for `--probe` are `contention`, `error-honesty`, `state-recovery`, `discovery-cost`, and `schema-guessability`. The CLI also accepts the supplemental probes `degradation-over-n` and `instruction-fidelity`; they are not additional headline dimensions in version {{PRODUCT_VERSION}}.
 
 Use `mcpeval help <COMMAND>` for the binary's exact invocation text.

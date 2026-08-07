@@ -2,6 +2,13 @@
 name = "mcpeval"
 version = "0.1.0"
 edition = "2021"
+authors = ["Sasan Sotoodehfar"]
+description = "Privacy-preserving MCP friction capture and evaluation"
+license = "MIT"
+repository = "https://github.com/cavi-ai/mcp-eval"
+readme = "README.md"
+keywords = ["mcp", "evaluation", "observability", "privacy"]
+categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
 anyhow = "1"

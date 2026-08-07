@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "probes": [
+    {
+      "id": "repeat-read",
+      "probe": "degradation-over-n",
+      "tool": "read_counter",
+      "access": "read_only",
+      "arguments": {"secret": "CANARY-manifest-argument"},
+      "max_attempts": 5
+    },
+    {
+      "id": "literal-status",
+      "probe": "instruction-fidelity",
+      "tool": "describe_status",
+      "access": "read_only",
+      "arguments": {},
+      "expect": {
+        "outcome": "ok",
+        "required_result_fields": ["status"],
+        "equals": {"status": "ready"}
+      }
+    }
+  ]
+}

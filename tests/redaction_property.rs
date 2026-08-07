@@ -6,7 +6,10 @@ struct Rng(u64);
 
 impl Rng {
     fn next(&mut self) -> u64 {
-        self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        self.0 = self
+            .0
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
         self.0 >> 33
     }
 }
@@ -27,12 +30,19 @@ fn build_tree(rng: &mut Rng, depth: usize, next_canary: &mut usize) -> Value {
     }
     if rng.next().is_multiple_of(2) {
         let len = (rng.next() % 4) as usize + 1;
-        Value::Array((0..len).map(|_| build_tree(rng, depth - 1, next_canary)).collect())
+        Value::Array(
+            (0..len)
+                .map(|_| build_tree(rng, depth - 1, next_canary))
+                .collect(),
+        )
     } else {
         let len = (rng.next() % 4) as usize + 1;
         let mut map = serde_json::Map::new();
         for field in 0..len {
-            map.insert(format!("field{field}"), build_tree(rng, depth - 1, next_canary));
+            map.insert(
+                format!("field{field}"),
+                build_tree(rng, depth - 1, next_canary),
+            );
         }
         Value::Object(map)
     }
@@ -50,8 +60,14 @@ fn no_generated_canary_survives_shaping() {
             !shaped.contains("CANARY"),
             "seed {seed} leaked a canary: {shaped}"
         );
-        assert!(!shaped.contains("/Users/"), "seed {seed} leaked a path: {shaped}");
-        assert!(!shaped.contains("token="), "seed {seed} leaked a query: {shaped}");
+        assert!(
+            !shaped.contains("/Users/"),
+            "seed {seed} leaked a path: {shaped}"
+        );
+        assert!(
+            !shaped.contains("token="),
+            "seed {seed} leaked a query: {shaped}"
+        );
     }
 }
 

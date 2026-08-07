@@ -15,9 +15,8 @@ static UUID: LazyLock<Regex> = LazyLock::new(|| {
 // swallows everything up to the next contraction's apostrophe (e.g. in
 // "can't connect, won't retry"). The boundary is captured in group 1 so it
 // can be preserved in the replacement rather than eaten by the match.
-static QUOTED: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#""[^"]*"|(^|[\s(\[{])'[^']*'"#).expect("valid quoted-run regex")
-});
+static QUOTED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""[^"]*"|(^|[\s(\[{])'[^']*'"#).expect("valid quoted-run regex"));
 static SCHEME: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"[a-z][a-z0-9+.\-]*://\S+").expect("valid scheme regex"));
 // Requires a token boundary before the slash (start-of-string, whitespace, or

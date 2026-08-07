@@ -199,6 +199,8 @@ fn looks_like_host(s: &str) -> bool {
         && s.split('.').all(|label| {
             !label.is_empty()
                 && label.len() <= 63
-                && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
         })
 }

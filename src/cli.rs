@@ -122,6 +122,9 @@ pub enum Command {
         /// Replace an existing output file.
         #[arg(long)]
         force: bool,
+        /// Attest that the selected tool is read-only; this does not authorize mutation.
+        #[arg(long, required = true)]
+        confirm_read_only: bool,
     },
     /// Render promoted findings without exposing captured private content.
     Findings {

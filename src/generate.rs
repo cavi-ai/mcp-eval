@@ -4,13 +4,24 @@ use std::io::Write;
 use std::path::Path;
 
 use anyhow::{bail, Context};
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::Value;
 
 use crate::manifest::{Access, Manifest, ProbeCase};
 
-pub fn run(root: &Path, finding_id: &str, output: &Path, force: bool) -> anyhow::Result<String> {
-    let db = Connection::open(root.join("index.db")).context("opening index.db")?;
+pub fn run(
+    root: &Path,
+    finding_id: &str,
+    output: &Path,
+    force: bool,
+    confirm_read_only: bool,
+) -> anyhow::Result<String> {
+    if !confirm_read_only {
+        bail!("read-only generation requires explicit --confirm-read-only attestation");
+    }
+
+    let db = Connection::open_with_flags(root.join("index.db"), OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .context("opening index.db")?;
     let finding: Option<(Option<String>, Option<String>)> = db
         .query_row(
             "SELECT i.tool,i.args FROM findings f

@@ -31,14 +31,14 @@ impl Drop for TempDir {
     }
 }
 
-fn call(session: &str, arguments: serde_json::Value) -> CallRecord {
+fn call(session: &str, tool: &str, arguments: serde_json::Value) -> CallRecord {
     CallRecord {
         ts: "2026-08-05T12:00:00Z".into(),
         session: session.into(),
         seq: 1,
         server: "synthetic-canary-server".into(),
         method: "tools/call".into(),
-        tool: Some("read_status".into()),
+        tool: Some(tool.into()),
         args: Some(arguments),
         latency_ms: Some(5),
         outcome: "error".into(),
@@ -56,11 +56,17 @@ fn call(session: &str, arguments: serde_json::Value) -> CallRecord {
 }
 
 fn promoted_finding(root: &Path, arguments: serde_json::Value) -> String {
+    promoted_finding_for_tool(root, "read_status", arguments)
+}
+
+fn promoted_finding_for_tool(root: &Path, tool: &str, arguments: serde_json::Value) -> String {
     let mut store = Store::open(Some(root.to_owned())).unwrap();
     store
-        .append(&call("first-session", arguments.clone()))
+        .append(&call("first-session", tool, arguments.clone()))
         .unwrap();
-    store.append(&call("second-session", arguments)).unwrap();
+    store
+        .append(&call("second-session", tool, arguments))
+        .unwrap();
     index::build(root).unwrap();
     promote(
         root,
@@ -77,7 +83,13 @@ fn promoted_finding(root: &Path, arguments: serde_json::Value) -> String {
         .unwrap()
 }
 
-fn generate_cli(root: &Path, finding_id: &str, output: &Path, force: bool) -> Output {
+fn generate_cli(
+    root: &Path,
+    finding_id: &str,
+    output: &Path,
+    force: bool,
+    confirm_read_only: bool,
+) -> Output {
     let mut command = Command::new(bin());
     command
         .args([
@@ -91,6 +103,9 @@ fn generate_cli(root: &Path, finding_id: &str, output: &Path, force: bool) -> Ou
     if force {
         command.arg("--force");
     }
+    if confirm_read_only {
+        command.arg("--confirm-read-only");
+    }
     command.output().unwrap()
 }
 
@@ -100,7 +115,7 @@ fn generates_a_deterministic_read_only_manifest_for_empty_arguments() {
     let finding_id = promoted_finding(&root.path, json!({}));
     let output = root.path.join("generated.json");
 
-    let probe_id = generate::run(&root.path, &finding_id, &output, false).unwrap();
+    let probe_id = generate::run(&root.path, &finding_id, &output, false, true).unwrap();
     let body = std::fs::read_to_string(&output).unwrap();
     let expected = format!(
         "{{\n  \"version\": 1,\n  \"sandboxes\": {{}},\n  \"probes\": [\n    {{\n      \"probe\": \"degradation-over-n\",\n      \"id\": \"{finding_id}\",\n      \"tool\": \"read_status\",\n      \"access\": \"read_only\",\n      \"sandbox\": null,\n      \"arguments\": {{}},\n      \"max_attempts\": 3\n    }}\n  ]\n}}\n"
@@ -119,13 +134,13 @@ fn creates_new_files_and_replaces_existing_files_only_when_forced() {
     let output = root.path.join("generated.json");
     std::fs::write(&output, "existing manifest\n").unwrap();
 
-    assert!(generate::run(&root.path, &finding_id, &output, false).is_err());
+    assert!(generate::run(&root.path, &finding_id, &output, false, true).is_err());
     assert_eq!(
         std::fs::read_to_string(&output).unwrap(),
         "existing manifest\n"
     );
 
-    generate::run(&root.path, &finding_id, &output, true).unwrap();
+    generate::run(&root.path, &finding_id, &output, true, true).unwrap();
     assert_ne!(
         std::fs::read_to_string(&output).unwrap(),
         "existing manifest\n"
@@ -148,7 +163,8 @@ fn rejects_promoted_findings_without_a_tool() {
         &root.path,
         &finding_id,
         &root.path.join("generated.json"),
-        false
+        false,
+        true,
     )
     .is_err());
 }
@@ -162,6 +178,7 @@ fn rejects_promoted_findings_with_non_empty_arguments_without_leaking_them() {
         &finding_id,
         &root.path.join("generated.json"),
         false,
+        true,
     )
     .unwrap_err()
     .to_string();
@@ -175,7 +192,7 @@ fn generate_cli_prints_only_the_generated_probe_for_an_eligible_finding() {
     let finding_id = promoted_finding(&root.path, json!({}));
     let output = root.path.join("generated.json");
 
-    let result = generate_cli(&root.path, &finding_id, &output, false);
+    let result = generate_cli(&root.path, &finding_id, &output, false, true);
 
     assert!(
         result.status.success(),
@@ -184,7 +201,7 @@ fn generate_cli_prints_only_the_generated_probe_for_an_eligible_finding() {
     );
     assert_eq!(
         String::from_utf8(result.stdout).unwrap(),
-        format!("generated probe={finding_id}\n")
+        format!("{finding_id}\n")
     );
     assert!(result.stderr.is_empty());
     mcpeval::manifest::Manifest::load(&output).unwrap();
@@ -197,7 +214,7 @@ fn generate_cli_writes_the_requested_manifest_without_creating_a_store_directory
     std::fs::remove_dir_all(root.path.join("store")).unwrap();
     let output = root.path.join("generated.json");
 
-    let result = generate_cli(&root.path, &finding_id, &output, false);
+    let result = generate_cli(&root.path, &finding_id, &output, false, true);
 
     assert!(
         result.status.success(),
@@ -214,7 +231,7 @@ fn generate_cli_rejects_ineligible_findings_without_canaries_or_absolute_paths()
     let finding_id = promoted_finding(&root.path, json!({"target": "synthetic-canary-value"}));
     let output = root.path.join("generated.json");
 
-    let result = generate_cli(&root.path, &finding_id, &output, false);
+    let result = generate_cli(&root.path, &finding_id, &output, false, true);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&result.stdout),
@@ -234,7 +251,7 @@ fn generate_cli_requires_force_to_replace_an_existing_output() {
     let output = root.path.join("generated.json");
     std::fs::write(&output, "existing manifest\n").unwrap();
 
-    let denied = generate_cli(&root.path, &finding_id, &output, false);
+    let denied = generate_cli(&root.path, &finding_id, &output, false, true);
 
     assert!(!denied.status.success());
     assert_eq!(
@@ -242,7 +259,7 @@ fn generate_cli_requires_force_to_replace_an_existing_output() {
         "existing manifest\n"
     );
 
-    let forced = generate_cli(&root.path, &finding_id, &output, true);
+    let forced = generate_cli(&root.path, &finding_id, &output, true, true);
 
     assert!(
         forced.status.success(),
@@ -251,6 +268,56 @@ fn generate_cli_requires_force_to_replace_an_existing_output() {
     );
     assert_eq!(
         String::from_utf8(forced.stdout).unwrap(),
-        format!("generated probe={finding_id}\n")
+        format!("{finding_id}\n")
     );
+}
+
+#[test]
+fn mutation_named_zero_argument_tool_requires_read_only_confirmation() {
+    let root = TempDir::new();
+    let finding_id = promoted_finding_for_tool(&root.path, "delete_all_records", json!({}));
+    let output = root.path.join("generated.json");
+
+    let error = generate::run(&root.path, &finding_id, &output, false, false)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("--confirm-read-only"));
+    assert!(!output.exists());
+
+    generate::run(&root.path, &finding_id, &output, false, true).unwrap();
+    let manifest = mcpeval::manifest::Manifest::load(&output).unwrap();
+    assert_eq!(
+        manifest.probes[0].access(),
+        mcpeval::manifest::Access::ReadOnly
+    );
+    assert_eq!(manifest.probes[0].sandbox(), None);
+}
+
+#[test]
+fn missing_index_is_not_created() {
+    let root = TempDir::new();
+    let index = root.path.join("index.db");
+
+    assert!(generate::run(
+        &root.path,
+        "finding-0123456789abcdef",
+        &root.path.join("generated.json"),
+        false,
+        true,
+    )
+    .is_err());
+    assert!(!index.exists());
+}
+
+#[test]
+fn generate_cli_requires_read_only_confirmation() {
+    let root = TempDir::new();
+    let finding_id = promoted_finding_for_tool(&root.path, "delete_all_records", json!({}));
+    let output = root.path.join("generated.json");
+
+    let result = generate_cli(&root.path, &finding_id, &output, false, false);
+
+    assert!(!result.status.success());
+    assert!(!output.exists());
 }

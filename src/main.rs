@@ -204,10 +204,12 @@ fn main() -> anyhow::Result<()> {
             finding,
             output,
             force,
+            confirm_read_only,
         } => {
             let root = mcpeval::store::Store::resolve_root(None);
-            let probe_id = mcpeval::generate::run(&root, &finding, &output, force)?;
-            println!("generated probe={probe_id}");
+            let probe_id =
+                mcpeval::generate::run(&root, &finding, &output, force, confirm_read_only)?;
+            println!("{probe_id}");
             Ok(())
         }
         cli::Command::Findings { format } => {

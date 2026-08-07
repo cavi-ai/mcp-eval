@@ -140,11 +140,6 @@ someone recover which messages produced which fingerprint. `mcpeval doctor
 --check-redaction` prints the salt path on its own line as a must-not-share
 reminder every time it runs.
 
-See [the original design](docs/design/2026-08-04-mcp-eval.md) and the
-[Phase 2 design](docs/design/2026-08-05-mcp-eval-phase2.md) for the promotion
-model. See the [Phase 3 design](docs/design/2026-08-06-mcp-eval-phase3.md) for
-the probe and sandbox contract.
-
 ## Project status
 
 `mcp-eval` is under active development. The on-disk schema, CLI, and manifest

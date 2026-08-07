@@ -22,6 +22,8 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   privacy-safe measurements.
 - Deterministic `error-honesty` and `state-recovery` probes with bounded retries,
   fixed failure reasons, and clean/broken fixture coverage.
+- Two-client `contention` probes with synchronized execution and sanitized records
+  for both calls.
 
 ### Security
 

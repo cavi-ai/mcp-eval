@@ -72,7 +72,7 @@ fn clean_and_broken_fixtures_measure_discovery_and_schema_guessability() {
     let (_, discovery) = run(CLEAN, Some("discovery-cost"));
     assert!(discovery.status.success());
     let stdout = String::from_utf8(discovery.stdout).unwrap();
-    assert!(stdout.contains("bounded-discovery discovery-cost pass attempts=1 tools=6"));
+    assert!(stdout.contains("bounded-discovery discovery-cost pass attempts=1 tools=7"));
 
     let (_, discovery) = run(BROKEN, Some("discovery-cost"));
     assert!(!discovery.status.success());
@@ -106,6 +106,24 @@ fn clean_and_broken_fixtures_measure_error_honesty() {
     let (_, broken) = run(BROKEN, Some("error-honesty"));
     assert!(!broken.status.success());
     assert!(String::from_utf8_lossy(&broken.stdout).contains("reason=unstable-error-code"));
+    assert!(!String::from_utf8_lossy(&broken.stdout).contains("CANARY"));
+}
+
+#[test]
+fn clean_and_broken_fixtures_measure_two_client_contention() {
+    let (_, clean) = run(CLEAN, Some("contention"));
+    assert!(
+        clean.status.success(),
+        "{}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&clean.stdout).contains("parallel-read contention pass attempts=2")
+    );
+
+    let (_, broken) = run(BROKEN, Some("contention"));
+    assert!(!broken.status.success());
+    assert!(String::from_utf8_lossy(&broken.stdout).contains("reason=contended-client-failed"));
     assert!(!String::from_utf8_lossy(&broken.stdout).contains("CANARY"));
 }
 

@@ -17,6 +17,7 @@ fn main() -> anyhow::Result<()> {
             cmd,
         } => {
             let selected_probe = probe.map(|probe| match probe {
+                cli::ProbeSelection::Contention => mcpeval::manifest::ProbeKind::Contention,
                 cli::ProbeSelection::ErrorHonesty => mcpeval::manifest::ProbeKind::ErrorHonesty,
                 cli::ProbeSelection::StateRecovery => mcpeval::manifest::ProbeKind::StateRecovery,
                 cli::ProbeSelection::DiscoveryCost => mcpeval::manifest::ProbeKind::DiscoveryCost,
@@ -44,6 +45,7 @@ fn main() -> anyhow::Result<()> {
             )?;
             for case in &report.cases {
                 let probe = match case.probe {
+                    mcpeval::manifest::ProbeKind::Contention => "contention",
                     mcpeval::manifest::ProbeKind::ErrorHonesty => "error-honesty",
                     mcpeval::manifest::ProbeKind::StateRecovery => "state-recovery",
                     mcpeval::manifest::ProbeKind::DiscoveryCost => "discovery-cost",
@@ -84,6 +86,9 @@ fn main() -> anyhow::Result<()> {
                         mcpeval::probe::FailureReason::FailureNotObserved => "failure-not-observed",
                         mcpeval::probe::FailureReason::RecoveryFailed => "recovery-failed",
                         mcpeval::probe::FailureReason::ValidationFailed => "validation-failed",
+                        mcpeval::probe::FailureReason::ContendedClientFailed => {
+                            "contended-client-failed"
+                        }
                     };
                     if let (Some(tools), Some(bytes)) = (case.tool_count, case.schema_bytes) {
                         println!(

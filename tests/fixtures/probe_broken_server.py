@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 import json
+import socket
 import sys
+import time
 
 
 calls = 0
@@ -22,10 +24,22 @@ for line in sys.stdin:
             {"name": "break_session", "description": "break", "inputSchema": {"type": "object", "properties": {}}},
             {"name": "recover_session", "description": "recover", "inputSchema": {"type": "object", "properties": {}}},
             {"name": "session_status", "description": "validate", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "shared_read", "description": "parallel", "inputSchema": {"type": "object", "properties": {"port": {"type": "integer"}}}},
         ]}
     elif method == "tools/call":
         calls += 1
         tool = request["params"]["name"]
+        if tool == "shared_read":
+            listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            try:
+                listener.bind(("127.0.0.1", request["params"]["arguments"]["port"]))
+                time.sleep(0.2)
+            except OSError:
+                sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": request_id, "error": {"code": -32004, "message": "CANARY contention", "retryable": False}}) + "\n")
+                sys.stdout.flush()
+                listener.close()
+                continue
+            listener.close()
         if tool == "flaky_read":
             flaky_calls += 1
             code = -32001 if flaky_calls == 1 else -32003

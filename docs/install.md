@@ -273,6 +273,11 @@ failure must fail and both later calls must succeed. All three calls are sanitiz
 recorded as synthetic. If the sequence mutates state, declare a sandbox and pass
 `--allow-mutation`; validation and authorization happen before server launch.
 
+`contention` starts a second independent MCP client, synchronizes both clients at the
+selected tool call, and requires both responses to succeed. Both calls are recorded as
+sanitized synthetic observations. Mutating cases still require a declared sandbox and
+explicit `--allow-mutation` authorization.
+
 Mutation has two independent gates. The manifest must declare a named sandbox and the
 case must reference it:
 

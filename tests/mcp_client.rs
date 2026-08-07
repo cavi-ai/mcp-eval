@@ -24,7 +24,8 @@ fn initializes_lists_and_calls_a_real_stdio_server() {
             "flaky_read",
             "break_session",
             "recover_session",
-            "session_status"
+            "session_status",
+            "shared_read"
         ]
     );
     let response = client.call_tool("read_counter", &json!({})).unwrap();

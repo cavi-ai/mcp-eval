@@ -33,6 +33,7 @@ for line in sys.stdin:
             {"name": "break_session", "description": "break", "inputSchema": {"type": "object", "properties": {}}},
             {"name": "recover_session", "description": "recover", "inputSchema": {"type": "object", "properties": {}}},
             {"name": "session_status", "description": "validate", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "shared_read", "description": "parallel", "inputSchema": {"type": "object", "properties": {"port": {"type": "integer"}}}},
         ]}
     elif method == "tools/call":
         calls += 1

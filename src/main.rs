@@ -17,6 +17,12 @@ fn main() -> anyhow::Result<()> {
             cmd,
         } => {
             let selected_probe = probe.map(|probe| match probe {
+                cli::ProbeSelection::ErrorHonesty => mcpeval::manifest::ProbeKind::ErrorHonesty,
+                cli::ProbeSelection::StateRecovery => mcpeval::manifest::ProbeKind::StateRecovery,
+                cli::ProbeSelection::DiscoveryCost => mcpeval::manifest::ProbeKind::DiscoveryCost,
+                cli::ProbeSelection::SchemaGuessability => {
+                    mcpeval::manifest::ProbeKind::SchemaGuessability
+                }
                 cli::ProbeSelection::DegradationOverN => {
                     mcpeval::manifest::ProbeKind::DegradationOverN
                 }
@@ -38,24 +44,62 @@ fn main() -> anyhow::Result<()> {
             )?;
             for case in &report.cases {
                 let probe = match case.probe {
+                    mcpeval::manifest::ProbeKind::ErrorHonesty => "error-honesty",
+                    mcpeval::manifest::ProbeKind::StateRecovery => "state-recovery",
+                    mcpeval::manifest::ProbeKind::DiscoveryCost => "discovery-cost",
+                    mcpeval::manifest::ProbeKind::SchemaGuessability => "schema-guessability",
                     mcpeval::manifest::ProbeKind::DegradationOverN => "degradation-over-n",
                     mcpeval::manifest::ProbeKind::InstructionFidelity => "instruction-fidelity",
                 };
                 if case.passed() {
-                    println!("{} {probe} pass attempts={}", case.id, case.attempts);
+                    if let (Some(tools), Some(bytes)) = (case.tool_count, case.schema_bytes) {
+                        println!(
+                            "{} {probe} pass attempts={} tools={tools} schema_bytes={bytes}",
+                            case.id, case.attempts
+                        );
+                    } else {
+                        println!("{} {probe} pass attempts={}", case.id, case.attempts);
+                    }
                 } else {
                     let reason = match case.reason.expect("failed case has a reason") {
                         mcpeval::probe::FailureReason::UnexpectedOutcome => "unexpected-outcome",
                         mcpeval::probe::FailureReason::MissingField => "missing-field",
                         mcpeval::probe::FailureReason::ValueMismatch => "value-mismatch",
                         mcpeval::probe::FailureReason::ErrorCodeMismatch => "error-code-mismatch",
+                        mcpeval::probe::FailureReason::DiscoveryLimitExceeded => {
+                            "discovery-limit-exceeded"
+                        }
+                        mcpeval::probe::FailureReason::InvalidSchema => "invalid-schema",
+                        mcpeval::probe::FailureReason::MissingRequiredArgument => {
+                            "missing-required-argument"
+                        }
+                        mcpeval::probe::FailureReason::ExpectedError => "expected-error",
+                        mcpeval::probe::FailureReason::UnstableErrorCode => "unstable-error-code",
+                        mcpeval::probe::FailureReason::RetryabilityMismatch => {
+                            "retryability-mismatch"
+                        }
+                        mcpeval::probe::FailureReason::RetryDidNotRecover => {
+                            "retry-did-not-recover"
+                        }
+                        mcpeval::probe::FailureReason::FailureNotObserved => "failure-not-observed",
+                        mcpeval::probe::FailureReason::RecoveryFailed => "recovery-failed",
+                        mcpeval::probe::FailureReason::ValidationFailed => "validation-failed",
                     };
-                    println!(
-                        "{} {probe} fail attempts={} first_failure={} reason={reason}",
-                        case.id,
-                        case.attempts,
-                        case.first_failure.expect("failed case has a failure index")
-                    );
+                    if let (Some(tools), Some(bytes)) = (case.tool_count, case.schema_bytes) {
+                        println!(
+                            "{} {probe} fail attempts={} first_failure={} reason={reason} tools={tools} schema_bytes={bytes}",
+                            case.id,
+                            case.attempts,
+                            case.first_failure.expect("failed case has a failure index")
+                        );
+                    } else {
+                        println!(
+                            "{} {probe} fail attempts={} first_failure={} reason={reason}",
+                            case.id,
+                            case.attempts,
+                            case.first_failure.expect("failed case has a failure index")
+                        );
+                    }
                 }
             }
             if !report.passed() {
@@ -81,7 +125,9 @@ fn main() -> anyhow::Result<()> {
                 store.root(),
                 &finding,
                 selected.id(),
-                selected.tool(),
+                selected
+                    .tool()
+                    .ok_or_else(|| anyhow::anyhow!("finding verification requires a tool probe"))?,
             )?;
             let report = mcpeval::probe::run(
                 mcpeval::probe::ProbeOptions {

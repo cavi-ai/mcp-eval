@@ -51,6 +51,43 @@ pub struct Expectation {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "probe", deny_unknown_fields)]
 pub enum ProbeCase {
+    #[serde(rename = "error-honesty")]
+    ErrorHonesty {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        arguments: Value,
+        max_attempts: u64,
+        expect_retryable: bool,
+    },
+    #[serde(rename = "state-recovery")]
+    StateRecovery {
+        id: String,
+        failure_tool: String,
+        failure_arguments: Value,
+        recovery_tool: String,
+        recovery_arguments: Value,
+        validation_tool: String,
+        validation_arguments: Value,
+        access: Access,
+        sandbox: Option<String>,
+    },
+    #[serde(rename = "discovery-cost")]
+    DiscoveryCost {
+        id: String,
+        access: Access,
+        max_tools: u64,
+        max_schema_bytes: u64,
+    },
+    #[serde(rename = "schema-guessability")]
+    SchemaGuessability {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        arguments: Value,
+    },
     #[serde(rename = "degradation-over-n")]
     DegradationOverN {
         id: String,
@@ -73,6 +110,10 @@ pub enum ProbeCase {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProbeKind {
+    ErrorHonesty,
+    StateRecovery,
+    DiscoveryCost,
+    SchemaGuessability,
     DegradationOverN,
     InstructionFidelity,
 }
@@ -80,41 +121,65 @@ pub enum ProbeKind {
 impl ProbeCase {
     pub fn id(&self) -> &str {
         match self {
-            Self::DegradationOverN { id, .. } | Self::InstructionFidelity { id, .. } => id,
+            Self::ErrorHonesty { id, .. }
+            | Self::StateRecovery { id, .. }
+            | Self::DiscoveryCost { id, .. }
+            | Self::SchemaGuessability { id, .. }
+            | Self::DegradationOverN { id, .. }
+            | Self::InstructionFidelity { id, .. } => id,
         }
     }
 
-    pub fn tool(&self) -> &str {
+    pub fn tool(&self) -> Option<&str> {
         match self {
-            Self::DegradationOverN { tool, .. } | Self::InstructionFidelity { tool, .. } => tool,
+            Self::DiscoveryCost { .. } => None,
+            Self::ErrorHonesty { tool, .. } => Some(tool),
+            Self::StateRecovery { failure_tool, .. } => Some(failure_tool),
+            Self::SchemaGuessability { tool, .. }
+            | Self::DegradationOverN { tool, .. }
+            | Self::InstructionFidelity { tool, .. } => Some(tool),
         }
     }
 
     pub fn access(&self) -> Access {
         match self {
-            Self::DegradationOverN { access, .. } | Self::InstructionFidelity { access, .. } => {
-                *access
-            }
+            Self::ErrorHonesty { access, .. }
+            | Self::StateRecovery { access, .. }
+            | Self::DiscoveryCost { access, .. }
+            | Self::SchemaGuessability { access, .. }
+            | Self::DegradationOverN { access, .. }
+            | Self::InstructionFidelity { access, .. } => *access,
         }
     }
 
     pub fn sandbox(&self) -> Option<&str> {
         match self {
-            Self::DegradationOverN { sandbox, .. } | Self::InstructionFidelity { sandbox, .. } => {
+            Self::DiscoveryCost { .. } => None,
+            Self::ErrorHonesty { sandbox, .. } | Self::StateRecovery { sandbox, .. } => {
                 sandbox.as_deref()
             }
+            Self::SchemaGuessability { sandbox, .. }
+            | Self::DegradationOverN { sandbox, .. }
+            | Self::InstructionFidelity { sandbox, .. } => sandbox.as_deref(),
         }
     }
 
-    pub fn arguments(&self) -> &Value {
+    pub fn arguments(&self) -> Option<&Value> {
         match self {
-            Self::DegradationOverN { arguments, .. }
-            | Self::InstructionFidelity { arguments, .. } => arguments,
+            Self::DiscoveryCost { .. } | Self::StateRecovery { .. } => None,
+            Self::ErrorHonesty { arguments, .. } => Some(arguments),
+            Self::SchemaGuessability { arguments, .. }
+            | Self::DegradationOverN { arguments, .. }
+            | Self::InstructionFidelity { arguments, .. } => Some(arguments),
         }
     }
 
     pub fn kind(&self) -> ProbeKind {
         match self {
+            Self::ErrorHonesty { .. } => ProbeKind::ErrorHonesty,
+            Self::StateRecovery { .. } => ProbeKind::StateRecovery,
+            Self::DiscoveryCost { .. } => ProbeKind::DiscoveryCost,
+            Self::SchemaGuessability { .. } => ProbeKind::SchemaGuessability,
             Self::DegradationOverN { .. } => ProbeKind::DegradationOverN,
             Self::InstructionFidelity { .. } => ProbeKind::InstructionFidelity,
         }
@@ -122,15 +187,29 @@ impl ProbeCase {
 
     pub fn max_attempts(&self) -> Option<u64> {
         match self {
-            Self::DegradationOverN { max_attempts, .. } => Some(*max_attempts),
-            Self::InstructionFidelity { .. } => None,
+            Self::DegradationOverN { max_attempts, .. }
+            | Self::ErrorHonesty { max_attempts, .. } => Some(*max_attempts),
+            _ => None,
+        }
+    }
+
+    pub fn required_tools(&self) -> Vec<&str> {
+        match self {
+            Self::DiscoveryCost { .. } => Vec::new(),
+            Self::StateRecovery {
+                failure_tool,
+                recovery_tool,
+                validation_tool,
+                ..
+            } => vec![failure_tool, recovery_tool, validation_tool],
+            _ => vec![self.tool().expect("tool probe has a primary tool")],
         }
     }
 
     pub fn expectation(&self) -> Option<&Expectation> {
         match self {
             Self::InstructionFidelity { expect, .. } => Some(expect),
-            Self::DegradationOverN { .. } => None,
+            _ => None,
         }
     }
 }
@@ -168,10 +247,17 @@ impl Manifest {
             if !ids.insert(case.id()) {
                 bail!("probe ids must be unique");
             }
-            if !privacy::valid_tool(case.tool()) {
+            if case
+                .required_tools()
+                .iter()
+                .any(|tool| !privacy::valid_tool(tool))
+            {
                 bail!("probe tool is invalid");
             }
-            if !case.arguments().is_object() {
+            if case
+                .arguments()
+                .is_some_and(|arguments| !arguments.is_object())
+            {
                 bail!("probe arguments must be an object");
             }
             match (case.access(), case.sandbox()) {
@@ -184,6 +270,40 @@ impl Manifest {
                 (Access::Mutating, Some(_)) => {}
             }
             match case {
+                ProbeCase::ErrorHonesty { max_attempts, .. } => {
+                    if !(2..=20).contains(max_attempts) {
+                        bail!("error-honesty max_attempts must be between 2 and 20");
+                    }
+                }
+                ProbeCase::StateRecovery {
+                    failure_arguments,
+                    recovery_arguments,
+                    validation_arguments,
+                    ..
+                } => {
+                    if !failure_arguments.is_object()
+                        || !recovery_arguments.is_object()
+                        || !validation_arguments.is_object()
+                    {
+                        bail!("state-recovery arguments must be objects");
+                    }
+                }
+                ProbeCase::DiscoveryCost {
+                    access,
+                    max_tools,
+                    max_schema_bytes,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("discovery-cost must be read-only");
+                    }
+                    if !(1..=10_000).contains(max_tools)
+                        || !(1..=10_000_000).contains(max_schema_bytes)
+                    {
+                        bail!("discovery limits are out of range");
+                    }
+                }
+                ProbeCase::SchemaGuessability { .. } => {}
                 ProbeCase::DegradationOverN { max_attempts, .. } => {
                     if !(2..=100).contains(max_attempts) {
                         bail!("max_attempts must be between 2 and 100");

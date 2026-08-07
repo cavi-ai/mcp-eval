@@ -2,6 +2,29 @@
   "version": 1,
   "probes": [
     {
+      "id": "honest-retry",
+      "probe": "error-honesty",
+      "tool": "flaky_read",
+      "access": "read_only",
+      "arguments": {},
+      "max_attempts": 4,
+      "expect_retryable": true
+    },
+    {
+      "id": "bounded-discovery",
+      "probe": "discovery-cost",
+      "access": "read_only",
+      "max_tools": 10,
+      "max_schema_bytes": 1000
+    },
+    {
+      "id": "naive-status",
+      "probe": "schema-guessability",
+      "tool": "describe_status",
+      "access": "read_only",
+      "arguments": {}
+    },
+    {
       "id": "repeat-read",
       "probe": "degradation-over-n",
       "tool": "read_counter",

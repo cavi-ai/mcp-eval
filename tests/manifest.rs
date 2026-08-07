@@ -148,3 +148,48 @@ fn fidelity_expectations_are_structural_and_outcome_specific() {
     success_code["probes"][1]["expect"]["error_code"] = json!(-32000);
     assert!(parse(&success_code).is_err());
 }
+
+#[test]
+fn discovery_cost_is_read_only_and_has_bounded_limits() {
+    let mut value = valid_manifest();
+    value["probes"] = json!([{
+        "id": "bounded-discovery",
+        "probe": "discovery-cost",
+        "access": "read_only",
+        "max_tools": 10,
+        "max_schema_bytes": 1000
+    }]);
+    assert!(parse(&value).is_ok());
+
+    for (field, invalid) in [("max_tools", 0), ("max_schema_bytes", 10_000_001)] {
+        let mut invalid_value = value.clone();
+        invalid_value["probes"][0][field] = json!(invalid);
+        assert!(parse(&invalid_value).is_err());
+    }
+
+    value["probes"][0]["access"] = json!("mutating");
+    assert!(parse(&value).is_err());
+}
+
+#[test]
+fn resilience_probes_require_bounded_attempts_and_object_arguments() {
+    let mut error = valid_manifest();
+    error["probes"] = json!([{
+        "id":"honest-retry","probe":"error-honesty","tool":"flaky_read",
+        "access":"read_only","arguments":{},"max_attempts":4,"expect_retryable":true
+    }]);
+    assert!(parse(&error).is_ok());
+    error["probes"][0]["max_attempts"] = json!(21);
+    assert!(parse(&error).is_err());
+
+    let mut recovery = valid_manifest();
+    recovery["probes"] = json!([{
+        "id":"recover-session","probe":"state-recovery","access":"mutating","sandbox":"fixture",
+        "failure_tool":"break_session","failure_arguments":{},
+        "recovery_tool":"recover_session","recovery_arguments":{},
+        "validation_tool":"session_status","validation_arguments":{}
+    }]);
+    assert!(parse(&recovery).is_ok());
+    recovery["probes"][0]["validation_arguments"] = json!("invalid");
+    assert!(parse(&recovery).is_err());
+}

@@ -68,6 +68,100 @@ fn broken_fixture_fails_each_probe_with_fixed_reasons() {
 }
 
 #[test]
+fn clean_and_broken_fixtures_measure_discovery_and_schema_guessability() {
+    let (_, discovery) = run(CLEAN, Some("discovery-cost"));
+    assert!(discovery.status.success());
+    let stdout = String::from_utf8(discovery.stdout).unwrap();
+    assert!(stdout.contains("bounded-discovery discovery-cost pass attempts=1 tools=6"));
+
+    let (_, discovery) = run(BROKEN, Some("discovery-cost"));
+    assert!(!discovery.status.success());
+    let stdout = String::from_utf8(discovery.stdout).unwrap();
+    assert!(stdout.contains("reason=discovery-limit-exceeded"));
+    assert!(!stdout.contains("CANARY"));
+    assert!(!stdout.contains("xxxxxxxx"));
+
+    let (_, schema) = run(CLEAN, Some("schema-guessability"));
+    assert!(schema.status.success());
+    assert!(
+        String::from_utf8_lossy(&schema.stdout).contains("naive-status schema-guessability pass")
+    );
+
+    let (_, schema) = run(BROKEN, Some("schema-guessability"));
+    assert!(!schema.status.success());
+    assert!(String::from_utf8_lossy(&schema.stdout).contains("reason=invalid-schema"));
+}
+
+#[test]
+fn clean_and_broken_fixtures_measure_error_honesty() {
+    let (_, clean) = run(CLEAN, Some("error-honesty"));
+    assert!(
+        clean.status.success(),
+        "{}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+    assert!(String::from_utf8_lossy(&clean.stdout)
+        .contains("honest-retry error-honesty pass attempts=3"));
+
+    let (_, broken) = run(BROKEN, Some("error-honesty"));
+    assert!(!broken.status.success());
+    assert!(String::from_utf8_lossy(&broken.stdout).contains("reason=unstable-error-code"));
+    assert!(!String::from_utf8_lossy(&broken.stdout).contains("CANARY"));
+}
+
+fn run_state_recovery(server: &str, allow_mutation: bool) -> std::process::Output {
+    let home = home();
+    let manifest = home.join("state-recovery.json");
+    std::fs::write(
+        &manifest,
+        r#"{
+      "version":1,
+      "sandboxes":{"fixture":{"description":"disposable"}},
+      "probes":[{
+        "id":"recover-session","probe":"state-recovery","access":"mutating","sandbox":"fixture",
+        "failure_tool":"break_session","failure_arguments":{},
+        "recovery_tool":"recover_session","recovery_arguments":{},
+        "validation_tool":"session_status","validation_arguments":{}
+      }]
+    }"#,
+    )
+    .unwrap();
+    let mut command = Command::new(bin());
+    command
+        .args(["probe", "--server", "fixture", "--manifest"])
+        .arg(&manifest);
+    if allow_mutation {
+        command.arg("--allow-mutation");
+    }
+    command
+        .args(["--", "python3", server])
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn state_recovery_is_double_gated_and_validates_post_recovery_health() {
+    let denied = run_state_recovery(CLEAN, false);
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr).contains("--allow-mutation"));
+
+    let clean = run_state_recovery(CLEAN, true);
+    assert!(
+        clean.status.success(),
+        "{}",
+        String::from_utf8_lossy(&clean.stderr)
+    );
+    assert!(String::from_utf8_lossy(&clean.stdout)
+        .contains("recover-session state-recovery pass attempts=3"));
+
+    let broken = run_state_recovery(BROKEN, true);
+    assert!(!broken.status.success());
+    assert!(String::from_utf8_lossy(&broken.stdout).contains("reason=validation-failed"));
+    assert!(!String::from_utf8_lossy(&broken.stdout).contains("CANARY"));
+}
+
+#[test]
 fn invalid_manifest_fails_before_launching_the_child() {
     let home = home();
     let manifest = home.join("invalid.json");

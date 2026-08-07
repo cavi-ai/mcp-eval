@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import test from "node:test";
+
+const ROOT = path.resolve(import.meta.dirname, "../..");
+const SOURCE = path.join(ROOT, "docs/mcp-eval/source");
+
+test("release identity follows the Cargo package and binary contracts", async () => {
+  const {
+    CLI_BINARY,
+    DOCUMENTED_VERSION,
+    PRODUCT_ID,
+    RELEASE_REPOSITORY,
+    resolveReleaseIdentity,
+  } = await import("./lib.mjs");
+  const release = resolveReleaseIdentity({
+    version: "0.1.0",
+    tag: "v0.1.0",
+    commit: "0123456789abcdef0123456789abcdef01234567",
+    sourceDateEpoch: 1700000000,
+  });
+  assert.deepEqual(
+    {
+      binary: CLI_BINARY,
+      repository: RELEASE_REPOSITORY,
+      slug: PRODUCT_ID,
+      tag: release.tag,
+      version: DOCUMENTED_VERSION,
+    },
+    {
+      binary: "mcpeval",
+      repository: "cavi-ai/mcp-eval",
+      slug: "mcp-eval",
+      tag: "v0.1.0",
+      version: "0.1.0",
+    },
+  );
+});
+
+test("navigation references every official source page exactly once", async () => {
+  const navigation = JSON.parse(await readFile(path.join(SOURCE, "navigation.json"), "utf8"));
+  const paths = navigation.sections.flatMap((section) => section.pages.map((page) => page.path));
+  assert.equal(navigation.title, "MCP Eval");
+  assert.equal(paths.length, 11);
+  assert.equal(new Set(paths).size, paths.length);
+  for (const relative of paths) {
+    assert.ok(await readFile(path.join(SOURCE, "pages", relative), "utf8"));
+  }
+});
+
+test("official docs cover the evaluation, recovery, privacy, and authorization contracts", async () => {
+  const navigation = JSON.parse(await readFile(path.join(SOURCE, "navigation.json"), "utf8"));
+  const pages = await Promise.all(
+    navigation.sections.flatMap((section) => section.pages).map((page) => (
+      readFile(path.join(SOURCE, "pages", page.path), "utf8")
+    )),
+  );
+  const text = pages.join("\n");
+  for (const phrase of [
+    "discovery-cost",
+    "schema-guessability",
+    "error-honesty",
+    "state-recovery",
+    "contention",
+    "read-only by default",
+    "--allow-mutation",
+    "declared sandbox",
+    "MCPEVAL_HTTP_AUTHORIZATION",
+    "Only `<MCPEVAL_HOME>/store/` is safe to share",
+    "--confirm-read-only",
+  ]) {
+    assert.ok(text.includes(phrase), phrase);
+  }
+});
+
+test("release workflow runs the full Cargo and documentation gates before dispatch", async () => {
+  const workflow = await readFile(path.join(ROOT, ".github/workflows/publish-docs.yml"), "utf8");
+  for (const phrase of [
+    "release:",
+    "types: [published]",
+    "cargo fmt --check",
+    "cargo clippy --all-targets --all-features -- -D warnings",
+    "cargo test --all-targets --all-features",
+    "node --test scripts/docs/*.test.mjs",
+    "node scripts/docs/build.mjs",
+    "node scripts/docs/verify.mjs",
+    "mcp-eval-docs-${TAG}.tar.gz",
+    "$DIRECTORY/$ARTIFACT.sha256",
+    "CONSUMER_DISPATCH_TOKEN",
+  ]) {
+    assert.ok(workflow.includes(phrase), phrase);
+  }
+  assert.ok(workflow.indexOf("cargo fmt --check") < workflow.indexOf("node scripts/docs/build.mjs"));
+  assert.ok(workflow.indexOf("node scripts/docs/verify.mjs") < workflow.indexOf("gh api --method POST"));
+});

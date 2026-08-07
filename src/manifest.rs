@@ -2,12 +2,12 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use anyhow::{bail, Context};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::privacy;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub version: u64,
@@ -16,20 +16,20 @@ pub struct Manifest {
     pub probes: Vec<ProbeCase>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Sandbox {
     pub description: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Access {
     ReadOnly,
     Mutating,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum OutcomeExpectation {
     #[serde(rename = "ok")]
     Ok,
@@ -37,7 +37,7 @@ pub enum OutcomeExpectation {
     Error,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Expectation {
     pub outcome: OutcomeExpectation,
@@ -48,7 +48,7 @@ pub struct Expectation {
     pub error_code: Option<i64>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "probe", deny_unknown_fields)]
 pub enum ProbeCase {
     #[serde(rename = "contention")]

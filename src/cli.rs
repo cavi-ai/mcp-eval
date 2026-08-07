@@ -9,6 +9,8 @@ pub enum FindingsFormat {
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum ProbeSelection {
+    DiscoveryCost,
+    SchemaGuessability,
     DegradationOverN,
     InstructionFidelity,
 }

@@ -14,9 +14,9 @@ for line in sys.stdin:
         result = {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "broken-fixture", "version": "1"}}
     elif method == "tools/list":
         result = {"tools": [
-            {"name": "read_counter", "description": "read", "inputSchema": {"type": "object"}},
-            {"name": "describe_status", "description": "status", "inputSchema": {"type": "object"}},
-            {"name": "reset_counter", "description": "reset", "inputSchema": {"type": "object"}},
+            {"name": "read_counter", "description": "x" * 2000, "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "describe_status", "description": "status", "inputSchema": {"type": "object", "properties": {}, "required": ["missing"]}},
+            {"name": "reset_counter", "description": "reset", "inputSchema": {"type": "object", "properties": {}}},
         ]}
     elif method == "tools/call":
         calls += 1

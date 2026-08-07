@@ -68,6 +68,31 @@ fn broken_fixture_fails_each_probe_with_fixed_reasons() {
 }
 
 #[test]
+fn clean_and_broken_fixtures_measure_discovery_and_schema_guessability() {
+    let (_, discovery) = run(CLEAN, Some("discovery-cost"));
+    assert!(discovery.status.success());
+    let stdout = String::from_utf8(discovery.stdout).unwrap();
+    assert!(stdout.contains("bounded-discovery discovery-cost pass attempts=1 tools=2"));
+
+    let (_, discovery) = run(BROKEN, Some("discovery-cost"));
+    assert!(!discovery.status.success());
+    let stdout = String::from_utf8(discovery.stdout).unwrap();
+    assert!(stdout.contains("reason=discovery-limit-exceeded"));
+    assert!(!stdout.contains("CANARY"));
+    assert!(!stdout.contains("xxxxxxxx"));
+
+    let (_, schema) = run(CLEAN, Some("schema-guessability"));
+    assert!(schema.status.success());
+    assert!(
+        String::from_utf8_lossy(&schema.stdout).contains("naive-status schema-guessability pass")
+    );
+
+    let (_, schema) = run(BROKEN, Some("schema-guessability"));
+    assert!(!schema.status.success());
+    assert!(String::from_utf8_lossy(&schema.stdout).contains("reason=invalid-schema"));
+}
+
+#[test]
 fn invalid_manifest_fails_before_launching_the_child() {
     let home = home();
     let manifest = home.join("invalid.json");

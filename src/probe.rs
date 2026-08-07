@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use crate::fingerprint::Salt;
 use crate::manifest::{Access, Expectation, Manifest, OutcomeExpectation, ProbeCase, ProbeKind};
-use crate::mcp_client::{McpClient, ToolResponse};
+use crate::mcp_client::{McpClient, ToolCatalog, ToolDefinition, ToolResponse};
 use crate::record::{error_info, CallRecord};
 use crate::store::Store;
 use anyhow::{bail, Context};
@@ -24,6 +24,9 @@ pub enum FailureReason {
     MissingField,
     ValueMismatch,
     ErrorCodeMismatch,
+    DiscoveryLimitExceeded,
+    InvalidSchema,
+    MissingRequiredArgument,
 }
 
 #[derive(Debug)]
@@ -33,6 +36,8 @@ pub struct CaseReport {
     pub attempts: u64,
     pub first_failure: Option<u64>,
     pub reason: Option<FailureReason>,
+    pub tool_count: Option<u64>,
+    pub schema_bytes: Option<u64>,
 }
 
 impl CaseReport {
@@ -85,41 +90,93 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     let mut seq = 0;
     let mut client = McpClient::spawn(&options.command)?;
     client.initialize()?;
-    let tools = client.list_tools()?;
+    let catalog = client.list_tools_catalog()?;
     for case in &cases {
-        if !tools.iter().any(|tool| tool == case.tool()) {
+        if case
+            .tool()
+            .is_some_and(|name| !catalog.tools.iter().any(|tool| tool.name == name))
+        {
             bail!("probe tool was not declared by the server");
         }
     }
     let mut reports = Vec::with_capacity(cases.len());
+    let mut context = RunContext {
+        server: &options.server,
+        session: &session,
+        seq: &mut seq,
+        salt: &salt,
+        client: &mut client,
+        catalog: &catalog,
+        store,
+    };
     for case in cases {
-        reports.push(run_case(
-            case,
-            &options.server,
-            &session,
-            &mut seq,
-            &salt,
-            &mut client,
-            store,
-        )?);
+        reports.push(run_case(case, &mut context)?);
     }
     Ok(ProbeReport { cases: reports })
 }
 
-fn run_case(
-    case: &ProbeCase,
-    server: &str,
-    session: &str,
-    seq: &mut u64,
-    salt: &Salt,
-    client: &mut McpClient,
-    store: &mut Store,
-) -> anyhow::Result<CaseReport> {
+struct RunContext<'a> {
+    server: &'a str,
+    session: &'a str,
+    seq: &'a mut u64,
+    salt: &'a Salt,
+    client: &'a mut McpClient,
+    catalog: &'a ToolCatalog,
+    store: &'a mut Store,
+}
+
+fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
     match case {
+        ProbeCase::DiscoveryCost {
+            max_tools,
+            max_schema_bytes,
+            ..
+        } => {
+            let tool_count = context.catalog.tools.len() as u64;
+            let schema_bytes = context.catalog.encoded_bytes as u64;
+            let reason = (tool_count > *max_tools || schema_bytes > *max_schema_bytes)
+                .then_some(FailureReason::DiscoveryLimitExceeded);
+            Ok(CaseReport {
+                id: case.id().to_owned(),
+                probe: case.kind(),
+                attempts: 1,
+                first_failure: reason.map(|_| 1),
+                reason,
+                tool_count: Some(tool_count),
+                schema_bytes: Some(schema_bytes),
+            })
+        }
+        ProbeCase::SchemaGuessability { .. } => {
+            let definition = context
+                .catalog
+                .tools
+                .iter()
+                .find(|tool| Some(tool.name.as_str()) == case.tool())
+                .expect("selected tool was preflighted");
+            let preflight =
+                check_schema(definition, case.arguments().expect("schema case has args"));
+            let reason = if preflight.is_some() {
+                preflight
+            } else {
+                match call_and_record(case, context)? {
+                    ToolResponse::Success(_) => None,
+                    ToolResponse::Error { .. } => Some(FailureReason::UnexpectedOutcome),
+                }
+            };
+            Ok(CaseReport {
+                id: case.id().to_owned(),
+                probe: case.kind(),
+                attempts: u64::from(preflight.is_none()),
+                first_failure: reason.map(|_| 1),
+                reason,
+                tool_count: None,
+                schema_bytes: None,
+            })
+        }
         ProbeCase::DegradationOverN { .. } => {
             let limit = case.max_attempts().expect("degradation case has a bound");
             for attempt in 1..=limit {
-                let response = call_and_record(case, server, session, seq, salt, client, store)?;
+                let response = call_and_record(case, context)?;
                 if matches!(response, ToolResponse::Error { .. }) {
                     return Ok(CaseReport {
                         id: case.id().to_owned(),
@@ -127,6 +184,8 @@ fn run_case(
                         attempts: attempt,
                         first_failure: Some(attempt),
                         reason: Some(FailureReason::UnexpectedOutcome),
+                        tool_count: None,
+                        schema_bytes: None,
                     });
                 }
             }
@@ -136,10 +195,12 @@ fn run_case(
                 attempts: limit,
                 first_failure: None,
                 reason: None,
+                tool_count: None,
+                schema_bytes: None,
             })
         }
         ProbeCase::InstructionFidelity { .. } => {
-            let response = call_and_record(case, server, session, seq, salt, client, store)?;
+            let response = call_and_record(case, context)?;
             let reason = check_expectation(
                 case.expectation().expect("fidelity case has expectation"),
                 &response,
@@ -150,39 +211,36 @@ fn run_case(
                 attempts: 1,
                 first_failure: reason.map(|_| 1),
                 reason,
+                tool_count: None,
+                schema_bytes: None,
             })
         }
     }
 }
 
-fn call_and_record(
-    case: &ProbeCase,
-    server: &str,
-    session: &str,
-    seq: &mut u64,
-    salt: &Salt,
-    client: &mut McpClient,
-    store: &mut Store,
-) -> anyhow::Result<ToolResponse> {
-    *seq += 1;
+fn call_and_record(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<ToolResponse> {
+    *context.seq += 1;
     let started = Instant::now();
-    let response = client.call_tool(case.tool(), case.arguments())?;
+    let tool = case.tool().expect("call probe has a tool");
+    let arguments = case.arguments().expect("call probe has arguments");
+    let response = context.client.call_tool(tool, arguments)?;
     let latency_ms = started.elapsed().as_millis() as u64;
     let (outcome, error) = match &response {
         ToolResponse::Success(_) => ("ok", None),
-        ToolResponse::Error { payload, .. } => ("error", Some(error_info(payload, salt))),
+        ToolResponse::Error { payload, .. } => ("error", Some(error_info(payload, context.salt))),
     };
-    store
+    context
+        .store
         .append(&CallRecord {
             ts: chrono::Utc::now()
                 .format("%Y-%m-%dT%H:%M:%S%.3fZ")
                 .to_string(),
-            session: session.to_owned(),
-            seq: *seq,
-            server: server.to_owned(),
+            session: context.session.to_owned(),
+            seq: *context.seq,
+            server: context.server.to_owned(),
             method: "tools/call".into(),
-            tool: Some(case.tool().to_owned()),
-            args: Some(case.arguments().clone()),
+            tool: Some(tool.to_owned()),
+            args: Some(arguments.clone()),
             latency_ms: Some(latency_ms),
             outcome: outcome.into(),
             error,
@@ -191,6 +249,45 @@ fn call_and_record(
         })
         .context("recording probe call")?;
     Ok(response)
+}
+
+fn check_schema(
+    definition: &ToolDefinition,
+    arguments: &serde_json::Value,
+) -> Option<FailureReason> {
+    let Some(schema) = definition.input_schema.as_object() else {
+        return Some(FailureReason::InvalidSchema);
+    };
+    if schema.get("type").and_then(serde_json::Value::as_str) != Some("object") {
+        return Some(FailureReason::InvalidSchema);
+    }
+    let properties = match schema.get("properties") {
+        None => serde_json::Map::new(),
+        Some(value) => match value.as_object() {
+            Some(properties) => properties.clone(),
+            None => return Some(FailureReason::InvalidSchema),
+        },
+    };
+    let required = match schema.get("required") {
+        None => &[][..],
+        Some(value) => match value.as_array() {
+            Some(required) => required.as_slice(),
+            None => return Some(FailureReason::InvalidSchema),
+        },
+    };
+    let arguments = arguments.as_object().expect("manifest validates arguments");
+    for field in required {
+        let Some(field) = field.as_str() else {
+            return Some(FailureReason::InvalidSchema);
+        };
+        if !properties.contains_key(field) {
+            return Some(FailureReason::InvalidSchema);
+        }
+        if !arguments.contains_key(field) {
+            return Some(FailureReason::MissingRequiredArgument);
+        }
+    }
+    None
 }
 
 fn check_expectation(expect: &Expectation, response: &ToolResponse) -> Option<FailureReason> {

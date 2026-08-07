@@ -26,8 +26,8 @@ for line in sys.stdin:
         }
     elif method == "tools/list":
         result = {"tools": [
-            {"name": "read_counter", "description": "read", "inputSchema": {"type": "object"}},
-            {"name": "describe_status", "description": "status", "inputSchema": {"type": "object"}},
+            {"name": "read_counter", "description": "read", "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "describe_status", "description": "status", "inputSchema": {"type": "object", "properties": {}}},
         ]}
     elif method == "tools/call":
         calls += 1

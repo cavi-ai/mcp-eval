@@ -5,9 +5,10 @@
 `mcp-eval` captures what MCP servers cost agents and turns repeated friction into
 queryable evidence a development agent can act on.
 
-Phase 4 connects the deterministic probe battery to persistent finding lifecycles.
-A finding closes only after three consecutive green verification runs and reopens
-automatically on regression, without discarding its probe history.
+Phase 5 expands the deterministic battery with `discovery-cost` and
+`schema-guessability`. A finding closes only after three consecutive green
+verification runs and reopens automatically on regression, without discarding its
+probe history.
 
 ## Quick start
 
@@ -39,6 +40,11 @@ Probe manifests are strict, versioned JSON. Unknown fields are rejected. A
 flag never authorizes mutation. `instruction-fidelity` currently checks declared,
 machine-readable result fields, scalar values, outcomes, and error codes. It does
 not send tool descriptions or results to an external LLM.
+`discovery-cost` enforces declared bounds on tool count and the encoded `tools/list`
+catalog size. `schema-guessability` checks that the selected tool exposes a coherent
+object schema, that every required field is declared and supplied by the manifest's
+naive call, and that the call succeeds. Catalog descriptions and schemas are measured
+in memory but never persisted or printed.
 
 Promotion groups failures by server, tool, error code, and salted template
 identifier. Its score combines the 95% Wilson lower bound of the observed rate,

@@ -3,6 +3,7 @@ pub mod doctor;
 pub mod errtemplate;
 pub mod fingerprint;
 pub mod frame;
+pub mod generate;
 pub mod http_client;
 pub mod http_proxy;
 pub mod index;

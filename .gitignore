@@ -25,3 +25,5 @@ GEMINI.md
 *.swo
 .idea/
 .vscode/
+/docs/mcp-eval/v*/
+/.release/

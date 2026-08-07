@@ -276,22 +276,3 @@ launch. `instruction-fidelity` is deterministic and structural in Phase 3; it do
 not invoke an LLM or disclose data to a network service. Manifest arguments and
 sandbox descriptions may themselves be sensitive. They are never persisted by
 mcp-eval, but the manifest file is not a share-safe artifact.
-
-## Bobby Browser live validation — 2026-08-04
-
-The release shim was validated against a fresh Bobby Browser stdio gateway child
-connected to the already-running service on `127.0.0.1:7777`; the service and its
-repository were not changed, stopped, or reconfigured.
-
-The MCP 2025-11-25 handshake succeeded, `tools/list` returned 43 tools, and the
-selected `runtime_info` tool was annotated read-only and non-destructive. Its
-normal `tools/call` succeeded. A separate invalid-argument request to that same
-read-only tool exercised redaction without executing a browser action.
-
-`mcpeval index` printed `indexed 4 calls, 1 failures`. SQLite then confirmed that
-all 4 records were real and belonged to 1 session, with 3 successful calls, 1
-error, and 3 failure-window rows. The planted-value scan and the common-pattern
-scan above each found 0 persisted matches. The redaction-probe arguments contained
-only string buckets, `url:example.co.uk`, `url:ip`, `url:localhost`, and
-`url:host`. Its error fields contained a scalar code and the constant `{message}`;
-no raw request or response payload is included here.

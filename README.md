@@ -1,5 +1,7 @@
 # mcp-eval
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 `mcp-eval` captures what MCP servers cost agents and turns repeated friction into
 queryable evidence a development agent can act on.
 
@@ -128,3 +130,19 @@ See [the original design](docs/design/2026-08-04-mcp-eval.md) and the
 [Phase 2 design](docs/design/2026-08-05-mcp-eval-phase2.md) for the promotion
 model. See the [Phase 3 design](docs/design/2026-08-06-mcp-eval-phase3.md) for
 the probe and sandbox contract.
+
+## Project status
+
+`mcp-eval` is under active development. The on-disk schema, CLI, and manifest
+format may change before 1.0. Review the [changelog](CHANGELOG.md) when updating.
+
+## Contributing
+
+Bug reports and focused pull requests are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for development setup, quality gates, and the
+privacy requirements for fixtures and tests. Security reports should follow
+[SECURITY.md](SECURITY.md).
+
+## License
+
+Licensed under the [MIT License](LICENSE).

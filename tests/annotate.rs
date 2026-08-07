@@ -14,17 +14,36 @@ fn tempdir() -> std::path::PathBuf {
 fn writes_an_annotation_record() {
     let home = tempdir();
     let out = Command::new(bin())
-        .args(["annotate", "--session", "s1", "--seq", "7",
-               "--kind", "false-success", "--note", "click reported success, nothing changed"])
+        .args([
+            "annotate",
+            "--session",
+            "s1",
+            "--seq",
+            "7",
+            "--kind",
+            "false-success",
+            "--note",
+            "click reported success, nothing changed",
+        ])
         .env("MCPEVAL_HOME", &home)
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     let mut found = None;
     for entry in std::fs::read_dir(home.join("store")).unwrap() {
         let path = entry.unwrap().path();
-        if path.file_name().unwrap().to_str().unwrap().starts_with("annotations-") {
+        if path
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with("annotations-")
+        {
             found = Some(std::fs::read_to_string(path).unwrap());
         }
     }
@@ -32,22 +51,37 @@ fn writes_an_annotation_record() {
     let value: serde_json::Value = serde_json::from_str(body.lines().next().unwrap()).unwrap();
     assert_eq!(value["kind"], "false-success");
     assert_eq!(value["seq"], 7);
-    assert!(value["session"].as_str().unwrap().starts_with("session:"),
-            "session must be hashed, got {}", value["session"]);
+    assert!(
+        value["session"].as_str().unwrap().starts_with("session:"),
+        "session must be hashed, got {}",
+        value["session"]
+    );
 }
 
 #[test]
 fn rejects_an_unknown_kind() {
     let home = tempdir();
     let out = Command::new(bin())
-        .args(["annotate", "--session", "s1", "--seq", "1",
-               "--kind", "vibes", "--note", "n"])
+        .args([
+            "annotate",
+            "--session",
+            "s1",
+            "--seq",
+            "1",
+            "--kind",
+            "vibes",
+            "--note",
+            "n",
+        ])
         .env("MCPEVAL_HOME", &home)
         .output()
         .unwrap();
     assert!(!out.status.success());
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("false-success"), "error must list valid kinds: {err}");
+    assert!(
+        err.contains("false-success"),
+        "error must list valid kinds: {err}"
+    );
 }
 
 #[test]
@@ -55,8 +89,17 @@ fn rejects_an_overlong_or_multiline_note() {
     let home = tempdir();
     for note in [&"x".repeat(241), "line one\nline two"] {
         let out = Command::new(bin())
-            .args(["annotate", "--session", "s1", "--seq", "1",
-                   "--kind", "workaround", "--note", note])
+            .args([
+                "annotate",
+                "--session",
+                "s1",
+                "--seq",
+                "1",
+                "--kind",
+                "workaround",
+                "--note",
+                note,
+            ])
             .env("MCPEVAL_HOME", &home)
             .output()
             .unwrap();

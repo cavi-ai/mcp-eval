@@ -4,3 +4,23 @@
 .claude/
 .worktrees/
 .DS_Store
+
+# Local agent and planning artifacts
+docs/plan/
+docs/plans/
+docs/superpowers/
+.agents/
+.codex/
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+GEMINI.md
+
+# Local editor and environment files
+.env
+.env.*
+!.env.example
+*.swp
+*.swo
+.idea/
+.vscode/

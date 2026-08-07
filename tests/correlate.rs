@@ -28,8 +28,16 @@ fn matches_a_response_to_its_request_and_measures_latency() {
 
 #[test]
 fn sessions_are_stable_opaque_tokens_and_unlisted_tools_are_not_persisted() {
-    let mut first = Correlator::new("demo".into(), "session secret /Users/a".into(), Salt::for_tests());
-    let mut second = Correlator::new("demo".into(), "session secret /Users/a".into(), Salt::for_tests());
+    let mut first = Correlator::new(
+        "demo".into(),
+        "session secret /Users/a".into(),
+        Salt::for_tests(),
+    );
+    let mut second = Correlator::new(
+        "demo".into(),
+        "session secret /Users/a".into(),
+        Salt::for_tests(),
+    );
     for c in [&mut first, &mut second] {
         c.on_outbound(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"CANARY?token=x","arguments":{}}}), 0);
     }
@@ -224,28 +232,42 @@ fn numeric_and_string_ids_do_not_collide() {
 
 #[test]
 fn an_undeclared_but_identifier_shaped_tool_name_is_kept() {
-    let mut c = Correlator::new("demo".into(), "sess".into(), mcpeval::fingerprint::Salt::for_tests());
+    let mut c = Correlator::new(
+        "demo".into(),
+        "sess".into(),
+        mcpeval::fingerprint::Salt::for_tests(),
+    );
     c.on_outbound(
         &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
                              "params": { "name": "never_listed_tool", "arguments": {} } }),
         0,
     );
     let rec = c
-        .on_inbound(&serde_json::json!({ "jsonrpc": "2.0", "id": 1, "result": {} }), 1)
+        .on_inbound(
+            &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "result": {} }),
+            1,
+        )
         .unwrap();
     assert_eq!(rec.tool.as_deref(), Some("never_listed_tool"));
 }
 
 #[test]
 fn a_prose_shaped_tool_name_becomes_unlisted() {
-    let mut c = Correlator::new("demo".into(), "sess".into(), mcpeval::fingerprint::Salt::for_tests());
+    let mut c = Correlator::new(
+        "demo".into(),
+        "sess".into(),
+        mcpeval::fingerprint::Salt::for_tests(),
+    );
     c.on_outbound(
         &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/call",
                              "params": { "name": "upload /Users/someone/private.pdf", "arguments": {} } }),
         0,
     );
     let rec = c
-        .on_inbound(&serde_json::json!({ "jsonrpc": "2.0", "id": 1, "result": {} }), 1)
+        .on_inbound(
+            &serde_json::json!({ "jsonrpc": "2.0", "id": 1, "result": {} }),
+            1,
+        )
         .unwrap();
     assert_eq!(rec.tool.as_deref(), Some("unlisted"));
 }

@@ -23,7 +23,11 @@ fn passes_on_a_clean_store() {
         .env("MCPEVAL_HOME", &home)
         .output()
         .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
 }
 
 #[test]

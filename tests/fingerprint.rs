@@ -4,8 +4,14 @@ use mcpeval::fingerprint::{template_id, Salt};
 #[test]
 fn same_defect_different_values_fingerprints_the_same() {
     let salt = Salt::for_tests();
-    let a = template_id(&salt, "session 0be9b59c-af70-47b0-9169-d9de92330600 died after 5 actions");
-    let b = template_id(&salt, "session f5a8fb32-922f-4f72-b09a-474045fd0094 died after 12 actions");
+    let a = template_id(
+        &salt,
+        "session 0be9b59c-af70-47b0-9169-d9de92330600 died after 5 actions",
+    );
+    let b = template_id(
+        &salt,
+        "session f5a8fb32-922f-4f72-b09a-474045fd0094 died after 12 actions",
+    );
     assert_eq!(a, b);
 }
 
@@ -26,7 +32,10 @@ fn a_different_salt_changes_the_fingerprint() {
 
 #[test]
 fn the_fingerprint_does_not_contain_the_message() {
-    let id = template_id(&Salt::for_tests(), "Cannot upload /Users/someone/private.pdf");
+    let id = template_id(
+        &Salt::for_tests(),
+        "Cannot upload /Users/someone/private.pdf",
+    );
     assert_eq!(id.len(), 16);
     assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
     assert!(!id.contains("private"));
@@ -39,8 +48,14 @@ fn skeleton_collapses_values_but_keeps_structure() {
         "session u died after 0 actions"
     );
     assert_eq!(skeleton("cannot open \"/tmp/x\""), "cannot open q");
-    assert_eq!(skeleton("ws://127.0.0.1:9222/session unreachable"), "l unreachable");
-    assert_eq!(skeleton("descriptor at /Users/a/b.json missing"), "descriptor at p missing");
+    assert_eq!(
+        skeleton("ws://127.0.0.1:9222/session unreachable"),
+        "l unreachable"
+    );
+    assert_eq!(
+        skeleton("descriptor at /Users/a/b.json missing"),
+        "descriptor at p missing"
+    );
 }
 
 #[test]
@@ -99,7 +114,10 @@ fn salt_lives_outside_the_shareable_store_directory() {
     let dir = std::env::temp_dir().join(format!("mcpeval-saltpath-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(dir.join("store")).unwrap();
     Salt::load(&dir).unwrap();
-    assert!(dir.join(".salt").is_file(), "salt must live at <root>/.salt");
+    assert!(
+        dir.join(".salt").is_file(),
+        "salt must live at <root>/.salt"
+    );
     assert!(
         !dir.join("salt").exists(),
         "the old non-dotfile salt path must not be used"

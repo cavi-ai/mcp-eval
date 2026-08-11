@@ -28,3 +28,5 @@ GEMINI.md
 /docs/mcp-eval/v*/
 /.release/
 docs/design/
+
+data/

@@ -27,3 +27,4 @@ GEMINI.md
 .vscode/
 /docs/mcp-eval/v*/
 /.release/
+docs/design/

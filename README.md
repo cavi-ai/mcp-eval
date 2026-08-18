@@ -38,6 +38,8 @@ a stable `session:<sha256>` token before persistence; otherwise the shim hashes
 a generated UUID for that process.
 
 The stdio shim targets Unix and Windows and expects newline-delimited JSON-RPC.
+The probe runner also supports MCP Streamable HTTP endpoints with JSON or SSE
+responses.
 `shim-http` provides the same privacy-safe capture boundary for Streamable HTTP
 POST traffic. It accepts connections only on an explicit loopback socket, forwards
 to a validated endpoint, preserves MCP protocol and session headers, and supports

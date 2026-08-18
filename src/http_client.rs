@@ -186,7 +186,7 @@ impl HttpMcpClient {
     }
 }
 
-pub(crate) fn validate_endpoint(endpoint: &str, allow_remote: bool) -> anyhow::Result<String> {
+fn validate_endpoint(endpoint: &str, allow_remote: bool) -> anyhow::Result<String> {
     let parsed = url::Url::parse(endpoint).context("HTTP endpoint is invalid")?;
     if !matches!(parsed.scheme(), "http" | "https")
         || !parsed.username().is_empty()

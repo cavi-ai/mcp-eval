@@ -40,6 +40,21 @@ pub enum Command {
         #[arg(last = true, required = true)]
         cmd: Vec<String>,
     },
+    /// Proxy a Streamable HTTP MCP endpoint and record sanitized call metadata.
+    ShimHttp {
+        /// Name this server is recorded under.
+        #[arg(long)]
+        server: String,
+        /// Loopback socket address to accept MCP requests on.
+        #[arg(long)]
+        listen: String,
+        /// Streamable HTTP endpoint to forward requests to.
+        #[arg(long)]
+        upstream: String,
+        /// Allow an explicitly selected remote HTTPS upstream.
+        #[arg(long)]
+        allow_remote_http: bool,
+    },
     /// Run deterministic, privacy-safe probes against an MCP server.
     Probe {
         /// Name this server is recorded under.
@@ -95,6 +110,21 @@ pub enum Command {
         /// Override config.json's promotion_threshold for this run.
         #[arg(long)]
         threshold: Option<f64>,
+    },
+    /// Generate a read-only manifest from an eligible promoted finding.
+    Generate {
+        /// Stable ID emitted by `mcpeval findings`.
+        #[arg(long)]
+        finding: String,
+        /// Path for the generated manifest.
+        #[arg(long)]
+        output: std::path::PathBuf,
+        /// Replace an existing output file.
+        #[arg(long)]
+        force: bool,
+        /// Attest that the selected tool is read-only; this does not authorize mutation.
+        #[arg(long, required = true)]
+        confirm_read_only: bool,
     },
     /// Render promoted findings without exposing captured private content.
     Findings {

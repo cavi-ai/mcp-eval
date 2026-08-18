@@ -4,6 +4,11 @@
 .claude/
 .worktrees/
 .DS_Store
+data/
+.quarantine/
+.remember/
+.superpowers/
+.interface-artifact-ownership/
 
 # Local agent and planning artifacts
 docs/plan/
@@ -25,3 +30,5 @@ GEMINI.md
 *.swo
 .idea/
 .vscode/
+/docs/mcp-eval/v*/
+/.release/

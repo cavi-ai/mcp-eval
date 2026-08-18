@@ -1,0 +1,42 @@
+{
+  "title": "MCP Eval",
+  "version": "{{PRODUCT_VERSION}}",
+  "sections": [
+    {
+      "title": "Introduction",
+      "pages": [
+        { "title": "Overview", "path": "introduction/overview.md" },
+        { "title": "Installation", "path": "introduction/installation.md" },
+        { "title": "Quickstart", "path": "introduction/quickstart.md" }
+      ]
+    },
+    {
+      "title": "Guides",
+      "pages": [
+        { "title": "Capture and probe", "path": "guides/capture-and-probe.md" },
+        { "title": "Findings and verification", "path": "guides/findings-and-verification.md" },
+        { "title": "Troubleshooting", "path": "guides/troubleshooting.md" }
+      ]
+    },
+    {
+      "title": "Reference",
+      "pages": [
+        { "title": "CLI", "path": "reference/cli.md" },
+        { "title": "Manifest", "path": "reference/manifest.md" },
+        { "title": "Evaluation dimensions", "path": "reference/evaluation-dimensions.md" }
+      ]
+    },
+    {
+      "title": "Security",
+      "pages": [
+        { "title": "Privacy and authorization", "path": "security/privacy-and-authorization.md" }
+      ]
+    },
+    {
+      "title": "Release",
+      "pages": [
+        { "title": "Version and support", "path": "release/version-and-support.md" }
+      ]
+    }
+  ]
+}

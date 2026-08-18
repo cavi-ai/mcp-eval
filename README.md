@@ -15,9 +15,14 @@ probe history.
 ```sh
 cargo build --release
 ./target/release/mcpeval shim --server demo -- your-mcp-server --flags
+./target/release/mcpeval shim-http --server demo \
+  --listen 127.0.0.1:8090 --upstream http://127.0.0.1:8080/mcp
 ./target/release/mcpeval index
 ./target/release/mcpeval promote
 ./target/release/mcpeval findings --format agent
+./target/release/mcpeval generate --finding finding-0123456789abcdef \
+  --confirm-read-only \
+  --output generated.manifest.json
 ./target/release/mcpeval probe --server demo \
   --manifest mcp-eval.manifest.json -- your-mcp-server --flags
 ./target/release/mcpeval probe --server demo \
@@ -35,6 +40,11 @@ a generated UUID for that process.
 The stdio shim targets Unix and Windows and expects newline-delimited JSON-RPC.
 The probe runner also supports MCP Streamable HTTP endpoints with JSON or SSE
 responses.
+`shim-http` provides the same privacy-safe capture boundary for Streamable HTTP
+POST traffic. It accepts connections only on an explicit loopback socket, forwards
+to a validated endpoint, preserves MCP protocol and session headers, and supports
+bounded JSON and finite SSE responses. The probe runner also supports MCP
+Streamable HTTP endpoints with JSON or SSE responses.
 See [the installation guide](docs/install.md) for MCP client configuration and
 live verification.
 
@@ -64,6 +74,12 @@ fragments; redirects are disabled. Optional authorization is read from
 `MCPEVAL_HTTP_AUTHORIZATION`, validated, and never persisted or printed. Responses are
 bounded to 8 MiB and use five-second connect/read/write timeouts.
 
+The HTTP capture proxy follows the same upstream URL policy and I/O bounds. It
+forwards incoming `Authorization` values in memory but never stores headers, endpoint
+URLs, request bodies, or response bodies. It does not originate tool calls or grant
+mutation permission; it only relays traffic sent by the connected client. Configure
+the MCP client to use the proxy's loopback URL while `mcpeval shim-http` is running.
+
 Promotion groups failures by server, tool, error code, and salted template
 identifier. Its score combines the 95% Wilson lower bound of the observed rate,
 fourteen-day recency decay, median failure-window turns, and distinct-tool blast
@@ -91,6 +107,15 @@ attached probe remain open, require manual closure, and are capped at medium
 severity. Verification performs finding, case, and tool checks before launching the
 server. Mutating verification still requires both a declared sandbox and
 `--allow-mutation`.
+
+`mcpeval generate --finding <id> --confirm-read-only --output <path>` creates a
+deterministic manifest for an eligible promoted finding. Eligibility requires a valid
+tool and exactly empty captured arguments; captured non-empty arguments are never
+reconstructed. `--confirm-read-only` is an operator attestation that the tool is safe
+to call without mutation, not permission to mutate it. The generated case is always a
+read-only, sandbox-free `degradation-over-n` probe. Generation reads an existing index,
+writes only the requested manifest file, prints only the generated probe ID, and never
+replaces an existing file unless `--force` is passed.
 
 ## What is recorded
 

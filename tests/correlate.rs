@@ -27,6 +27,31 @@ fn matches_a_response_to_its_request_and_measures_latency() {
 }
 
 #[test]
+fn request_scopes_isolate_concurrent_clients_that_reuse_an_id() {
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
+    c.on_outbound_scoped(
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"first","arguments":{}}}),
+        10,
+        "client-a",
+    );
+    c.on_outbound_scoped(
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"second","arguments":{}}}),
+        20,
+        "client-b",
+    );
+
+    let second = c
+        .on_inbound_scoped(&json!({"jsonrpc":"2.0","id":1,"result":{}}), 30, "client-b")
+        .unwrap();
+    let first = c
+        .on_inbound_scoped(&json!({"jsonrpc":"2.0","id":1,"result":{}}), 40, "client-a")
+        .unwrap();
+
+    assert_eq!(first.tool.as_deref(), Some("first"));
+    assert_eq!(second.tool.as_deref(), Some("second"));
+}
+
+#[test]
 fn sessions_are_stable_opaque_tokens_and_unlisted_tools_are_not_persisted() {
     let mut first = Correlator::new(
         "demo".into(),

@@ -67,7 +67,7 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
-          fetch-depth: 2
+          fetch-depth: 0
       - run: git diff --check HEAD~1
         if: github.event_name == 'push'
       - run: git diff --check origin/${{ github.base_ref }}...HEAD

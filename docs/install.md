@@ -270,8 +270,33 @@ IDs, probe kinds, attempt counts, first-failure positions, and fixed reason labe
 they never contain actual arguments, responses, or errors. Probe calls are recorded
 as privacy-sanitized `synthetic` calls.
 
+`--format json` emits a versioned, deterministic document
+(`mcpeval.probe-report/v1`) instead of the text summary: the server label,
+per-case verdicts, fixed reason labels, and measurement numbers. It contains no
+timestamps, sessions, or payloads, so it is safe to commit as a baseline or
+attach to a CI artifact.
+
 `discovery-cost` measures the number of declared tools and encoded bytes in the
-`tools/list` catalog against manifest limits. `schema-guessability` validates the
+`tools/list` catalog against manifest limits. `token-cost` estimates the context
+cost of the catalog — the measurement agents actually feel when a server ships
+dozens of tools with large schemas. Each tool's complete `tools/list` entry
+(name, description, schema) is measured in memory, converted with a deterministic
+model-independent estimator (encoded bytes ÷ 4, rounded up), and checked against
+`max_total_tokens` and an optional `max_tool_tokens` per-tool ceiling. Only
+counts and tool names appear in output; descriptions and schemas are never
+persisted or printed:
+
+```json
+{
+  "id": "token-budget",
+  "probe": "token-cost",
+  "access": "read_only",
+  "max_total_tokens": 4000,
+  "max_tool_tokens": 800
+}
+```
+
+`schema-guessability` validates the
 selected tool's object schema, checks that required fields exist in both `properties`
 and the declared naive arguments, then requires that call to succeed. Tool descriptions
 and full schemas are held only for the process lifetime; output contains counts and

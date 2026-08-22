@@ -25,6 +25,13 @@
       "max_schema_bytes": 1000
     },
     {
+      "id": "token-budget",
+      "probe": "token-cost",
+      "access": "read_only",
+      "max_total_tokens": 100000,
+      "max_tool_tokens": 10000
+    },
+    {
       "id": "naive-status",
       "probe": "schema-guessability",
       "tool": "describe_status",

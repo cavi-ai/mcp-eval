@@ -21,6 +21,9 @@ pub enum ToolResponse {
 pub struct ToolDefinition {
     pub name: String,
     pub input_schema: Value,
+    /// Encoded size of the complete `tools/list` entry for this tool
+    /// (name, description, schema, annotations). Measured in memory only.
+    pub entry_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -126,6 +129,7 @@ impl McpClient {
                 Ok(ToolDefinition {
                     name: name.to_owned(),
                     input_schema,
+                    entry_bytes: serde_json::to_vec(tool)?.len(),
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;

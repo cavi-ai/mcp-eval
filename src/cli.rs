@@ -13,9 +13,19 @@ pub enum ProbeSelection {
     ErrorHonesty,
     StateRecovery,
     DiscoveryCost,
+    TokenCost,
     SchemaGuessability,
     DegradationOverN,
     InstructionFidelity,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum ProbeFormat {
+    /// Human-readable one-line-per-case summary.
+    #[default]
+    Text,
+    /// Versioned, deterministic JSON document (mcpeval.probe-report/v1).
+    Json,
 }
 
 #[derive(Parser, Debug)]
@@ -66,6 +76,9 @@ pub enum Command {
         /// Run only one probe kind.
         #[arg(long, value_enum)]
         probe: Option<ProbeSelection>,
+        /// Output format for the probe report.
+        #[arg(long, value_enum, default_value_t = ProbeFormat::Text)]
+        format: ProbeFormat,
         /// Explicitly authorize manifest-declared sandbox mutations.
         #[arg(long)]
         allow_mutation: bool,

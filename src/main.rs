@@ -19,6 +19,7 @@ fn main() -> anyhow::Result<()> {
             server,
             manifest,
             probe,
+            format,
             allow_mutation,
             url,
             allow_remote_http,
@@ -29,6 +30,7 @@ fn main() -> anyhow::Result<()> {
                 cli::ProbeSelection::ErrorHonesty => mcpeval::manifest::ProbeKind::ErrorHonesty,
                 cli::ProbeSelection::StateRecovery => mcpeval::manifest::ProbeKind::StateRecovery,
                 cli::ProbeSelection::DiscoveryCost => mcpeval::manifest::ProbeKind::DiscoveryCost,
+                cli::ProbeSelection::TokenCost => mcpeval::manifest::ProbeKind::TokenCost,
                 cli::ProbeSelection::SchemaGuessability => {
                     mcpeval::manifest::ProbeKind::SchemaGuessability
                 }
@@ -42,7 +44,7 @@ fn main() -> anyhow::Result<()> {
             let mut store = mcpeval::store::Store::open(None)?;
             let report = mcpeval::probe::run(
                 mcpeval::probe::ProbeOptions {
-                    server,
+                    server: server.clone(),
                     manifest_path: manifest,
                     selected_probe,
                     selected_case: None,
@@ -53,67 +55,40 @@ fn main() -> anyhow::Result<()> {
                 },
                 &mut store,
             )?;
-            for case in &report.cases {
-                let probe = match case.probe {
-                    mcpeval::manifest::ProbeKind::Contention => "contention",
-                    mcpeval::manifest::ProbeKind::ErrorHonesty => "error-honesty",
-                    mcpeval::manifest::ProbeKind::StateRecovery => "state-recovery",
-                    mcpeval::manifest::ProbeKind::DiscoveryCost => "discovery-cost",
-                    mcpeval::manifest::ProbeKind::SchemaGuessability => "schema-guessability",
-                    mcpeval::manifest::ProbeKind::DegradationOverN => "degradation-over-n",
-                    mcpeval::manifest::ProbeKind::InstructionFidelity => "instruction-fidelity",
-                };
-                if case.passed() {
-                    if let (Some(tools), Some(bytes)) = (case.tool_count, case.schema_bytes) {
-                        println!(
-                            "{} {probe} pass attempts={} tools={tools} schema_bytes={bytes}",
-                            case.id, case.attempts
-                        );
-                    } else {
-                        println!("{} {probe} pass attempts={}", case.id, case.attempts);
-                    }
-                } else {
-                    let reason = match case.reason.expect("failed case has a reason") {
-                        mcpeval::probe::FailureReason::UnexpectedOutcome => "unexpected-outcome",
-                        mcpeval::probe::FailureReason::MissingField => "missing-field",
-                        mcpeval::probe::FailureReason::ValueMismatch => "value-mismatch",
-                        mcpeval::probe::FailureReason::ErrorCodeMismatch => "error-code-mismatch",
-                        mcpeval::probe::FailureReason::DiscoveryLimitExceeded => {
-                            "discovery-limit-exceeded"
+            match format {
+                cli::ProbeFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report.to_json(&server))?
+                    );
+                }
+                cli::ProbeFormat::Text => {
+                    for case in &report.cases {
+                        let probe = case.probe.as_str();
+                        let mut measurements = String::new();
+                        if let Some(tools) = case.tool_count {
+                            measurements.push_str(&format!(" tools={tools}"));
                         }
-                        mcpeval::probe::FailureReason::InvalidSchema => "invalid-schema",
-                        mcpeval::probe::FailureReason::MissingRequiredArgument => {
-                            "missing-required-argument"
+                        if let Some(bytes) = case.schema_bytes {
+                            measurements.push_str(&format!(" schema_bytes={bytes}"));
                         }
-                        mcpeval::probe::FailureReason::ExpectedError => "expected-error",
-                        mcpeval::probe::FailureReason::UnstableErrorCode => "unstable-error-code",
-                        mcpeval::probe::FailureReason::RetryabilityMismatch => {
-                            "retryability-mismatch"
+                        if let Some(usage) = &case.token_usage {
+                            measurements.push_str(&format!(" total_tokens={}", usage.total_tokens));
                         }
-                        mcpeval::probe::FailureReason::RetryDidNotRecover => {
-                            "retry-did-not-recover"
+                        if case.passed() {
+                            println!(
+                                "{} {probe} pass attempts={}{measurements}",
+                                case.id, case.attempts
+                            );
+                        } else {
+                            println!(
+                                "{} {probe} fail attempts={} first_failure={} reason={}{measurements}",
+                                case.id,
+                                case.attempts,
+                                case.first_failure.expect("failed case has a failure index"),
+                                case.reason.expect("failed case has a reason").as_str()
+                            );
                         }
-                        mcpeval::probe::FailureReason::FailureNotObserved => "failure-not-observed",
-                        mcpeval::probe::FailureReason::RecoveryFailed => "recovery-failed",
-                        mcpeval::probe::FailureReason::ValidationFailed => "validation-failed",
-                        mcpeval::probe::FailureReason::ContendedClientFailed => {
-                            "contended-client-failed"
-                        }
-                    };
-                    if let (Some(tools), Some(bytes)) = (case.tool_count, case.schema_bytes) {
-                        println!(
-                            "{} {probe} fail attempts={} first_failure={} reason={reason} tools={tools} schema_bytes={bytes}",
-                            case.id,
-                            case.attempts,
-                            case.first_failure.expect("failed case has a failure index")
-                        );
-                    } else {
-                        println!(
-                            "{} {probe} fail attempts={} first_failure={} reason={reason}",
-                            case.id,
-                            case.attempts,
-                            case.first_failure.expect("failed case has a failure index")
-                        );
                     }
                 }
             }

@@ -30,6 +30,10 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   privacy-safe call-record boundary.
 - Read-only, sandbox-free manifest generation for eligible promoted findings, with
   explicit operator attestation and output overwrite authorization.
+- Deterministic `token-cost` probe with total and per-tool token budgets from a
+  model-independent estimator over each tool's `tools/list` entry.
+- `mcpeval probe --format json`: versioned, deterministic
+  `mcpeval.probe-report/v1` report for CI artifacts and committed baselines.
 
 ### Security
 

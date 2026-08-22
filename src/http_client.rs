@@ -83,6 +83,7 @@ impl HttpMcpClient {
                 Ok(ToolDefinition {
                     name: name.to_owned(),
                     input_schema,
+                    entry_bytes: serde_json::to_vec(tool)?.len(),
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;

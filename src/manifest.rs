@@ -88,6 +88,13 @@ pub enum ProbeCase {
         max_tools: u64,
         max_schema_bytes: u64,
     },
+    #[serde(rename = "token-cost")]
+    TokenCost {
+        id: String,
+        access: Access,
+        max_total_tokens: u64,
+        max_tool_tokens: Option<u64>,
+    },
     #[serde(rename = "schema-guessability")]
     SchemaGuessability {
         id: String,
@@ -122,9 +129,25 @@ pub enum ProbeKind {
     ErrorHonesty,
     StateRecovery,
     DiscoveryCost,
+    TokenCost,
     SchemaGuessability,
     DegradationOverN,
     InstructionFidelity,
+}
+
+impl ProbeKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Contention => "contention",
+            Self::ErrorHonesty => "error-honesty",
+            Self::StateRecovery => "state-recovery",
+            Self::DiscoveryCost => "discovery-cost",
+            Self::TokenCost => "token-cost",
+            Self::SchemaGuessability => "schema-guessability",
+            Self::DegradationOverN => "degradation-over-n",
+            Self::InstructionFidelity => "instruction-fidelity",
+        }
+    }
 }
 
 impl ProbeCase {
@@ -134,6 +157,7 @@ impl ProbeCase {
             | Self::ErrorHonesty { id, .. }
             | Self::StateRecovery { id, .. }
             | Self::DiscoveryCost { id, .. }
+            | Self::TokenCost { id, .. }
             | Self::SchemaGuessability { id, .. }
             | Self::DegradationOverN { id, .. }
             | Self::InstructionFidelity { id, .. } => id,
@@ -142,7 +166,7 @@ impl ProbeCase {
 
     pub fn tool(&self) -> Option<&str> {
         match self {
-            Self::DiscoveryCost { .. } => None,
+            Self::DiscoveryCost { .. } | Self::TokenCost { .. } => None,
             Self::Contention { tool, .. } => Some(tool),
             Self::ErrorHonesty { tool, .. } => Some(tool),
             Self::StateRecovery { failure_tool, .. } => Some(failure_tool),
@@ -158,6 +182,7 @@ impl ProbeCase {
             | Self::ErrorHonesty { access, .. }
             | Self::StateRecovery { access, .. }
             | Self::DiscoveryCost { access, .. }
+            | Self::TokenCost { access, .. }
             | Self::SchemaGuessability { access, .. }
             | Self::DegradationOverN { access, .. }
             | Self::InstructionFidelity { access, .. } => *access,
@@ -166,7 +191,7 @@ impl ProbeCase {
 
     pub fn sandbox(&self) -> Option<&str> {
         match self {
-            Self::DiscoveryCost { .. } => None,
+            Self::DiscoveryCost { .. } | Self::TokenCost { .. } => None,
             Self::Contention { sandbox, .. } => sandbox.as_deref(),
             Self::ErrorHonesty { sandbox, .. } | Self::StateRecovery { sandbox, .. } => {
                 sandbox.as_deref()
@@ -179,7 +204,9 @@ impl ProbeCase {
 
     pub fn arguments(&self) -> Option<&Value> {
         match self {
-            Self::DiscoveryCost { .. } | Self::StateRecovery { .. } => None,
+            Self::DiscoveryCost { .. } | Self::TokenCost { .. } | Self::StateRecovery { .. } => {
+                None
+            }
             Self::Contention { arguments, .. } => Some(arguments),
             Self::ErrorHonesty { arguments, .. } => Some(arguments),
             Self::SchemaGuessability { arguments, .. }
@@ -194,6 +221,7 @@ impl ProbeCase {
             Self::ErrorHonesty { .. } => ProbeKind::ErrorHonesty,
             Self::StateRecovery { .. } => ProbeKind::StateRecovery,
             Self::DiscoveryCost { .. } => ProbeKind::DiscoveryCost,
+            Self::TokenCost { .. } => ProbeKind::TokenCost,
             Self::SchemaGuessability { .. } => ProbeKind::SchemaGuessability,
             Self::DegradationOverN { .. } => ProbeKind::DegradationOverN,
             Self::InstructionFidelity { .. } => ProbeKind::InstructionFidelity,
@@ -210,7 +238,7 @@ impl ProbeCase {
 
     pub fn required_tools(&self) -> Vec<&str> {
         match self {
-            Self::DiscoveryCost { .. } => Vec::new(),
+            Self::DiscoveryCost { .. } | Self::TokenCost { .. } => Vec::new(),
             Self::StateRecovery {
                 failure_tool,
                 recovery_tool,
@@ -317,6 +345,27 @@ impl Manifest {
                         || !(1..=10_000_000).contains(max_schema_bytes)
                     {
                         bail!("discovery limits are out of range");
+                    }
+                }
+                ProbeCase::TokenCost {
+                    access,
+                    max_total_tokens,
+                    max_tool_tokens,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("token-cost must be read-only");
+                    }
+                    if !(1..=1_000_000).contains(max_total_tokens) {
+                        bail!("token budget is out of range");
+                    }
+                    if let Some(max_tool_tokens) = max_tool_tokens {
+                        if !(1..=100_000).contains(max_tool_tokens) {
+                            bail!("per-tool token budget is out of range");
+                        }
+                        if max_tool_tokens > max_total_tokens {
+                            bail!("per-tool token budget exceeds the total budget");
+                        }
                     }
                 }
                 ProbeCase::SchemaGuessability { .. } => {}

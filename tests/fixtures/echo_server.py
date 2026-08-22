@@ -38,7 +38,12 @@ if sys.argv[1:2] == ["--duplex-stress"]:
     line_count = int(sys.argv[2])
     line_width = int(sys.argv[3])
     input_size = int(sys.argv[4])
-    readable, _, _ = select.select([sys.stdin.buffer], [], [], 2)
+    if os.name == "nt":
+        # select() does not support pipes on Windows; the test harness's
+        # outer wait_for_exit timeout still catches a deadlock.
+        readable = True
+    else:
+        readable, _, _ = select.select([sys.stdin.buffer], [], [], 2)
     if not readable:
         sys.exit(4)
     line = b"O" * (line_width - 1) + b"\n"

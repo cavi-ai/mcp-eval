@@ -30,8 +30,8 @@ jobs:
           RELEASE_TAG: ${{ github.event.release.tag_name }}
           GITHUB_SHA: ${{ github.sha }}
         run: |
-          if [[ "$RELEASE_TAG" != "v0.1.0" ]]; then
-            echo "::error::Expected release tag v0.1.0, got $RELEASE_TAG"
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Expected a semver release tag (vX.Y.Z), got $RELEASE_TAG"
             exit 1
           fi
           commit="$GITHUB_SHA"

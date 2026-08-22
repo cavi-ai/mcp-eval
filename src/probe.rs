@@ -104,6 +104,7 @@ pub enum FailureReason {
     ValueMismatch,
     ErrorCodeMismatch,
     DiscoveryLimitExceeded,
+    TokenBudgetExceeded,
     InvalidSchema,
     MissingRequiredArgument,
     ExpectedError,
@@ -116,6 +117,52 @@ pub enum FailureReason {
     ContendedClientFailed,
 }
 
+impl FailureReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::UnexpectedOutcome => "unexpected-outcome",
+            Self::MissingField => "missing-field",
+            Self::ValueMismatch => "value-mismatch",
+            Self::ErrorCodeMismatch => "error-code-mismatch",
+            Self::DiscoveryLimitExceeded => "discovery-limit-exceeded",
+            Self::TokenBudgetExceeded => "token-budget-exceeded",
+            Self::InvalidSchema => "invalid-schema",
+            Self::MissingRequiredArgument => "missing-required-argument",
+            Self::ExpectedError => "expected-error",
+            Self::UnstableErrorCode => "unstable-error-code",
+            Self::RetryabilityMismatch => "retryability-mismatch",
+            Self::RetryDidNotRecover => "retry-did-not-recover",
+            Self::FailureNotObserved => "failure-not-observed",
+            Self::RecoveryFailed => "recovery-failed",
+            Self::ValidationFailed => "validation-failed",
+            Self::ContendedClientFailed => "contended-client-failed",
+        }
+    }
+}
+
+/// Deterministic, model-independent token estimate: one token per
+/// `CHARS_PER_TOKEN` encoded bytes, rounded up. This is a heuristic budget
+/// unit, not a specific model's tokenizer; it is stable across runs so that
+/// manifests and baselines can compare like with like.
+pub const CHARS_PER_TOKEN: usize = 4;
+
+pub fn estimate_tokens(encoded_bytes: usize) -> u64 {
+    encoded_bytes.div_ceil(CHARS_PER_TOKEN) as u64
+}
+
+#[derive(Debug)]
+pub struct ToolTokenUsage {
+    pub tool: String,
+    pub tokens: u64,
+}
+
+#[derive(Debug)]
+pub struct TokenUsage {
+    pub total_tokens: u64,
+    /// Sorted by tokens descending, then tool name, for stable output.
+    pub per_tool: Vec<ToolTokenUsage>,
+}
+
 #[derive(Debug)]
 pub struct CaseReport {
     pub id: String,
@@ -125,6 +172,7 @@ pub struct CaseReport {
     pub reason: Option<FailureReason>,
     pub tool_count: Option<u64>,
     pub schema_bytes: Option<u64>,
+    pub token_usage: Option<TokenUsage>,
 }
 
 impl CaseReport {
@@ -141,6 +189,57 @@ pub struct ProbeReport {
 impl ProbeReport {
     pub fn passed(&self) -> bool {
         self.cases.iter().all(CaseReport::passed)
+    }
+
+    /// Versioned, deterministic JSON document: no timestamps, no session
+    /// identifiers, cases in manifest order. Contains only share-safe
+    /// fields — server label, case IDs, probe kinds, counts, fixed reason
+    /// labels, and measurement numbers. Suitable for CI artifacts and
+    /// committed baselines.
+    pub fn to_json(&self, server: &str) -> serde_json::Value {
+        let cases: Vec<serde_json::Value> = self
+            .cases
+            .iter()
+            .map(|case| {
+                let mut measurements = serde_json::Map::new();
+                if let Some(tool_count) = case.tool_count {
+                    measurements.insert("tool_count".into(), tool_count.into());
+                }
+                if let Some(schema_bytes) = case.schema_bytes {
+                    measurements.insert("schema_bytes".into(), schema_bytes.into());
+                }
+                if let Some(usage) = &case.token_usage {
+                    measurements.insert("total_tokens".into(), usage.total_tokens.into());
+                    measurements.insert(
+                        "per_tool".into(),
+                        serde_json::Value::Array(
+                            usage
+                                .per_tool
+                                .iter()
+                                .map(|tool| {
+                                    serde_json::json!({"tool": tool.tool, "tokens": tool.tokens})
+                                })
+                                .collect(),
+                        ),
+                    );
+                }
+                serde_json::json!({
+                    "id": case.id,
+                    "probe": case.probe.as_str(),
+                    "passed": case.passed(),
+                    "attempts": case.attempts,
+                    "first_failure": case.first_failure,
+                    "reason": case.reason.map(|reason| reason.as_str()),
+                    "measurements": serde_json::Value::Object(measurements),
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "schema": "mcpeval.probe-report/v1",
+            "server": server,
+            "passed": self.passed(),
+            "cases": cases,
+        })
     }
 }
 
@@ -261,6 +360,41 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 reason,
                 tool_count: Some(tool_count),
                 schema_bytes: Some(schema_bytes),
+                token_usage: None,
+            })
+        }
+        ProbeCase::TokenCost {
+            max_total_tokens,
+            max_tool_tokens,
+            ..
+        } => {
+            let mut per_tool: Vec<ToolTokenUsage> = context
+                .catalog
+                .tools
+                .iter()
+                .map(|tool| ToolTokenUsage {
+                    tool: tool.name.clone(),
+                    tokens: estimate_tokens(tool.entry_bytes),
+                })
+                .collect();
+            per_tool.sort_by(|a, b| b.tokens.cmp(&a.tokens).then_with(|| a.tool.cmp(&b.tool)));
+            let total_tokens = per_tool.iter().map(|tool| tool.tokens).sum();
+            let over_total = total_tokens > *max_total_tokens;
+            let over_tool = max_tool_tokens
+                .is_some_and(|limit| per_tool.iter().any(|tool| tool.tokens > limit));
+            let reason = (over_total || over_tool).then_some(FailureReason::TokenBudgetExceeded);
+            Ok(CaseReport {
+                id: case.id().to_owned(),
+                probe: case.kind(),
+                attempts: 1,
+                first_failure: reason.map(|_| 1),
+                reason,
+                tool_count: Some(context.catalog.tools.len() as u64),
+                schema_bytes: None,
+                token_usage: Some(TokenUsage {
+                    total_tokens,
+                    per_tool,
+                }),
             })
         }
         ProbeCase::SchemaGuessability { .. } => {
@@ -288,6 +422,7 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 reason,
                 tool_count: None,
                 schema_bytes: None,
+                token_usage: None,
             })
         }
         ProbeCase::DegradationOverN { .. } => {
@@ -303,6 +438,7 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                         reason: Some(FailureReason::UnexpectedOutcome),
                         tool_count: None,
                         schema_bytes: None,
+                        token_usage: None,
                     });
                 }
             }
@@ -314,6 +450,7 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 reason: None,
                 tool_count: None,
                 schema_bytes: None,
+                token_usage: None,
             })
         }
         ProbeCase::InstructionFidelity { .. } => {
@@ -330,6 +467,7 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 reason,
                 tool_count: None,
                 schema_bytes: None,
+                token_usage: None,
             })
         }
     }
@@ -464,6 +602,7 @@ fn passed_case(case: &ProbeCase, attempts: u64) -> CaseReport {
         reason: None,
         tool_count: None,
         schema_bytes: None,
+        token_usage: None,
     }
 }
 
@@ -476,6 +615,7 @@ fn failed_case(case: &ProbeCase, attempt: u64, reason: FailureReason) -> CaseRep
         reason: Some(reason),
         tool_count: None,
         schema_bytes: None,
+        token_usage: None,
     }
 }
 

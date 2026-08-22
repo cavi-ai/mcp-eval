@@ -193,3 +193,36 @@ fn resilience_probes_require_bounded_attempts_and_object_arguments() {
     recovery["probes"][0]["validation_arguments"] = json!("invalid");
     assert!(parse(&recovery).is_err());
 }
+
+#[test]
+fn token_cost_requires_read_only_and_bounded_budgets() {
+    let mut value = valid_manifest();
+    value["probes"] = json!([{
+        "id": "token-budget",
+        "probe": "token-cost",
+        "access": "read_only",
+        "max_total_tokens": 4000,
+        "max_tool_tokens": 800
+    }]);
+    assert!(parse(&value).is_ok());
+
+    let mut no_tool_limit = value.clone();
+    no_tool_limit["probes"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("max_tool_tokens");
+    assert!(parse(&no_tool_limit).is_ok());
+
+    for (field, invalid) in [("max_total_tokens", 0), ("max_tool_tokens", 100_001)] {
+        let mut invalid_value = value.clone();
+        invalid_value["probes"][0][field] = json!(invalid);
+        assert!(parse(&invalid_value).is_err());
+    }
+
+    let mut per_tool_over_total = value.clone();
+    per_tool_over_total["probes"][0]["max_tool_tokens"] = json!(4001);
+    assert!(parse(&per_tool_over_total).is_err());
+
+    value["probes"][0]["access"] = json!("mutating");
+    assert!(parse(&value).is_err());
+}

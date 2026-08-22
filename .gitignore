@@ -32,3 +32,7 @@ GEMINI.md
 .vscode/
 /docs/mcp-eval/v*/
 /.release/
+
+# npm wrapper artifacts
+/npm/vendor/
+/npm/node_modules/

@@ -144,3 +144,93 @@ fn fidelity_matches_structured_content_and_uses_fixed_mismatch_reasons() {
     assert!(!debug.contains("wrong"));
     assert!(!debug.contains("CANARY"));
 }
+
+fn token_cost_options(
+    home: &TestHome,
+    max_total_tokens: u64,
+    max_tool_tokens: Option<u64>,
+) -> ProbeOptions {
+    let mut case = json!({
+        "id": "token-budget",
+        "probe": "token-cost",
+        "access": "read_only",
+        "max_total_tokens": max_total_tokens
+    });
+    if let Some(limit) = max_tool_tokens {
+        case["max_tool_tokens"] = json!(limit);
+    }
+    let value = json!({"version": 1, "probes": [case]});
+    let path = home.0.join("token-cost.manifest.json");
+    let mut file = std::fs::File::create(&path).unwrap();
+    serde_json::to_writer(&mut file, &value).unwrap();
+    file.flush().unwrap();
+    ProbeOptions {
+        server: "fixture".into(),
+        manifest_path: path,
+        selected_probe: None,
+        selected_case: None,
+        allow_mutation: false,
+        command: vec!["python3".into(), FIXTURE.into(), "clean".into()],
+        http_url: None,
+        allow_remote_http: false,
+    }
+}
+
+#[test]
+fn token_cost_passes_within_budget_and_reports_sorted_usage() {
+    let home = TestHome::new();
+    let mut store = Store::open(Some(home.0.clone())).unwrap();
+    let report = run(token_cost_options(&home, 100_000, Some(10_000)), &mut store).unwrap();
+    assert!(report.passed());
+    let case = &report.cases[0];
+    assert_eq!(case.probe, ProbeKind::TokenCost);
+    assert_eq!(case.tool_count, Some(7));
+    let usage = case.token_usage.as_ref().unwrap();
+    assert!(usage.total_tokens > 0);
+    assert_eq!(usage.per_tool.len(), 7);
+    assert!(usage
+        .per_tool
+        .windows(2)
+        .all(|pair| pair[0].tokens >= pair[1].tokens));
+    let total: u64 = usage.per_tool.iter().map(|tool| tool.tokens).sum();
+    assert_eq!(total, usage.total_tokens);
+    // Token budgets measure catalog size only; nothing crosses the store boundary.
+    let stored = std::fs::read_dir(home.0.join("store"))
+        .map(|entries| {
+            entries
+                .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+                .collect::<String>()
+        })
+        .unwrap_or_default();
+    assert!(!stored.contains("CANARY"));
+}
+
+#[test]
+fn token_cost_fails_on_total_and_per_tool_budgets() {
+    let home = TestHome::new();
+    let mut store = Store::open(Some(home.0.clone())).unwrap();
+    let report = run(token_cost_options(&home, 1, None), &mut store).unwrap();
+    assert!(!report.passed());
+    assert_eq!(
+        report.cases[0].reason,
+        Some(FailureReason::TokenBudgetExceeded)
+    );
+    assert_eq!(report.cases[0].first_failure, Some(1));
+
+    let home = TestHome::new();
+    let mut store = Store::open(Some(home.0.clone())).unwrap();
+    let report = run(token_cost_options(&home, 100_000, Some(1)), &mut store).unwrap();
+    assert!(!report.passed());
+    assert_eq!(
+        report.cases[0].reason,
+        Some(FailureReason::TokenBudgetExceeded)
+    );
+}
+
+#[test]
+fn token_estimation_is_deterministic_ceil_division() {
+    assert_eq!(mcpeval::probe::estimate_tokens(0), 0);
+    assert_eq!(mcpeval::probe::estimate_tokens(1), 1);
+    assert_eq!(mcpeval::probe::estimate_tokens(4), 1);
+    assert_eq!(mcpeval::probe::estimate_tokens(5), 2);
+}

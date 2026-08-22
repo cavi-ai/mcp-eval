@@ -83,6 +83,7 @@ impl HttpMcpClient {
                 Ok(ToolDefinition {
                     name: name.to_owned(),
                     input_schema,
+                    entry_bytes: serde_json::to_vec(tool)?.len(),
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;
@@ -186,7 +187,7 @@ impl HttpMcpClient {
     }
 }
 
-fn validate_endpoint(endpoint: &str, allow_remote: bool) -> anyhow::Result<String> {
+pub(crate) fn validate_endpoint(endpoint: &str, allow_remote: bool) -> anyhow::Result<String> {
     let parsed = url::Url::parse(endpoint).context("HTTP endpoint is invalid")?;
     if !matches!(parsed.scheme(), "http" | "https")
         || !parsed.username().is_empty()

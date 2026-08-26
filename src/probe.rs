@@ -9,6 +9,7 @@ use crate::mcp_client::{McpClient, ToolCatalog, ToolDefinition, ToolResponse};
 use crate::record::{error_info, CallRecord};
 use crate::store::Store;
 use anyhow::{bail, Context};
+use serde_json::Value;
 
 #[derive(Debug)]
 pub struct ProbeOptions {
@@ -95,6 +96,17 @@ impl ProbeClient {
             Self::Http(client) => client.call_tool(tool, arguments),
         }
     }
+
+    fn raw_request(
+        &mut self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> anyhow::Result<serde_json::Value> {
+        match self {
+            Self::Stdio(client) => client.raw_request(method, params),
+            Self::Http(client) => client.raw_request(method, params),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -115,6 +127,10 @@ pub enum FailureReason {
     RecoveryFailed,
     ValidationFailed,
     ContendedClientFailed,
+    LatencyBudgetExceeded,
+    PaginationInvalidEntry,
+    PaginationDuplicateTool,
+    PaginationStalledCursor,
 }
 
 impl FailureReason {
@@ -136,6 +152,10 @@ impl FailureReason {
             Self::RecoveryFailed => "recovery-failed",
             Self::ValidationFailed => "validation-failed",
             Self::ContendedClientFailed => "contended-client-failed",
+            Self::LatencyBudgetExceeded => "latency-budget-exceeded",
+            Self::PaginationInvalidEntry => "pagination-invalid-entry",
+            Self::PaginationDuplicateTool => "pagination-duplicate-tool",
+            Self::PaginationStalledCursor => "pagination-stalled-cursor",
         }
     }
 }
@@ -173,6 +193,10 @@ pub struct CaseReport {
     pub tool_count: Option<u64>,
     pub schema_bytes: Option<u64>,
     pub token_usage: Option<TokenUsage>,
+    /// Slowest observed call for latency-budget cases.
+    pub latency_ms: Option<u64>,
+    /// Number of `tools/list` pages visited by pagination cases.
+    pub pages: Option<u64>,
 }
 
 impl CaseReport {
@@ -194,8 +218,8 @@ impl ProbeReport {
     /// Versioned, deterministic JSON document: no timestamps, no session
     /// identifiers, cases in manifest order. Contains only share-safe
     /// fields — server label, case IDs, probe kinds, counts, fixed reason
-    /// labels, and measurement numbers. Suitable for CI artifacts and
-    /// committed baselines.
+    /// labels, measurement numbers, and the readiness score. Suitable for
+    /// CI artifacts and committed baselines.
     pub fn to_json(&self, server: &str) -> serde_json::Value {
         let cases: Vec<serde_json::Value> = self
             .cases
@@ -223,6 +247,12 @@ impl ProbeReport {
                         ),
                     );
                 }
+                if let Some(latency_ms) = case.latency_ms {
+                    measurements.insert("latency_ms".into(), latency_ms.into());
+                }
+                if let Some(pages) = case.pages {
+                    measurements.insert("pages".into(), pages.into());
+                }
                 serde_json::json!({
                     "id": case.id,
                     "probe": case.probe.as_str(),
@@ -234,10 +264,12 @@ impl ProbeReport {
                 })
             })
             .collect();
+        let readiness = crate::score::readiness(self);
         serde_json::json!({
             "schema": "mcpeval.probe-report/v1",
             "server": server,
             "passed": self.passed(),
+            "readiness": readiness.to_json(),
             "cases": cases,
         })
     }
@@ -361,6 +393,8 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 tool_count: Some(tool_count),
                 schema_bytes: Some(schema_bytes),
                 token_usage: None,
+                latency_ms: None,
+                pages: None,
             })
         }
         ProbeCase::TokenCost {
@@ -395,6 +429,8 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                     total_tokens,
                     per_tool,
                 }),
+                latency_ms: None,
+                pages: None,
             })
         }
         ProbeCase::SchemaGuessability { .. } => {
@@ -423,6 +459,8 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 tool_count: None,
                 schema_bytes: None,
                 token_usage: None,
+                latency_ms: None,
+                pages: None,
             })
         }
         ProbeCase::DegradationOverN { .. } => {
@@ -439,6 +477,8 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                         tool_count: None,
                         schema_bytes: None,
                         token_usage: None,
+                        latency_ms: None,
+                        pages: None,
                     });
                 }
             }
@@ -451,6 +491,8 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 tool_count: None,
                 schema_bytes: None,
                 token_usage: None,
+                latency_ms: None,
+                pages: None,
             })
         }
         ProbeCase::InstructionFidelity { .. } => {
@@ -468,8 +510,14 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 tool_count: None,
                 schema_bytes: None,
                 token_usage: None,
+                latency_ms: None,
+                pages: None,
             })
         }
+        ProbeCase::LatencyBudget { max_latency_ms, .. } => {
+            run_latency_budget(case, *max_latency_ms, context)
+        }
+        ProbeCase::Pagination { max_pages, .. } => run_pagination(case, *max_pages, context),
     }
 }
 
@@ -593,6 +641,161 @@ fn run_state_recovery(
     Ok(passed_case(case, 3))
 }
 
+fn run_latency_budget(
+    case: &ProbeCase,
+    max_latency_ms: u64,
+    context: &mut RunContext<'_>,
+) -> anyhow::Result<CaseReport> {
+    let attempts = case
+        .max_attempts()
+        .expect("latency case has an attempt bound");
+    let mut slowest_ms = 0;
+    for attempt in 1..=attempts {
+        let (response, latency_ms) = call_timed_and_record(case, context)?;
+        slowest_ms = slowest_ms.max(latency_ms);
+        if matches!(response, ToolResponse::Error { .. }) {
+            return Ok(CaseReport {
+                id: case.id().to_owned(),
+                probe: case.kind(),
+                attempts: attempt,
+                first_failure: Some(attempt),
+                reason: Some(FailureReason::UnexpectedOutcome),
+                tool_count: None,
+                schema_bytes: None,
+                token_usage: None,
+                latency_ms: Some(slowest_ms),
+                pages: None,
+            });
+        }
+        if latency_ms > max_latency_ms {
+            return Ok(CaseReport {
+                id: case.id().to_owned(),
+                probe: case.kind(),
+                attempts: attempt,
+                first_failure: Some(attempt),
+                reason: Some(FailureReason::LatencyBudgetExceeded),
+                tool_count: None,
+                schema_bytes: None,
+                token_usage: None,
+                latency_ms: Some(slowest_ms),
+                pages: None,
+            });
+        }
+    }
+    Ok(CaseReport {
+        id: case.id().to_owned(),
+        probe: case.kind(),
+        attempts,
+        first_failure: None,
+        reason: None,
+        tool_count: None,
+        schema_bytes: None,
+        token_usage: None,
+        latency_ms: Some(slowest_ms),
+        pages: None,
+    })
+}
+
+fn run_pagination(
+    case: &ProbeCase,
+    max_pages: u64,
+    context: &mut RunContext<'_>,
+) -> anyhow::Result<CaseReport> {
+    let mut seen: Vec<String> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let mut pages = 0;
+    loop {
+        if pages >= max_pages {
+            return Ok(CaseReport {
+                id: case.id().to_owned(),
+                probe: case.kind(),
+                attempts: pages + 1,
+                first_failure: Some(pages + 1),
+                reason: Some(FailureReason::PaginationStalledCursor),
+                tool_count: Some(seen.len() as u64),
+                schema_bytes: None,
+                token_usage: None,
+                latency_ms: None,
+                pages: Some(pages + 1),
+            });
+        }
+        pages += 1;
+        let mut params = serde_json::Map::new();
+        if let Some(value) = &cursor {
+            params.insert("cursor".into(), Value::String(value.clone()));
+        }
+        let response = context
+            .client
+            .raw_request("tools/list", Value::Object(params))?;
+        let Some(entries) = response
+            .get("result")
+            .and_then(|result| result.get("tools"))
+            .and_then(Value::as_array)
+        else {
+            return Ok(failed_case(
+                case,
+                pages,
+                FailureReason::PaginationInvalidEntry,
+            ));
+        };
+        for entry in entries {
+            let valid = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| {
+                    crate::privacy::valid_tool(name)
+                        && entry
+                            .get("inputSchema")
+                            .is_some_and(serde_json::Value::is_object)
+                });
+            if !valid {
+                return Ok(failed_case(
+                    case,
+                    pages,
+                    FailureReason::PaginationInvalidEntry,
+                ));
+            }
+            let name = entry["name"].as_str().expect("validated above").to_owned();
+            if seen.contains(&name) {
+                return Ok(CaseReport {
+                    id: case.id().to_owned(),
+                    probe: case.kind(),
+                    attempts: pages,
+                    first_failure: Some(pages),
+                    reason: Some(FailureReason::PaginationDuplicateTool),
+                    tool_count: Some(seen.len() as u64),
+                    schema_bytes: None,
+                    token_usage: None,
+                    latency_ms: None,
+                    pages: Some(pages),
+                });
+            }
+            seen.push(name);
+        }
+        cursor = response
+            .get("result")
+            .and_then(|result| result.get("nextCursor"))
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(CaseReport {
+        id: case.id().to_owned(),
+        probe: case.kind(),
+        attempts: pages,
+        first_failure: None,
+        reason: None,
+        tool_count: Some(seen.len() as u64),
+        schema_bytes: None,
+        token_usage: None,
+        latency_ms: None,
+        pages: Some(pages),
+    })
+}
+
 fn passed_case(case: &ProbeCase, attempts: u64) -> CaseReport {
     CaseReport {
         id: case.id().to_owned(),
@@ -603,6 +806,8 @@ fn passed_case(case: &ProbeCase, attempts: u64) -> CaseReport {
         tool_count: None,
         schema_bytes: None,
         token_usage: None,
+        latency_ms: None,
+        pages: None,
     }
 }
 
@@ -616,13 +821,26 @@ fn failed_case(case: &ProbeCase, attempt: u64, reason: FailureReason) -> CaseRep
         tool_count: None,
         schema_bytes: None,
         token_usage: None,
+        latency_ms: None,
+        pages: None,
     }
 }
 
 fn call_and_record(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<ToolResponse> {
+    Ok(call_timed_and_record(case, context)?.0)
+}
+
+fn call_timed_and_record(
+    case: &ProbeCase,
+    context: &mut RunContext<'_>,
+) -> anyhow::Result<(ToolResponse, u64)> {
     let tool = case.tool().expect("call probe has a tool");
     let arguments = case.arguments().expect("call probe has arguments");
-    call_named_and_record(tool, arguments, context)
+    let started = Instant::now();
+    let response = context.client.call_tool(tool, arguments)?;
+    let latency_ms = started.elapsed().as_millis() as u64;
+    record_response(tool, arguments, latency_ms, &response, context)?;
+    Ok((response, latency_ms))
 }
 
 fn call_named_and_record(

@@ -121,6 +121,22 @@ pub enum ProbeCase {
         arguments: Value,
         expect: Expectation,
     },
+    #[serde(rename = "latency-budget")]
+    LatencyBudget {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        arguments: Value,
+        attempts: u64,
+        max_latency_ms: u64,
+    },
+    #[serde(rename = "pagination")]
+    Pagination {
+        id: String,
+        access: Access,
+        max_pages: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,6 +149,8 @@ pub enum ProbeKind {
     SchemaGuessability,
     DegradationOverN,
     InstructionFidelity,
+    LatencyBudget,
+    Pagination,
 }
 
 impl ProbeKind {
@@ -146,6 +164,8 @@ impl ProbeKind {
             Self::SchemaGuessability => "schema-guessability",
             Self::DegradationOverN => "degradation-over-n",
             Self::InstructionFidelity => "instruction-fidelity",
+            Self::LatencyBudget => "latency-budget",
+            Self::Pagination => "pagination",
         }
     }
 }
@@ -160,19 +180,22 @@ impl ProbeCase {
             | Self::TokenCost { id, .. }
             | Self::SchemaGuessability { id, .. }
             | Self::DegradationOverN { id, .. }
-            | Self::InstructionFidelity { id, .. } => id,
+            | Self::InstructionFidelity { id, .. }
+            | Self::LatencyBudget { id, .. }
+            | Self::Pagination { id, .. } => id,
         }
     }
 
     pub fn tool(&self) -> Option<&str> {
         match self {
-            Self::DiscoveryCost { .. } | Self::TokenCost { .. } => None,
+            Self::DiscoveryCost { .. } | Self::TokenCost { .. } | Self::Pagination { .. } => None,
             Self::Contention { tool, .. } => Some(tool),
             Self::ErrorHonesty { tool, .. } => Some(tool),
             Self::StateRecovery { failure_tool, .. } => Some(failure_tool),
             Self::SchemaGuessability { tool, .. }
             | Self::DegradationOverN { tool, .. }
-            | Self::InstructionFidelity { tool, .. } => Some(tool),
+            | Self::InstructionFidelity { tool, .. }
+            | Self::LatencyBudget { tool, .. } => Some(tool),
         }
     }
 
@@ -185,33 +208,38 @@ impl ProbeCase {
             | Self::TokenCost { access, .. }
             | Self::SchemaGuessability { access, .. }
             | Self::DegradationOverN { access, .. }
-            | Self::InstructionFidelity { access, .. } => *access,
+            | Self::InstructionFidelity { access, .. }
+            | Self::LatencyBudget { access, .. }
+            | Self::Pagination { access, .. } => *access,
         }
     }
 
     pub fn sandbox(&self) -> Option<&str> {
         match self {
-            Self::DiscoveryCost { .. } | Self::TokenCost { .. } => None,
+            Self::DiscoveryCost { .. } | Self::TokenCost { .. } | Self::Pagination { .. } => None,
             Self::Contention { sandbox, .. } => sandbox.as_deref(),
             Self::ErrorHonesty { sandbox, .. } | Self::StateRecovery { sandbox, .. } => {
                 sandbox.as_deref()
             }
             Self::SchemaGuessability { sandbox, .. }
             | Self::DegradationOverN { sandbox, .. }
-            | Self::InstructionFidelity { sandbox, .. } => sandbox.as_deref(),
+            | Self::InstructionFidelity { sandbox, .. }
+            | Self::LatencyBudget { sandbox, .. } => sandbox.as_deref(),
         }
     }
 
     pub fn arguments(&self) -> Option<&Value> {
         match self {
-            Self::DiscoveryCost { .. } | Self::TokenCost { .. } | Self::StateRecovery { .. } => {
-                None
-            }
+            Self::DiscoveryCost { .. }
+            | Self::TokenCost { .. }
+            | Self::StateRecovery { .. }
+            | Self::Pagination { .. } => None,
             Self::Contention { arguments, .. } => Some(arguments),
             Self::ErrorHonesty { arguments, .. } => Some(arguments),
             Self::SchemaGuessability { arguments, .. }
             | Self::DegradationOverN { arguments, .. }
-            | Self::InstructionFidelity { arguments, .. } => Some(arguments),
+            | Self::InstructionFidelity { arguments, .. }
+            | Self::LatencyBudget { arguments, .. } => Some(arguments),
         }
     }
 
@@ -225,20 +253,28 @@ impl ProbeCase {
             Self::SchemaGuessability { .. } => ProbeKind::SchemaGuessability,
             Self::DegradationOverN { .. } => ProbeKind::DegradationOverN,
             Self::InstructionFidelity { .. } => ProbeKind::InstructionFidelity,
+            Self::LatencyBudget { .. } => ProbeKind::LatencyBudget,
+            Self::Pagination { .. } => ProbeKind::Pagination,
         }
     }
 
     pub fn max_attempts(&self) -> Option<u64> {
         match self {
             Self::DegradationOverN { max_attempts, .. }
-            | Self::ErrorHonesty { max_attempts, .. } => Some(*max_attempts),
+            | Self::ErrorHonesty { max_attempts, .. }
+            | Self::LatencyBudget {
+                attempts: max_attempts,
+                ..
+            } => Some(*max_attempts),
             _ => None,
         }
     }
 
     pub fn required_tools(&self) -> Vec<&str> {
         match self {
-            Self::DiscoveryCost { .. } | Self::TokenCost { .. } => Vec::new(),
+            Self::DiscoveryCost { .. } | Self::TokenCost { .. } | Self::Pagination { .. } => {
+                Vec::new()
+            }
             Self::StateRecovery {
                 failure_tool,
                 recovery_tool,
@@ -372,6 +408,32 @@ impl Manifest {
                 ProbeCase::DegradationOverN { max_attempts, .. } => {
                     if !(2..=100).contains(max_attempts) {
                         bail!("max_attempts must be between 2 and 100");
+                    }
+                }
+                ProbeCase::LatencyBudget {
+                    access,
+                    attempts,
+                    max_latency_ms,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("latency-budget must be read-only");
+                    }
+                    if !(2..=20).contains(attempts) {
+                        bail!("latency-budget attempts must be between 2 and 20");
+                    }
+                    if !(1..=600_000).contains(max_latency_ms) {
+                        bail!("latency budget is out of range");
+                    }
+                }
+                ProbeCase::Pagination {
+                    access, max_pages, ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("pagination must be read-only");
+                    }
+                    if !(1..=1000).contains(max_pages) {
+                        bail!("pagination max_pages must be between 1 and 1000");
                     }
                 }
                 ProbeCase::InstructionFidelity { expect, .. } => validate_expectation(expect)?,

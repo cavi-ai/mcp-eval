@@ -1,6 +1,6 @@
 # Evaluation dimensions
 
-MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes two supplemental probes, documented separately below.
+MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes five supplemental probes, documented separately below.
 
 ## Headline evaluation dimensions
 
@@ -28,6 +28,15 @@ Synchronizes two independently initialized MCP clients against the same tool and
 
 These checks are available in the manifest and CLI, but are not additional headline evaluation dimensions in version {{PRODUCT_VERSION}}.
 
+### `token-cost`
+
+Estimates the context cost of the `tools/list` catalog. Each complete tool entry
+(name, description, and input schema) is measured in memory as encoded bytes,
+then divided by four and rounded up. The deterministic, model-independent
+estimate is checked against `max_total_tokens` and an optional
+`max_tool_tokens` ceiling. Only tool names and numeric measurements appear in
+the result; descriptions and schemas are never persisted or printed.
+
 ### `degradation-over-n`
 
 Repeats the declared tool call through `max_attempts`. The first error fails the case and records its attempt number; all calls must succeed to pass.
@@ -35,5 +44,17 @@ Repeats the declared tool call through `max_attempts`. The first error fails the
 ### `instruction-fidelity`
 
 Runs one call and compares its machine-readable outcome with the declared `expect` object. It can check required result fields, exact scalar values, or an error code. It does not invoke an external model.
+
+### `latency-budget`
+
+Runs a declared read-only tool through a bounded number of attempts and fails
+when an observed response exceeds `max_latency_ms`. It reports only the
+numeric latency measurement and a fixed failure label.
+
+### `pagination`
+
+Walks a read-only `tools/list` catalog through its declared cursor sequence.
+It fails on malformed pages, duplicate tools, repeated cursors, or an
+exceeded `max_pages` bound. Catalog descriptions and schemas stay in memory.
 
 All tool calls pass through the normal sanitized synthetic-record boundary.

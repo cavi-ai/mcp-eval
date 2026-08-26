@@ -1,4 +1,4 @@
-use anyhow::bail;
+use anyhow::{bail, Context};
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
 use serde_json::Value;
@@ -38,6 +38,15 @@ struct Finding {
 }
 
 pub fn render(root: &Path, format: ReportFormat) -> anyhow::Result<String> {
+    let findings = load_findings(root)?;
+    match format {
+        ReportFormat::Json => Ok(serde_json::to_string_pretty(&findings)? + "\n"),
+        ReportFormat::Agent => render_agent(&findings),
+        ReportFormat::Md => render_markdown(&findings),
+    }
+}
+
+fn open_index(root: &Path) -> anyhow::Result<Connection> {
     let path = root.join("index.db");
     if !path.is_file() {
         bail!("findings are unavailable; run `mcpeval index` and `mcpeval promote` first");
@@ -53,6 +62,11 @@ pub fn render(root: &Path, format: ReportFormat) -> anyhow::Result<String> {
     if findings_table.is_none() {
         bail!("findings are unavailable; run `mcpeval promote` first");
     }
+    Ok(db)
+}
+
+fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {
+    let db = open_index(root)?;
     let mut statement = db.prepare(
         "SELECT i.finding_id,l.state,l.probe_id,l.consecutive_passes,
                 i.server,i.tool,i.err_code,i.err_template_id,i.failures,i.calls,
@@ -90,12 +104,7 @@ pub fn render(root: &Path, format: ReportFormat) -> anyhow::Result<String> {
             repro: args.and_then(|value| serde_json::from_str(&value).ok()),
         })
     })?;
-    let findings = rows.collect::<Result<Vec<_>, _>>()?;
-    match format {
-        ReportFormat::Json => Ok(serde_json::to_string_pretty(&findings)? + "\n"),
-        ReportFormat::Agent => render_agent(&findings),
-        ReportFormat::Md => render_markdown(&findings),
-    }
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 fn tool_name(finding: &Finding) -> &str {
@@ -180,4 +189,148 @@ fn render_markdown(findings: &[Finding]) -> anyhow::Result<String> {
         output.push('\n');
     }
     Ok(output)
+}
+
+/// Pull-request-ready rendering of a probe report: verdict table, category
+/// breakdown, readiness score, and a static badge URL. Contains only the
+/// share-safe fields already present in the JSON report.
+pub fn render_probe_markdown(server: &str, report: &crate::probe::ProbeReport) -> String {
+    let readiness = crate::score::readiness(report);
+    let mut out = String::new();
+    out.push_str(&format!("## mcp-eval report — {server}\n\n"));
+    out.push_str(&format!(
+        "**Readiness: {}/100** ![mcpeval]({})\n\n",
+        readiness.overall,
+        crate::score::badge_url(readiness.overall)
+    ));
+    if !readiness.categories.is_empty() {
+        out.push_str("| Category | Passed |\n| --- | --- |\n");
+        for category in &readiness.categories {
+            writeln!(
+                out,
+                "| {} | {}/{} |",
+                category.name, category.passed, category.total
+            )
+            .ok();
+        }
+        out.push('\n');
+    }
+    out.push_str("| Case | Probe | Result | Attempts | First failure | Reason |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- |\n");
+    for case in &report.cases {
+        let (result, first_failure, reason) = match case.reason {
+            None => ("pass".to_string(), "—".to_string(), "—".to_string()),
+            Some(reason) => (
+                "fail".to_string(),
+                case.first_failure
+                    .map(|value| value.to_string())
+                    .unwrap_or_default(),
+                reason.as_str().to_string(),
+            ),
+        };
+        writeln!(
+            out,
+            "| {} | {} | {} | {} | {} | {} |",
+            case.id,
+            case.probe.as_str(),
+            result,
+            case.attempts,
+            first_failure,
+            reason
+        )
+        .ok();
+    }
+    let mut measurements = String::new();
+    for case in &report.cases {
+        if let Some(usage) = &case.token_usage {
+            writeln!(
+                measurements,
+                "\n- `{}` catalog cost estimate: {} tokens across {} tools",
+                case.id,
+                usage.total_tokens,
+                usage.per_tool.len()
+            )
+            .ok();
+        }
+    }
+    out.push_str(&measurements);
+    out.push_str(
+        "\n*Deterministic battery (`mcpeval probe`); arguments, responses, and error prose are never recorded.*\n",
+    );
+    out
+}
+
+/// Write one GitHub-issue markdown file per finding into `dir`.
+/// Open findings only, unless `include_closed` is set. Files contain no
+/// captured private content beyond what `findings --format md` already shows.
+pub fn export_issues(
+    root: &Path,
+    dir: &Path,
+    include_closed: bool,
+    force: bool,
+) -> anyhow::Result<usize> {
+    let findings = load_findings(root)?;
+    let selected: Vec<&Finding> = findings
+        .iter()
+        .filter(|finding| include_closed || finding.state == "open")
+        .collect();
+    if selected.is_empty() {
+        bail!("no exportable findings; run `mcpeval index` and `mcpeval promote` first");
+    }
+    if dir.exists() {
+        let occupied = std::fs::read_dir(dir)?
+            .filter_map(Result::ok)
+            .next()
+            .is_some();
+        if occupied && !force {
+            bail!(
+                "{} is not empty; pass --force to replace its files",
+                dir.display()
+            );
+        }
+    } else {
+        std::fs::create_dir_all(dir).context("creating export directory")?;
+    }
+    for finding in &selected {
+        let path = dir.join(format!("{}.md", finding.finding_id));
+        std::fs::write(&path, issue_markdown(finding)).context("writing issue file")?;
+    }
+    Ok(selected.len())
+}
+
+fn issue_markdown(finding: &Finding) -> String {
+    let mut out = String::new();
+    out.push_str(&format!(
+        "# mcpeval finding {}: recurring failures on {}/{}\n\n",
+        finding.finding_id,
+        finding.server,
+        tool_name(finding)
+    ));
+    out.push_str(&format!(
+        "**Suggested labels:** `mcpeval`, `{}`\n\n",
+        finding.severity
+    ));
+    out.push_str(&format!(
+        "- State: {}\n- Severity: {}\n- Probe coverage: {}\n- Evidence: {} failures / {} calls across {} sessions\n- Agent cost: median {:.1} turns; blast radius {} tools\n- Observed failure rate: {:.6} (Wilson 95% lower bound; threshold {:.6})\n- Last seen: {}\n",
+        finding.state,
+        finding.severity,
+        finding.probe_id.as_deref().unwrap_or("none — run `mcpeval generate` to attach one"),
+        finding.failures,
+        finding.calls,
+        finding.sessions,
+        finding.cost,
+        finding.blast,
+        finding.rate,
+        finding.threshold,
+        finding.last_seen,
+    ));
+    if let Some(repro) = &finding.repro {
+        out.push_str(&format!("- Shape-level repro: `{repro}`\n"));
+    }
+    out.push_str("\n## Suggested next steps\n\n1. Reproduce with the shape above against the failing tool.\n2. Attach a deterministic probe:\n   ```sh\n   mcpeval generate --finding ");
+    out.push_str(&finding.finding_id);
+    out.push_str(" --confirm-read-only --output generated.manifest.json\n   ```\n3. After fixing, verify until it closes (three consecutive green runs):\n   ```sh\n   mcpeval verify --finding ");
+    out.push_str(&finding.finding_id);
+    out.push_str(" --case <case-id> --manifest mcp-eval.manifest.json -- <server command>\n   ```\n\n*Generated by `mcpeval export-issues`; content-free metadata only.*\n");
+    out
 }

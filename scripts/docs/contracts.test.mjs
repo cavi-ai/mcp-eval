@@ -74,7 +74,13 @@ test("official docs publish exactly five headline dimensions and label supplemen
     "state-recovery",
     "contention",
   ];
-  const expectedSupplemental = ["degradation-over-n", "instruction-fidelity"];
+  const expectedSupplemental = [
+    "token-cost",
+    "degradation-over-n",
+    "instruction-fidelity",
+    "latency-budget",
+    "pagination",
+  ];
   const overview = await readFile(path.join(SOURCE, "pages/introduction/overview.md"), "utf8");
   const reference = await readFile(path.join(SOURCE, "pages/reference/evaluation-dimensions.md"), "utf8");
   assert.deepEqual(listProbeNames(section(overview, "Headline evaluation dimensions")), expectedHeadline);
@@ -117,8 +123,12 @@ test("official docs cover recovery and authorization contracts", async () => {
     "error-honesty",
     "state-recovery",
     "contention",
+    "token-cost",
+    "latency-budget",
+    "pagination",
     "read-only by default",
     "--allow-mutation",
+    "--format json",
     "declared sandbox",
     "MCPEVAL_HTTP_AUTHORIZATION",
     "--confirm-read-only",

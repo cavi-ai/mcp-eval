@@ -41,7 +41,10 @@ Headline evaluation dimension fields:
 
 Supplemental probe fields:
 
+- `token-cost`: read-only only, with `max_total_tokens` from 1 through 1,000,000 and optional `max_tool_tokens` from 1 through 100,000. A per-tool limit cannot exceed the total limit.
 - `degradation-over-n`: `tool`, object `arguments`, and `max_attempts` from 2 through 100.
 - `instruction-fidelity`: `tool`, object `arguments`, and `expect`.
+- `latency-budget`: read-only only, with `tool`, object `arguments`, `attempts` from 1 through 20, and `max_latency_ms` from 1 through 60,000.
+- `pagination`: read-only only, with `max_pages` from 1 through 100.
 
 An `expect` object declares `outcome` as `ok` or `error`. Successful expectations may include unique `required_result_fields` and scalar `equals` values. Error expectations may include a numeric `error_code`, but cannot declare result fields. This probe checks declared machine-readable result fields, values, outcomes, and error codes; it does not send descriptions or results to an external LLM.

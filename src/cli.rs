@@ -17,6 +17,8 @@ pub enum ProbeSelection {
     SchemaGuessability,
     DegradationOverN,
     InstructionFidelity,
+    LatencyBudget,
+    Pagination,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -25,6 +27,19 @@ pub enum ProbeFormat {
     #[default]
     Text,
     /// Versioned, deterministic JSON document (mcpeval.probe-report/v1).
+    Json,
+    /// Pull-request-ready markdown with a readiness score and badge.
+    Markdown,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum CompareFormat {
+    /// Aligned pass/fail grid.
+    #[default]
+    Text,
+    /// Markdown comparison table for issues and pull requests.
+    Markdown,
+    /// Deterministic JSON array of per-endpoint probe reports.
     Json,
 }
 
@@ -91,6 +106,72 @@ pub enum Command {
         /// The server command, after `--`.
         #[arg(last = true)]
         cmd: Vec<String>,
+    },
+    /// Scaffold a starter manifest from a live server's tool catalog.
+    Init {
+        /// Name this server is recorded under.
+        #[arg(long)]
+        server: String,
+        /// Path for the generated manifest.
+        #[arg(long, default_value = "mcp-eval.manifest.json")]
+        output: std::path::PathBuf,
+        /// Replace an existing manifest.
+        #[arg(long)]
+        force: bool,
+        /// Attest that every empty-argument schema check is read-only.
+        #[arg(long)]
+        confirm_read_only: bool,
+        /// Streamable HTTP endpoint instead of a stdio command.
+        #[arg(long)]
+        url: Option<String>,
+        /// Allow an explicitly selected remote HTTPS endpoint.
+        #[arg(long, requires = "url")]
+        allow_remote_http: bool,
+        /// The server command, after `--`.
+        #[arg(last = true)]
+        cmd: Vec<String>,
+    },
+    /// Print the JSON Schema for mcp-eval.manifest.json (for editor
+    /// validation: add "$schema" pointing at docs/mcp-eval.manifest.schema.json).
+    Schema,
+    /// Run one manifest against several HTTP endpoints and diff the results.
+    Compare {
+        /// Shared server label for all endpoints in the report.
+        #[arg(long)]
+        server: String,
+        /// Strict versioned probe and sandbox declaration.
+        #[arg(long, default_value = "mcp-eval.manifest.json")]
+        manifest: std::path::PathBuf,
+        /// Endpoint as label=url; repeat to compare more than two.
+        #[arg(long = "endpoint", value_name = "LABEL=URL", required = true)]
+        endpoints: Vec<String>,
+        /// Output format for the comparison table.
+        #[arg(long, value_enum, default_value_t = CompareFormat::Text)]
+        format: CompareFormat,
+        /// Explicitly authorize manifest-declared sandbox mutations.
+        #[arg(long)]
+        allow_mutation: bool,
+        /// Allow explicitly selected remote HTTPS endpoints.
+        #[arg(long)]
+        allow_remote_http: bool,
+    },
+    /// Write one GitHub-issue markdown file per open finding into a directory.
+    ExportIssues {
+        /// Directory that receives <finding-id>.md files.
+        #[arg(long)]
+        dir: std::path::PathBuf,
+        /// Include fix-claimed, verifying, and closed findings.
+        #[arg(long)]
+        include_closed: bool,
+        /// Replace existing files in the directory.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Show readiness-score history recorded by previous probe runs.
+    Trends {
+        /// Show at most this many runs per server.
+        #[arg(long, default_value_t = 10)]
+        last: usize,
     },
     /// Verify one finding with one manifest case and advance its lifecycle.
     Verify {

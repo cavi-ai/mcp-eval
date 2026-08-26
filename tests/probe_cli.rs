@@ -43,13 +43,24 @@ fn clean_fixture_passes_both_probes_without_exposing_payloads() {
     assert!(!stdout.contains("CANARY"));
     let stored = std::fs::read_dir(home.join("store"))
         .unwrap()
-        .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_file())
+        .map(|path| std::fs::read_to_string(path).unwrap())
         .collect::<String>();
     assert!(stored
         .lines()
         .all(|line| line.contains("\"kind\":\"synthetic\"")));
+    // Readiness-trend history lives in a subdirectory and carries only
+    // content-free score metadata; nothing anywhere may hold payloads.
+    let trends = std::fs::read_to_string(home.join("store").join("probes").join("history.jsonl"))
+        .expect("full-battery run records a trend point");
+    assert!(trends.lines().all(|line| {
+        let point: serde_json::Value = serde_json::from_str(line).unwrap();
+        point["server"] == "fixture" && point["cases_total"].is_u64() && point["score"].is_u64()
+    }));
     assert!(stored.contains("str<32"));
     assert!(!stored.contains("CANARY"));
+    assert!(!trends.contains("CANARY"));
 }
 
 #[test]

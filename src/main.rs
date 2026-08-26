@@ -2,6 +2,50 @@ mod cli;
 
 use clap::Parser;
 
+fn render_probe_text(server: &str, report: &mcpeval::probe::ProbeReport) {
+    for case in &report.cases {
+        let probe = case.probe.as_str();
+        let mut measurements = String::new();
+        if let Some(tools) = case.tool_count {
+            measurements.push_str(&format!(" tools={tools}"));
+        }
+        if let Some(bytes) = case.schema_bytes {
+            measurements.push_str(&format!(" schema_bytes={bytes}"));
+        }
+        if let Some(usage) = &case.token_usage {
+            measurements.push_str(&format!(" total_tokens={}", usage.total_tokens));
+        }
+        if let Some(latency_ms) = case.latency_ms {
+            measurements.push_str(&format!(" latency_ms={latency_ms}"));
+        }
+        if let Some(pages) = case.pages {
+            measurements.push_str(&format!(" pages={pages}"));
+        }
+        if case.passed() {
+            println!(
+                "{} {probe} pass attempts={}{measurements}",
+                case.id, case.attempts
+            );
+        } else {
+            println!(
+                "{} {probe} fail attempts={} first_failure={} reason={}{measurements}",
+                case.id,
+                case.attempts,
+                case.first_failure.expect("failed case has a failure index"),
+                case.reason.expect("failed case has a reason").as_str()
+            );
+        }
+    }
+    let readiness = mcpeval::score::readiness(report);
+    let categories = readiness
+        .categories
+        .iter()
+        .map(|category| format!("{}={}/{}", category.name, category.passed, category.total))
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!("{server} readiness {}/100 {categories}", readiness.overall);
+}
+
 fn main() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
     match cli.command {
@@ -40,7 +84,10 @@ fn main() -> anyhow::Result<()> {
                 cli::ProbeSelection::InstructionFidelity => {
                     mcpeval::manifest::ProbeKind::InstructionFidelity
                 }
+                cli::ProbeSelection::LatencyBudget => mcpeval::manifest::ProbeKind::LatencyBudget,
+                cli::ProbeSelection::Pagination => mcpeval::manifest::ProbeKind::Pagination,
             });
+            let full_battery = selected_probe.is_none();
             let mut store = mcpeval::store::Store::open(None)?;
             let report = mcpeval::probe::run(
                 mcpeval::probe::ProbeOptions {
@@ -55,6 +102,11 @@ fn main() -> anyhow::Result<()> {
                 },
                 &mut store,
             )?;
+            if full_battery {
+                if let Err(error) = mcpeval::trends::record(store.root(), &server, &report) {
+                    eprintln!("trend recording failed: {error}");
+                }
+            }
             match format {
                 cli::ProbeFormat::Json => {
                     println!(
@@ -62,39 +114,109 @@ fn main() -> anyhow::Result<()> {
                         serde_json::to_string_pretty(&report.to_json(&server))?
                     );
                 }
-                cli::ProbeFormat::Text => {
-                    for case in &report.cases {
-                        let probe = case.probe.as_str();
-                        let mut measurements = String::new();
-                        if let Some(tools) = case.tool_count {
-                            measurements.push_str(&format!(" tools={tools}"));
-                        }
-                        if let Some(bytes) = case.schema_bytes {
-                            measurements.push_str(&format!(" schema_bytes={bytes}"));
-                        }
-                        if let Some(usage) = &case.token_usage {
-                            measurements.push_str(&format!(" total_tokens={}", usage.total_tokens));
-                        }
-                        if case.passed() {
-                            println!(
-                                "{} {probe} pass attempts={}{measurements}",
-                                case.id, case.attempts
-                            );
-                        } else {
-                            println!(
-                                "{} {probe} fail attempts={} first_failure={} reason={}{measurements}",
-                                case.id,
-                                case.attempts,
-                                case.first_failure.expect("failed case has a failure index"),
-                                case.reason.expect("failed case has a reason").as_str()
-                            );
-                        }
-                    }
+                cli::ProbeFormat::Markdown => {
+                    print!(
+                        "{}",
+                        mcpeval::report::render_probe_markdown(&server, &report)
+                    );
                 }
+                cli::ProbeFormat::Text => render_probe_text(&server, &report),
             }
             if !report.passed() {
                 std::process::exit(1);
             }
+            Ok(())
+        }
+        cli::Command::Init {
+            server,
+            output,
+            force,
+            confirm_read_only,
+            url,
+            allow_remote_http,
+            cmd,
+        } => {
+            let summary = mcpeval::init::run(mcpeval::init::InitOptions {
+                server,
+                output,
+                force,
+                confirm_read_only,
+                command: cmd,
+                http_url: url,
+                allow_remote_http,
+            })?;
+            println!(
+                "wrote {} ({} tools, {} schema-guessability cases)",
+                summary.path.display(),
+                summary.tool_count,
+                summary.schema_cases
+            );
+            println!(
+                "next: review budgets, add tool-specific fidelity/error probes, then run mcpeval probe"
+            );
+            Ok(())
+        }
+        cli::Command::Schema => {
+            println!("{}", include_str!("../docs/mcp-eval.manifest.schema.json"));
+            Ok(())
+        }
+        cli::Command::Compare {
+            server,
+            manifest,
+            endpoints,
+            format,
+            allow_mutation,
+            allow_remote_http,
+        } => {
+            let parsed = endpoints
+                .iter()
+                .map(|entry| {
+                    let (label, url) = entry
+                        .split_once('=')
+                        .ok_or_else(|| anyhow::anyhow!("endpoint must be LABEL=URL"))?;
+                    if label.is_empty() || url.is_empty() {
+                        anyhow::bail!("endpoint label and URL must be non-empty");
+                    }
+                    Ok((label.to_owned(), url.to_owned()))
+                })
+                .collect::<anyhow::Result<Vec<_>>>()?;
+            let mut labels = std::collections::HashSet::new();
+            for (label, _) in &parsed {
+                if !labels.insert(label.clone()) {
+                    anyhow::bail!("endpoint labels must be unique");
+                }
+            }
+            let output = mcpeval::compare::run(
+                mcpeval::compare::CompareOptions {
+                    server,
+                    manifest_path: manifest,
+                    endpoints: parsed,
+                    allow_mutation,
+                    allow_remote_http,
+                },
+                match format {
+                    cli::CompareFormat::Text => mcpeval::compare::CompareFormat::Text,
+                    cli::CompareFormat::Markdown => mcpeval::compare::CompareFormat::Markdown,
+                    cli::CompareFormat::Json => mcpeval::compare::CompareFormat::Json,
+                },
+            )?;
+            print!("{output}");
+            Ok(())
+        }
+        cli::Command::ExportIssues {
+            dir,
+            include_closed,
+            force,
+        } => {
+            let store = mcpeval::store::Store::open(None)?;
+            let written =
+                mcpeval::report::export_issues(store.root(), &dir, include_closed, force)?;
+            println!("wrote {written} issue files to {}", dir.display());
+            Ok(())
+        }
+        cli::Command::Trends { last } => {
+            let store = mcpeval::store::Store::open(None)?;
+            print!("{}", mcpeval::trends::render(store.root(), last)?);
             Ok(())
         }
         cli::Command::Verify {

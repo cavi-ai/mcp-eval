@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cavi-ai/mcp-eval/main/docs/mcp-eval.manifest.schema.json",
+  "title": "mcp-eval manifest",
+  "description": "Strict, versioned declaration of deterministic probes and sandboxes for mcpeval. Unknown fields are rejected before the server process starts. Retrieve with: mcpeval schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "probes"],
+  "properties": {
+    "version": { "const": 1 },
+    "sandboxes": {
+      "type": "object",
+      "description": "Named disposable environments referenced by mutating probes.",
+      "propertyNames": { "$ref": "#/$defs/identifier" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description"],
+        "properties": {
+          "description": {
+            "type": "string",
+            "maxLength": 240,
+            "description": "What the sandbox is allowed to touch. Never persisted."
+          }
+        }
+      }
+    },
+    "probes": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/probeCase" }
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,63}$"
+    },
+    "toolName": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_:.\\-]{1,128}$"
+    },
+    "access": {
+      "enum": ["read_only", "mutating"]
+    },
+    "arguments": {
+      "type": "object",
+      "description": "Arguments passed to tools/call. Never persisted or printed."
+    },
+    "expectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outcome"],
+      "properties": {
+        "outcome": { "enum": ["ok", "error"] },
+        "required_result_fields": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/identifier" },
+          "uniqueItems": true
+        },
+        "equals": {
+          "type": "object",
+          "description": "Scalar result fields that must equal these values; string values must be identifier-shaped.",
+          "propertyNames": { "$ref": "#/$defs/identifier" },
+          "additionalProperties": {
+            "type": ["null", "boolean", "number", "string"]
+          }
+        },
+        "error_code": {
+          "type": "integer",
+          "description": "Only valid when outcome is error."
+        }
+      }
+    },
+    "probeCase": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "tool", "access", "arguments"],
+          "properties": {
+            "probe": { "const": "contention" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "$ref": "#/$defs/access" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id", "probe", "tool", "access", "arguments",
+            "max_attempts", "expect_retryable"
+          ],
+          "properties": {
+            "probe": { "const": "error-honesty" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "$ref": "#/$defs/access" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" },
+            "max_attempts": { "type": "integer", "minimum": 2, "maximum": 20 },
+            "expect_retryable": { "type": "boolean" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id", "probe", "access",
+            "failure_tool", "failure_arguments",
+            "recovery_tool", "recovery_arguments",
+            "validation_tool", "validation_arguments"
+          ],
+          "properties": {
+            "probe": { "const": "state-recovery" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "failure_tool": { "$ref": "#/$defs/toolName" },
+            "failure_arguments": { "$ref": "#/$defs/arguments" },
+            "recovery_tool": { "$ref": "#/$defs/toolName" },
+            "recovery_arguments": { "$ref": "#/$defs/arguments" },
+            "validation_tool": { "$ref": "#/$defs/toolName" },
+            "validation_arguments": { "$ref": "#/$defs/arguments" },
+            "access": { "$ref": "#/$defs/access" },
+            "sandbox": { "$ref": "#/$defs/identifier" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "access", "max_tools", "max_schema_bytes"],
+          "properties": {
+            "probe": { "const": "discovery-cost" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "access": { "const": "read_only" },
+            "max_tools": { "type": "integer", "minimum": 1, "maximum": 10000 },
+            "max_schema_bytes": { "type": "integer", "minimum": 1, "maximum": 10000000 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "access", "max_total_tokens"],
+          "properties": {
+            "probe": { "const": "token-cost" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "access": { "const": "read_only" },
+            "max_total_tokens": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+            "max_tool_tokens": { "type": "integer", "minimum": 1, "maximum": 100000 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "tool", "access", "arguments"],
+          "properties": {
+            "probe": { "const": "schema-guessability" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "$ref": "#/$defs/access" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "tool", "access", "arguments", "max_attempts"],
+          "properties": {
+            "probe": { "const": "degradation-over-n" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "$ref": "#/$defs/access" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" },
+            "max_attempts": { "type": "integer", "minimum": 2, "maximum": 100 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "tool", "access", "arguments", "expect"],
+          "properties": {
+            "probe": { "const": "instruction-fidelity" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "$ref": "#/$defs/access" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" },
+            "expect": { "$ref": "#/$defs/expectation" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id", "probe", "tool", "access", "arguments",
+            "attempts", "max_latency_ms"
+          ],
+          "properties": {
+            "probe": { "const": "latency-budget" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "const": "read_only" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" },
+            "attempts": { "type": "integer", "minimum": 2, "maximum": 20 },
+            "max_latency_ms": { "type": "integer", "minimum": 1, "maximum": 600000 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "access", "max_pages"],
+          "properties": {
+            "probe": { "const": "pagination" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "access": { "const": "read_only" },
+            "max_pages": { "type": "integer", "minimum": 1, "maximum": 1000 }
+          }
+        }
+      ]
+    }
+  }
+}

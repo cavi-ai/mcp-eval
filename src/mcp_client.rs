@@ -158,6 +158,12 @@ impl McpClient {
         })
     }
 
+    /// Raw JSON-RPC request for probes that inspect envelope structure
+    /// (for example pagination cursors) rather than tool semantics.
+    pub fn raw_request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
+        self.request(method, params)
+    }
+
     fn notify(&mut self, method: &str, params: Value) -> anyhow::Result<()> {
         self.write(&json!({"jsonrpc": "2.0", "method": method, "params": params}))
     }

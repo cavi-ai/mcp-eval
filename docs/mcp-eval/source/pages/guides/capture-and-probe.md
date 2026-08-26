@@ -38,7 +38,25 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
   --url http://127.0.0.1:8080/mcp
 ```
 
+Use `--format json` when a deterministic, versioned result is needed for a CI
+artifact or baseline:
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json \
+  --format json --probe token-cost -- your-mcp-server --flags
+```
+
+The JSON schema is `mcpeval.probe-report/v1`. It contains only the validated
+server label, case and probe identifiers, fixed failure labels, pass state,
+and numeric measurements. It has no timestamps, sessions, arguments,
+responses, descriptions, schemas, or raw error text.
+
 Mutating cases are rejected unless each case names a declared sandbox and the invocation includes `--allow-mutation`. The flag authorizes only manifest-declared cases; it does not turn capture into a mutation capability.
+
+`init` is discovery-only by default: it creates catalog-budget cases without
+calling server tools. Adding `--confirm-read-only` is an operator attestation
+that every candidate empty-argument schema check is read-only; only then can
+`init` call those candidates and add schema-guessability cases.
 
 For an eligible promoted finding with empty shaped arguments, `generate` can write a deterministic read-only manifest using the supplemental `degradation-over-n` probe:
 

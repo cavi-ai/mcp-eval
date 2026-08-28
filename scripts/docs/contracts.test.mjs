@@ -59,7 +59,7 @@ test("navigation references every official source page exactly once", async () =
   const navigation = JSON.parse(await readFile(path.join(SOURCE, "navigation.json"), "utf8"));
   const paths = navigation.sections.flatMap((section) => section.pages.map((page) => page.path));
   assert.equal(navigation.title, "MCP Eval");
-  assert.equal(paths.length, 11);
+  assert.equal(paths.length, 13);
   assert.equal(new Set(paths).size, paths.length);
   for (const relative of paths) {
     assert.ok(await readFile(path.join(SOURCE, "pages", relative), "utf8"));
@@ -80,6 +80,9 @@ test("official docs publish exactly five headline dimensions and label supplemen
     "instruction-fidelity",
     "latency-budget",
     "pagination",
+    "payload-bounds",
+    "surface-listing",
+    "output-schema",
   ];
   const overview = await readFile(path.join(SOURCE, "pages/introduction/overview.md"), "utf8");
   const reference = await readFile(path.join(SOURCE, "pages/reference/evaluation-dimensions.md"), "utf8");
@@ -126,12 +129,25 @@ test("official docs cover recovery and authorization contracts", async () => {
     "token-cost",
     "latency-budget",
     "pagination",
+    "payload-bounds",
+    "surface-listing",
+    "output-schema",
     "read-only by default",
     "--allow-mutation",
     "--format json",
+    "--format markdown",
     "declared sandbox",
     "MCPEVAL_HTTP_AUTHORIZATION",
     "--confirm-read-only",
+    "mcpeval-demo",
+    "readiness",
+    "mcpeval.probe-report/v1",
+    "cavi-ai/mcp-eval@main",
+    "mcpeval explain",
+    "Remediation",
+    "--brief",
+    "corpus median",
+    "scripts/corpus/collect.sh",
   ]) {
     assert.ok(text.includes(phrase), phrase);
   }

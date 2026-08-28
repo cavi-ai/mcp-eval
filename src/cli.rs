@@ -97,6 +97,9 @@ pub enum Command {
         /// Output format for the probe report.
         #[arg(long, value_enum, default_value_t = ProbeFormat::Text)]
         format: ProbeFormat,
+        /// Suppress remediation hints in text output (for scripts).
+        #[arg(long)]
+        brief: bool,
         /// Explicitly authorize manifest-declared sandbox mutations.
         #[arg(long)]
         allow_mutation: bool,
@@ -137,6 +140,13 @@ pub enum Command {
     /// Print the JSON Schema for mcp-eval.manifest.json (for editor
     /// validation: add "$schema" pointing at docs/mcp-eval.manifest.schema.json).
     Schema,
+    /// Print the remediation guidance for a fixed failure reason.
+    Explain {
+        /// A fixed reason label, e.g. pagination-stalled-cursor. Pass no
+        /// reason to list every label.
+        #[arg(value_name = "REASON")]
+        reason: Option<String>,
+    },
     /// Run one manifest against several HTTP endpoints and diff the results.
     Compare {
         /// Shared server label for all endpoints in the report.

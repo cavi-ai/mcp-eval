@@ -1,6 +1,6 @@
 # Evaluation dimensions
 
-MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes five supplemental probes, documented separately below.
+MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes eight supplemental probes, documented separately below.
 
 ## Headline evaluation dimensions
 
@@ -56,5 +56,29 @@ numeric latency measurement and a fixed failure label.
 Walks a read-only `tools/list` catalog through its declared cursor sequence.
 It fails on malformed pages, duplicate tools, repeated cursors, or an
 exceeded `max_pages` bound. Catalog descriptions and schemas stay in memory.
+
+### `payload-bounds`
+
+Injects one exact-size argument — a deep copy of the declared arguments with a
+single oversized ASCII string field — and verifies the server neither crashes
+nor hangs. A clean structured JSON-RPC rejection is honest bounded behavior
+unless `expect_handled` asserts the tool must actually handle the size, in
+which case a rejection fails the case. A transport-level failure always fails
+with `payload-unhandled`. Only the numeric latency and a fixed label are
+reported; the injected bytes are never echoed.
+
+### `surface-listing`
+
+Validates the envelopes of the server's declared `resources` and `prompts`
+surfaces: item arrays must exist, cursor sequences must terminate within
+`max_pages`, and listing errors are defects. Surfaces the server did not
+declare pass trivially; the probe only verifies what the server claims.
+
+### `output-schema`
+
+For a tool that declares `outputSchema`, the response must carry
+`structuredContent` covering that schema's required fields. Tools without a
+declared output schema pass trivially. The probe never inspects values, only
+field presence.
 
 All tool calls pass through the normal sanitized synthetic-record boundary.

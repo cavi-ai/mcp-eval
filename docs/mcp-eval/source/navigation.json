@@ -14,7 +14,9 @@
       "title": "Guides",
       "pages": [
         { "title": "Capture and probe", "path": "guides/capture-and-probe.md" },
+        { "title": "Readiness reporting", "path": "guides/readiness-reporting.md" },
         { "title": "Findings and verification", "path": "guides/findings-and-verification.md" },
+        { "title": "Continuous integration", "path": "guides/continuous-integration.md" },
         { "title": "Troubleshooting", "path": "guides/troubleshooting.md" }
       ]
     },

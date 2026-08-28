@@ -80,6 +80,15 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `report_weather` tool with structured output.
 - Readiness categories rebalanced for the deeper battery: discovery 0.25,
   reliability 0.35, contract 0.30, concurrency 0.10.
+- Remediation hints: every fixed failure reason maps to a concrete server-side
+  fix, printed under failing cases in text output (suppress with `--brief`),
+  rendered in the markdown report under *Remediation*, and documented
+  standalone via the new `mcpeval explain <reason>` command.
+- Calibrated readiness scores: a checked-in corpus of observations from
+  popular public MCP servers (`data/readiness-corpus.json`, refreshed by
+  `scripts/corpus/collect.sh`) places every score in the observed
+  distribution — percentile and corpus median appear in text and markdown
+  reports; a private override at `<MCPEVAL_HOME>/corpus.json` wins.
 - Stdio client interoperability hardening from dogfooding against the official
   reference server: stdout banners and unsolicited notifications no longer
   abort a session, while mismatched response ids still fail fast; a server

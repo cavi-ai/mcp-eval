@@ -1,0 +1,46 @@
+{
+  "schema": "mcpeval.readiness-corpus/v1",
+  "source": "readiness battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services are re-run before release",
+  "observations": [
+    {
+      "server": "everything",
+      "score": 100
+    },
+    {
+      "server": "filesystem",
+      "score": 100
+    },
+    {
+      "server": "github",
+      "score": 100
+    },
+    {
+      "server": "memory",
+      "score": 100
+    },
+    {
+      "server": "notion",
+      "score": 100
+    },
+    {
+      "server": "postgres",
+      "score": 75
+    },
+    {
+      "server": "puppeteer",
+      "score": 100
+    },
+    {
+      "server": "sequential-thinking",
+      "score": 100
+    },
+    {
+      "server": "time",
+      "score": 100
+    },
+    {
+      "server": "todoist",
+      "score": 100
+    }
+  ]
+}

@@ -1,9 +1,26 @@
 # Quickstart
 
-Wrap a newline-delimited JSON-RPC MCP server and let the client connect through the shim:
+No server of your own yet? The bundled `mcpeval-demo` binary is a real MCP server with a clean personality plus `--broken <aspect>` personalities that reproduce specific defects. Scaffold a manifest from its live catalog and run the deterministic battery:
 
 ```sh
-mcpeval shim --server demo -- your-mcp-server --flags
+mcpeval init --server demo --confirm-read-only \
+  --output demo.manifest.json -- mcpeval-demo
+mcpeval probe --server demo \
+  --manifest demo.manifest.json -- mcpeval-demo
+```
+
+The probe scores readiness out of 100 and prints a per-category breakdown. Flip one flag to watch a fixed failure reason appear:
+
+```sh
+mcpeval probe --server demo --manifest demo.manifest.json \
+  -- mcpeval-demo --broken stalled-cursor
+```
+
+To evaluate your own server, point the same flow at it:
+
+```sh
+mcpeval init --server demo --confirm-read-only -- your-mcp-server --flags
+mcpeval probe --server demo -- your-mcp-server --flags
 ```
 
 After the captured sessions contain representative traffic, rebuild the index, promote supported recurring failures, and view the sanitized findings:
@@ -14,11 +31,10 @@ mcpeval promote
 mcpeval findings --format agent
 ```
 
-Create `mcp-eval.manifest.json`, then run its deterministic read-only cases:
+Wrap a newline-delimited JSON-RPC MCP server and let the client connect through the shim:
 
 ```sh
-mcpeval probe --server demo \
-  --manifest mcp-eval.manifest.json -- your-mcp-server --flags
+mcpeval shim --server demo -- your-mcp-server --flags
 ```
 
 Verify one promoted finding with exactly one declared case:

@@ -81,14 +81,14 @@ jobs:
           echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
 
       - name: Build release binary
-        run: cargo build --release --locked --target ${{ matrix.target }}
+        run: cargo build --release --locked --bins --target ${{ matrix.target }}
 
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
         run: |
           cd "target/${{ matrix.target }}/release"
           tar --sort=name --owner=0 --group=0 --numeric-owner \
-            -czf "mcpeval-${{ matrix.target }}.tar.gz" mcpeval
+            -czf "mcpeval-${{ matrix.target }}.tar.gz" mcpeval mcpeval-demo
           shasum -a 256 "mcpeval-${{ matrix.target }}.tar.gz" \
             > "mcpeval-${{ matrix.target }}.tar.gz.sha256"
 
@@ -97,7 +97,7 @@ jobs:
         shell: pwsh
         run: |
           $dir = "target/${{ matrix.target }}/release"
-          Compress-Archive -Path "$dir/mcpeval.exe" -DestinationPath "$dir/mcpeval-${{ matrix.target }}.zip"
+          Compress-Archive -Path "$dir/mcpeval.exe","$dir/mcpeval-demo.exe" -DestinationPath "$dir/mcpeval-${{ matrix.target }}.zip"
           $hash = (Get-FileHash "$dir/mcpeval-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  mcpeval-${{ matrix.target }}.zip" | Out-File -NoNewline -Encoding ascii "$dir/mcpeval-${{ matrix.target }}.zip.sha256"
 

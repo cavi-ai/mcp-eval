@@ -1,0 +1,302 @@
+//! A tiny, self-contained MCP stdio server for trying `mcpeval` end to end
+//! without any other infrastructure.
+//!
+//! `mcpeval-demo` speaks newline-delimited JSON-RPC and ships two personalities:
+//!
+//! - **clean** (default): every probe passes; use it with `mcpeval init` to
+//!   see a green battery in under a minute.
+//! - **`--broken <aspect>`**: reproduces one specific defect so the matching
+//!   probe fails with its fixed reason label. Aspects: `schema`, `fidelity`,
+//!   `unstable-errors`, `bloated`, `duplicate-page`, `stalled-cursor`,
+//!   `slow`.
+//!
+//! The server is a demo fixture, not production code: state lives in a
+//! counter, nothing persists, and stderr is free-form.
+
+use std::io::{BufRead, Write};
+use std::time::Duration;
+
+use serde_json::{json, Value};
+
+fn main() {
+    let mut broken: Option<String> = None;
+    for argument in std::env::args().skip(1) {
+        match argument.as_str() {
+            "--broken" => broken = Some(String::new()),
+            value if broken.as_deref() == Some("") => broken = Some(value.to_owned()),
+            other => {
+                eprintln!("unknown argument {other}; usage: mcpeval-demo [--broken <aspect>]");
+                std::process::exit(2);
+            }
+        }
+    }
+    let broken = match broken {
+        Some(aspect) if aspect.is_empty() => {
+            eprintln!("--broken requires an aspect: schema, fidelity, unstable-errors, bloated, duplicate-page, stalled-cursor, slow");
+            std::process::exit(2);
+        }
+        other => other,
+    };
+    if let Err(error) = serve(broken.as_deref()) {
+        eprintln!("mcpeval-demo: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn serve(broken: Option<&str>) -> anyhow::Result<()> {
+    let stdin = std::io::stdin();
+    let mut stdout = std::io::stdout().lock();
+    let mut calls = 0u64;
+    let mut flaky_calls = 0u64;
+    let mut broken_state = false;
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let request: Value = serde_json::from_str(&line)
+            .map_err(|error| anyhow::anyhow!("malformed request: {error}"))?;
+        let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+        if method.starts_with("notifications/") {
+            continue;
+        }
+        let id = request
+            .get("id")
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("request is missing an id"))?;
+        let params = request.get("params").cloned().unwrap_or(json!({}));
+        let response = match method {
+            "initialize" => Ok(json!({
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mcpeval-demo", "version": env!("CARGO_PKG_VERSION")}
+            })),
+            "tools/list" => tools_page(&params, broken, &mut calls),
+            "tools/call" => call_tool(
+                &params,
+                broken,
+                &mut calls,
+                &mut flaky_calls,
+                &mut broken_state,
+            ),
+            _ => Ok(json!({})),
+        };
+        match response {
+            Ok(result) => write_message(
+                &mut stdout,
+                json!({
+                    "jsonrpc": "2.0", "id": id, "result": result
+                }),
+            )?,
+            Err((code, message, retryable)) => write_message(
+                &mut stdout,
+                json!({
+                    "jsonrpc": "2.0", "id": id,
+                    "error": {"code": code, "message": message, "retryable": retryable}
+                }),
+            )?,
+        }
+    }
+    Ok(())
+}
+
+fn write_message(stdout: &mut impl Write, message: Value) -> anyhow::Result<()> {
+    serde_json::to_writer(&mut *stdout, &message)?;
+    stdout.write_all(b"\n")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+fn tool_entry(name: &str, description: &str, properties: Value) -> Value {
+    json!({
+        "name": name,
+        "description": description,
+        "inputSchema": {
+            "type": "object",
+            "properties": properties,
+        }
+    })
+}
+
+fn catalog(broken: Option<&str>) -> Vec<Value> {
+    let mut entries = vec![
+        tool_entry(
+            "describe_status",
+            "Return the service status. Read-only.",
+            json!({}),
+        ),
+        tool_entry(
+            "read_counter",
+            "Read and increment the call counter. Read-only.",
+            json!({}),
+        ),
+        tool_entry(
+            "shared_read",
+            "Read shared state concurrently. Read-only.",
+            json!({"port": {"type": "integer", "description": "ignored port hint"}}),
+        ),
+        tool_entry(
+            "flaky_read",
+            "Fails twice then succeeds; exercises retry behavior. Read-only.",
+            json!({}),
+        ),
+        tool_entry(
+            "slow_read",
+            "A deliberately slow read (200 ms). Read-only.",
+            json!({}),
+        ),
+        tool_entry(
+            "break_session",
+            "Force the session into a broken state.",
+            json!({}),
+        ),
+        tool_entry(
+            "recover_session",
+            "Recover the session from the broken state.",
+            json!({}),
+        ),
+        tool_entry(
+            "session_status",
+            "Report session health; false while broken. Read-only.",
+            json!({}),
+        ),
+    ];
+    if broken == Some("schema") {
+        // Declares a required field the naive {} call cannot supply, and
+        // never lists the property: incoherent schema.
+        entries[0] = json!({
+            "name": "describe_status",
+            "description": "Return the service status. Read-only.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": ["missing"]
+            }
+        });
+    }
+    if broken == Some("bloated") {
+        for entry in &mut entries {
+            let long = "context padding ".repeat(120);
+            entry["description"] = json!(format!(
+                "{}. The remainder exists to inflate catalog size: {long}",
+                entry["description"].as_str().unwrap_or_default()
+            ));
+        }
+        entries.push(tool_entry(
+            "extra_padding_tool",
+            "Exists only to add catalog weight: filler filler filler",
+            json!({}),
+        ));
+    }
+    entries
+}
+
+fn tools_page(
+    params: &Value,
+    broken: Option<&str>,
+    calls: &mut u64,
+) -> Result<Value, (i64, String, bool)> {
+    *calls += 1;
+    match broken {
+        Some("duplicate-page") | Some("stalled-cursor") => {
+            // Page the catalog with cursor "next"; duplicate-page repeats
+            // the first tool on the second page, stalled-cursor never ends.
+            let cursor = params.get("cursor").and_then(Value::as_str);
+            let repeat = broken == Some("duplicate-page") && cursor == Some("next");
+            let tools = if cursor.is_none() {
+                catalog(None)
+            } else if repeat {
+                vec![catalog(None)[0].clone()]
+            } else {
+                Vec::new()
+            };
+            let mut result = json!({"tools": tools});
+            if broken == Some("stalled-cursor") || cursor.is_none() {
+                result["nextCursor"] = json!("next");
+            }
+            Ok(result)
+        }
+        _ => Ok(json!({"tools": catalog(broken)})),
+    }
+}
+
+fn call_tool(
+    params: &Value,
+    broken: Option<&str>,
+    calls: &mut u64,
+    flaky_calls: &mut u64,
+    broken_state: &mut bool,
+) -> Result<Value, (i64, String, bool)> {
+    let name = params
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    *calls += 1;
+    if name == "slow_read" {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    match name.as_str() {
+        "describe_status" => {
+            let status = match broken {
+                Some("fidelity") => "degraded",
+                _ => "ready",
+            };
+            Ok(json!({
+                "content": [{"type": "text", "text": format!("status: {status}")}],
+                "structuredContent": {"status": status},
+                "status": status,
+            }))
+        }
+        "read_counter" => Ok(json!({
+            "content": [{"type": "text", "text": format!("count={}", calls)}],
+            "structuredContent": {"count": *calls}
+        })),
+        "slow_read" => Ok(json!({
+            "content": [{"type": "text", "text": "finally awake"}],
+            "structuredContent": {"ok": true}
+        })),
+        "shared_read" => Ok(json!({
+            "content": [{"type": "text", "text": "shared ok"}],
+            "structuredContent": {"ok": true}
+        })),
+        "flaky_read" => {
+            *flaky_calls += 1;
+            if *flaky_calls <= 2 {
+                let code = match broken {
+                    Some("unstable-errors") => -32000 - *flaky_calls as i64,
+                    _ => -32001,
+                };
+                // Retryable truthfully: it does succeed on the third call.
+                return Err((code, "flaky failure".into(), true));
+            }
+            Ok(json!({
+                "content": [{"type": "text", "text": "recovered"}],
+                "structuredContent": {"ok": true}
+            }))
+        }
+        "break_session" => {
+            *broken_state = true;
+            // Deliberately errors: the state-recovery probe requires an
+            // observed failure before recovery.
+            Err((-32002, "session forced into a broken state".into(), false))
+        }
+        "recover_session" => {
+            *broken_state = false;
+            Ok(json!({
+                "content": [{"type": "text", "text": "recovered"}],
+                "structuredContent": {"broken": false}
+            }))
+        }
+        "session_status" => {
+            if *broken_state {
+                return Err((-32003, "session is broken".into(), false));
+            }
+            Ok(json!({
+                "content": [{"type": "text", "text": "healthy"}],
+                "structuredContent": {"healthy": true}
+            }))
+        }
+        _ => Err((-32602, format!("unknown tool {name}"), false)),
+    }
+}

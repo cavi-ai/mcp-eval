@@ -2,7 +2,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
@@ -177,28 +177,49 @@ impl McpClient {
         let id = self.next_id;
         self.next_id += 1;
         self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
-        let raw = self
-            .lines
-            .recv_timeout(RESPONSE_TIMEOUT)
-            .map_err(|error| match error {
-                mpsc::RecvTimeoutError::Timeout => anyhow::anyhow!("MCP response timed out"),
-                mpsc::RecvTimeoutError::Disconnected => anyhow::anyhow!("MCP server closed stdout"),
-            })??;
-        let response: Value =
-            serde_json::from_slice(&raw).context("MCP response is not valid JSON")?;
-        let object = response
-            .as_object()
-            .context("MCP response is not an object")?;
-        if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
-            bail!("MCP response has an invalid protocol version");
+        let deadline = Instant::now() + RESPONSE_TIMEOUT;
+        loop {
+            let raw = match self
+                .lines
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            {
+                Ok(raw) => raw,
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    bail!("MCP response timed out")
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    bail!("MCP server closed stdout")
+                }
+            }?;
+            // Real servers print human-readable banners on stdout and
+            // interleave unsolicited notifications. Neither is a response:
+            // skip unparseable lines and id-less frames rather than failing
+            // the session over cosmetics.
+            let response: Value = match serde_json::from_slice(&raw) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let Some(object) = response.as_object() else {
+                continue;
+            };
+            if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+                continue;
+            }
+            if !object.contains_key("id") {
+                continue;
+            }
+            // The client is strictly sequential, so a frame that carries an
+            // id other than the outstanding request's is a server defect —
+            // stale, duplicated, or misrouted. Fail fast with a content-free
+            // error instead of waiting out the timeout.
+            if object.get("id").and_then(Value::as_u64) != Some(id) {
+                bail!("MCP response id does not match request");
+            }
+            if object.contains_key("result") == object.contains_key("error") {
+                bail!("MCP response must contain exactly one result or error");
+            }
+            return Ok(response);
         }
-        if object.get("id").and_then(Value::as_u64) != Some(id) {
-            bail!("MCP response id does not match request");
-        }
-        if object.contains_key("result") == object.contains_key("error") {
-            bail!("MCP response must contain exactly one result or error");
-        }
-        Ok(response)
     }
 
     fn write(&mut self, value: &Value) -> anyhow::Result<()> {

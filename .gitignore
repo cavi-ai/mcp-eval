@@ -5,6 +5,9 @@
 .worktrees/
 .DS_Store
 data/
+# The readiness corpus is a deliberate, share-safe check-in (no payloads,
+# only server labels and scores). It must ship with the repo.
+!data/readiness-corpus.json
 .quarantine/
 .remember/
 .superpowers/

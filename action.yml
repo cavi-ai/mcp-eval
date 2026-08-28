@@ -1,0 +1,75 @@
+name: 'mcp-eval probe'
+description: >
+  Run the mcp-eval deterministic probe battery against an MCP server and fail
+  the workflow when any selected case fails. Installs mcpeval from crates.io
+  (or uses a preinstalled binary) and emits the versioned JSON report.
+description: 'Deterministic MCP probe battery for CI gating'
+author: 'CAVI'
+
+inputs:
+  server:
+    description: 'Server label recorded in reports and journals.'
+    required: true
+  manifest:
+    description: 'Path to mcp-eval.manifest.json.'
+    required: false
+    default: 'mcp-eval.manifest.json'
+  command:
+    description: >
+      stdio server command to probe, e.g. "python3 server.py --flag". Leave
+      empty when `url` is set.
+    required: false
+    default: ''
+  url:
+    description: 'Streamable HTTP endpoint to probe instead of a stdio command.'
+    required: false
+    default: ''
+  allow-mutation:
+    description: "Authorize manifest-declared sandbox mutations ('true'/'false')."
+    required: false
+    default: 'false'
+  allow-remote-http:
+    description: "Allow a remote HTTPS endpoint ('true'/'false')."
+    required: false
+    default: 'false'
+  version:
+    description: >
+      mcpeval version to install (default: latest published). Ignored when a
+      preinstalled `mcpeval` is already on PATH.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Install mcpeval
+      shell: bash
+      run: |
+        if command -v mcpeval >/dev/null 2>&1; then
+          echo "using preinstalled $(mcpeval --version)"
+        elif [ -n "${{ inputs.version }}" ]; then
+          cargo install mcpeval --locked --version "${{ inputs.version }}"
+        else
+          cargo install mcpeval --locked
+        fi
+    - name: Run probe battery
+      shell: bash
+      run: |
+        ARGS=(probe --server "${{ inputs.server }}" --manifest "${{ inputs.manifest }}" --format json)
+        if [ -n "${{ inputs.url }}" ]; then
+          ARGS+=(--url "${{ inputs.url }}")
+        else
+          ARGS+=(--)
+        fi
+        if [ "${{ inputs.allow-mutation }}" = "true" ]; then
+          ARGS+=(--allow-mutation)
+        fi
+        if [ "${{ inputs.allow-remote-http }}" = "true" ]; then
+          ARGS+=(--allow-remote-http)
+        fi
+        if [ -n "${{ inputs.command }}" ]; then
+          # shellcheck disable=SC2086
+          mcpeval "${ARGS[@]}" ${{ inputs.command }}
+        else
+          mcpeval "${ARGS[@]}"
+        fi

@@ -173,6 +173,13 @@ pub enum Command {
         #[arg(long, default_value_t = 10)]
         last: usize,
     },
+    /// Serve findings and trends to agents over a loopback Streamable HTTP
+    /// MCP endpoint (tools: list_findings, get_finding, get_readiness_trends).
+    Serve {
+        /// Loopback socket address to accept MCP requests on.
+        #[arg(long)]
+        listen: String,
+    },
     /// Verify one finding with one manifest case and advance its lifecycle.
     Verify {
         /// Stable ID emitted by `mcpeval findings`.

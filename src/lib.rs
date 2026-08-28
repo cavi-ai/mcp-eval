@@ -18,6 +18,7 @@ pub mod promote;
 pub mod record;
 pub mod report;
 pub mod score;
+pub mod serve;
 pub mod shape;
 pub mod shim;
 pub mod store;

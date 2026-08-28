@@ -65,6 +65,14 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   can query their own findings natively; serves only share-safe content.
 - Composite GitHub Action (`action.yml`) and a CI gating guide
   ([docs/ci.md](docs/ci.md)) covering baseline diffs and readiness badges.
+- `mcpeval-demo`, a bundled MCP stdio server with a clean personality and
+  `--broken <aspect>` personalities (`schema`, `fidelity`, `unstable-errors`,
+  `bloated`, `duplicate-page`, `stalled-cursor`, `slow`) that reproduce each
+  probe's fixed failure reason for zero-infrastructure onboarding.
+- Stdio client interoperability hardening from dogfooding against the official
+  reference server: stdout banners and unsolicited notifications no longer
+  abort a session, while mismatched response ids still fail fast; a server
+  that never answers times out instead of echoing prose.
 
 ### Security
 

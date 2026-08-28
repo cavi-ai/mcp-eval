@@ -37,15 +37,35 @@ The binary is `target/release/mcpeval` (`mcpeval.exe` on Windows). npm and
 Homebrew distribution land after the first tagged release; see
 [RELEASE.md](RELEASE.md) and the [changelog](CHANGELOG.md).
 
+## Quickstart
+
+No server of your own yet? `mcpeval-demo` is a bundled MCP server with a
+clean personality and a set of `--broken <aspect>` personalities that
+reproduce specific defects (incoherent schema, unfaithful results, unstable
+error codes, bloated catalogs, broken pagination, slow calls):
+
+```sh
+cargo build --release
+./target/release/mcpeval init --server demo --confirm-read-only \
+  --output demo.manifest.json -- ./target/release/mcpeval-demo
+./target/release/mcpeval probe --server demo \
+  --manifest demo.manifest.json -- ./target/release/mcpeval-demo
+# readiness 100/100
+./target/release/mcpeval probe --server demo --manifest demo.manifest.json \
+  -- ./target/release/mcpeval-demo --broken stalled-cursor
+# pagination-stalled-cursor
+```
+
 ## Track 1: benchmark battery
 
 Scaffold a starter manifest from a live server, then refine it. `init`
 introspects the catalog, derives generous discovery and token budgets, and
 smoke-tests each candidate tool with a naive `{}` call before declaring it —
-so the generated manifest passes on its first run:
+so the generated manifest passes on its first run. `--confirm-read-only`
+attests that every empty-argument schema check targets read-only tools:
 
 ```sh
-mcpeval init --server demo -- your-mcp-server --flags
+mcpeval init --server demo --confirm-read-only -- your-mcp-server --flags
 # wrote mcp-eval.manifest.json (7 tools, 5 schema-guessability cases)
 mcpeval probe --server demo -- your-mcp-server --flags
 ```

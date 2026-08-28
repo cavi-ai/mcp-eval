@@ -14,6 +14,11 @@ for line in sys.stdin:
         continue
     if mode == "early-exit":
         sys.exit(23)
+    if mode == "banner":
+        # Prose on stdout before the real answer: the interop reality of
+        # real servers (startup banners, progress chatter).
+        sys.stdout.write("Starting demo server...\n")
+        sys.stdout.flush()
     if mode == "malformed":
         sys.stdout.write("not-json\n")
         sys.stdout.flush()

@@ -2,7 +2,12 @@ mod cli;
 
 use clap::Parser;
 
-fn render_probe_text(server: &str, report: &mcpeval::probe::ProbeReport) {
+fn render_probe_text(
+    server: &str,
+    report: &mcpeval::probe::ProbeReport,
+    brief: bool,
+    corpus: Option<&mcpeval::corpus::Corpus>,
+) {
     for case in &report.cases {
         let probe = case.probe.as_str();
         let mut measurements = String::new();
@@ -27,13 +32,17 @@ fn render_probe_text(server: &str, report: &mcpeval::probe::ProbeReport) {
                 case.id, case.attempts
             );
         } else {
+            let reason = case.reason.expect("failed case has a reason");
             println!(
                 "{} {probe} fail attempts={} first_failure={} reason={}{measurements}",
                 case.id,
                 case.attempts,
                 case.first_failure.expect("failed case has a failure index"),
-                case.reason.expect("failed case has a reason").as_str()
+                reason.as_str()
             );
+            if !brief {
+                println!("  hint: {}", mcpeval::remediation::hint(reason));
+            }
         }
     }
     let readiness = mcpeval::score::readiness(report);
@@ -43,7 +52,15 @@ fn render_probe_text(server: &str, report: &mcpeval::probe::ProbeReport) {
         .map(|category| format!("{}={}/{}", category.name, category.passed, category.total))
         .collect::<Vec<_>>()
         .join(" ");
-    println!("{server} readiness {}/100 {categories}", readiness.overall);
+    match corpus {
+        Some(corpus) => println!(
+            "{server} readiness {}/100 (beats {}% of observed servers; corpus median {}) {categories}",
+            readiness.overall,
+            corpus.percentile(readiness.overall),
+            corpus.median()
+        ),
+        None => println!("{server} readiness {}/100 {categories}", readiness.overall),
+    }
 }
 
 fn main() -> anyhow::Result<()> {
@@ -64,6 +81,7 @@ fn main() -> anyhow::Result<()> {
             manifest,
             probe,
             format,
+            brief,
             allow_mutation,
             url,
             allow_remote_http,
@@ -110,6 +128,7 @@ fn main() -> anyhow::Result<()> {
                     eprintln!("trend recording failed: {error}");
                 }
             }
+            let corpus = mcpeval::corpus::resolve(None, store.root());
             match format {
                 cli::ProbeFormat::Json => {
                     println!(
@@ -120,10 +139,12 @@ fn main() -> anyhow::Result<()> {
                 cli::ProbeFormat::Markdown => {
                     print!(
                         "{}",
-                        mcpeval::report::render_probe_markdown(&server, &report)
+                        mcpeval::report::render_probe_markdown(&server, &report, corpus.as_ref())
                     );
                 }
-                cli::ProbeFormat::Text => render_probe_text(&server, &report),
+                cli::ProbeFormat::Text => {
+                    render_probe_text(&server, &report, brief, corpus.as_ref())
+                }
             }
             if !report.passed() {
                 std::process::exit(1);
@@ -161,6 +182,36 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Schema => {
             println!("{}", include_str!("../docs/mcp-eval.manifest.schema.json"));
+            Ok(())
+        }
+        cli::Command::Explain { reason } => {
+            match reason {
+                None => {
+                    println!("fixed failure reasons (mcpeval explain <reason>):");
+                    for candidate in mcpeval::probe::FailureReason::ALL {
+                        println!("  {}", candidate.as_str());
+                    }
+                }
+                Some(requested) => {
+                    // Also accept a bare case-level shorthand: the reason as
+                    // it appears in reports, with or without the prefix.
+                    let normalized = requested.trim().to_ascii_lowercase();
+                    let candidate = mcpeval::probe::FailureReason::ALL
+                        .iter()
+                        .find(|candidate| candidate.as_str() == normalized);
+                    match candidate {
+                        Some(candidate) => {
+                            println!("{}", mcpeval::remediation::hint(*candidate));
+                        }
+                        None => {
+                            eprintln!(
+                                "unknown reason {requested}; run mcpeval explain for the list"
+                            );
+                            std::process::exit(2);
+                        }
+                    }
+                }
+            }
             Ok(())
         }
         cli::Command::Compare {

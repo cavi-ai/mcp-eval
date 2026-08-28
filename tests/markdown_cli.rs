@@ -41,7 +41,8 @@ fn markdown_report_is_pull_request_ready_and_scored() {
     );
     let body = String::from_utf8(output.stdout).unwrap();
     assert!(body.contains("## mcp-eval report — fixture"));
-    assert!(body.contains("**Readiness: 100/100**"));
+    assert!(body.contains("**Readiness: 100/100 —"), "{body}");
+    assert!(body.contains("corpus median 100"), "{body}");
     assert!(body.contains("https://img.shields.io/badge/mcpeval-100%2F100-brightgreen"));
     assert!(body.contains("| literal-status | instruction-fidelity | pass | 1 |"));
     assert!(body.contains("| discovery | 2/2 |"));

@@ -1,4 +1,5 @@
 pub mod compare;
+pub mod corpus;
 pub mod correlate;
 pub mod doctor;
 pub mod errtemplate;
@@ -16,6 +17,7 @@ pub mod privacy;
 pub mod probe;
 pub mod promote;
 pub mod record;
+pub mod remediation;
 pub mod report;
 pub mod score;
 pub mod serve;

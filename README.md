@@ -121,7 +121,18 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
 
 The command exits zero only when every selected case passes. Summaries contain
 case IDs, probe kinds, attempt counts, first-failure positions, and fixed
-reason labels — never actual arguments, responses, or errors.
+reason labels — never actual arguments, responses, or errors. Every failing
+case prints a **remediation hint**: the concrete server-side fix for that
+reason. Hints are suppressed by `--brief` for scripts, rendered in the
+markdown report under *Remediation*, and always available standalone:
+
+```sh
+mcpeval explain pagination-stalled-cursor
+# the cursor sequence never terminated within `max_pages`; emit no
+# `nextCursor` on the final page and never re-serve a page a cursor
+# already returned
+mcpeval explain   # list every fixed reason
+```
 
 `--format json` emits a versioned, deterministic document
 (`mcpeval.probe-report/v1`): server label, per-case verdicts, fixed reason
@@ -161,6 +172,13 @@ state-recovery, latency-budget, payload-bounds), contract
 manifests are never penalized for probes they did not declare. The same score
 drives the badge URL embedded in the markdown report; no payload or server
 detail ever leaves the report.
+
+The score is **calibrated**: mcp-eval ships a corpus of readiness
+observations from popular public MCP servers (`data/readiness-corpus.json`,
+refreshed by `scripts/corpus/collect.sh`), and every report places your score
+in that distribution — *"beats 40% of observed servers; corpus median 100"*.
+The shipped corpus overrides cleanly: point a personal one at
+`<MCPEVAL_HOME>/corpus.json`.
 
 Every full-battery run appends a content-free score record to
 `<MCPEVAL_HOME>/store/probes/history.jsonl`; `mcpeval trends` renders the

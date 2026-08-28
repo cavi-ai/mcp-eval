@@ -196,15 +196,33 @@ fn render_markdown(findings: &[Finding]) -> anyhow::Result<String> {
 /// Pull-request-ready rendering of a probe report: verdict table, category
 /// breakdown, readiness score, and a static badge URL. Contains only the
 /// share-safe fields already present in the JSON report.
-pub fn render_probe_markdown(server: &str, report: &crate::probe::ProbeReport) -> String {
+pub fn render_probe_markdown(
+    server: &str,
+    report: &crate::probe::ProbeReport,
+    corpus: Option<&crate::corpus::Corpus>,
+) -> String {
     let readiness = crate::score::readiness(report);
     let mut out = String::new();
     out.push_str(&format!("## mcp-eval report — {server}\n\n"));
-    out.push_str(&format!(
-        "**Readiness: {}/100** ![mcpeval]({})\n\n",
-        readiness.overall,
-        crate::score::badge_url(readiness.overall)
-    ));
+    let calibration = corpus.map(|corpus| {
+        format!(
+            " — beats {}% of observed servers (corpus median {})",
+            corpus.percentile(readiness.overall),
+            corpus.median()
+        )
+    });
+    match calibration {
+        Some(context) => out.push_str(&format!(
+            "**Readiness: {}/100{context}** ![mcpeval]({})\n\n",
+            readiness.overall,
+            crate::score::badge_url(readiness.overall)
+        )),
+        None => out.push_str(&format!(
+            "**Readiness: {}/100** ![mcpeval]({})\n\n",
+            readiness.overall,
+            crate::score::badge_url(readiness.overall)
+        )),
+    };
     if !readiness.categories.is_empty() {
         out.push_str("| Category | Passed |\n| --- | --- |\n");
         for category in &readiness.categories {
@@ -241,6 +259,25 @@ pub fn render_probe_markdown(server: &str, report: &crate::probe::ProbeReport) -
             reason
         )
         .ok();
+    }
+    let failures: Vec<(&str, crate::probe::FailureReason)> = report
+        .cases
+        .iter()
+        .filter_map(|case| case.reason.map(|reason| (case.id.as_str(), reason)))
+        .collect();
+    if !failures.is_empty() {
+        out.push_str("\n### Remediation\n\n");
+        for (case_id, reason) in failures {
+            writeln!(
+                out,
+                "- **`{}` (`{}`):** {}",
+                case_id,
+                reason.as_str(),
+                crate::remediation::hint(reason)
+            )
+            .ok();
+        }
+        out.push('\n');
     }
     let mut measurements = String::new();
     for case in &report.cases {

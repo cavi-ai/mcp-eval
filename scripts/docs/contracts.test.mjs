@@ -143,6 +143,11 @@ test("official docs cover recovery and authorization contracts", async () => {
     "readiness",
     "mcpeval.probe-report/v1",
     "cavi-ai/mcp-eval@main",
+    "mcpeval explain",
+    "Remediation",
+    "--brief",
+    "corpus median",
+    "scripts/corpus/collect.sh",
   ]) {
     assert.ok(text.includes(phrase), phrase);
   }

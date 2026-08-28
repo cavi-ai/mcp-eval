@@ -146,6 +146,36 @@ pub enum FailureReason {
 }
 
 impl FailureReason {
+    /// Every reason, in stable order, for `mcpeval explain` with no
+    /// argument.
+    pub const ALL: &[FailureReason] = &[
+        Self::UnexpectedOutcome,
+        Self::MissingField,
+        Self::ValueMismatch,
+        Self::ErrorCodeMismatch,
+        Self::DiscoveryLimitExceeded,
+        Self::TokenBudgetExceeded,
+        Self::InvalidSchema,
+        Self::MissingRequiredArgument,
+        Self::ExpectedError,
+        Self::UnstableErrorCode,
+        Self::RetryabilityMismatch,
+        Self::RetryDidNotRecover,
+        Self::FailureNotObserved,
+        Self::RecoveryFailed,
+        Self::ValidationFailed,
+        Self::ContendedClientFailed,
+        Self::LatencyBudgetExceeded,
+        Self::PaginationInvalidEntry,
+        Self::PaginationDuplicateTool,
+        Self::PaginationStalledCursor,
+        Self::PayloadUnhandled,
+        Self::SurfaceInvalidEnvelope,
+        Self::SurfaceStalledCursor,
+        Self::OutputSchemaDeclaredButMissing,
+        Self::OutputSchemaFieldMissing,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::UnexpectedOutcome => "unexpected-outcome",

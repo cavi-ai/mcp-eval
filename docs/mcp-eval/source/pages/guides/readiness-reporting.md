@@ -8,7 +8,22 @@ The default format prints one line per case — verdict, attempts, first-failure
 
 ```text
 literal-status instruction-fidelity pass attempts=1
-demo readiness 87/100 discovery=2/2 reliability=1/1 contract=1/1
+demo readiness 87/100 (beats 40% of observed servers; corpus median 100) discovery=2/2 reliability=1/1 contract=1/1
+```
+
+Failing cases print a remediation hint: the concrete server-side fix for that fixed reason.
+
+```text
+p pagination fail attempts=3 first_failure=3 reason=pagination-stalled-cursor
+  hint: the cursor sequence never terminated within `max_pages`; emit no
+  `nextCursor` on the final page and never re-serve a page a cursor already returned
+```
+
+Use `--brief` to suppress hints in scripts. The same hints appear in the markdown report under *Remediation*, and every reason is documented standalone:
+
+```sh
+mcpeval explain pagination-stalled-cursor
+mcpeval explain        # list every fixed reason
 ```
 
 ## JSON
@@ -43,6 +58,16 @@ The score (0–100) is a deterministic composite over four weighted categories:
 | concurrency | 0.10 | `contention` |
 
 Each category contributes the fraction of its cases that passed, weighted as above. Categories with no cases in the manifest are excluded from both numerator and denominator, so a partial manifest is never penalized for probes it did not declare. The same report always produces the same score.
+
+## Calibration
+
+A score without a referent is just a number. mcp-eval ships a corpus of readiness observations from popular public MCP servers (`data/readiness-corpus.json`, refreshed by `scripts/corpus/collect.sh`), and every report places the score in that distribution:
+
+```text
+Readiness: 75/100 — beats 35% of observed servers (corpus median 100)
+```
+
+A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; when no corpus is available, reports simply omit the percentile line. Calibration is deterministic: the same score against the same corpus always produces the same percentile (midpoint method, so the median observation sits at 50).
 
 ## Trends
 

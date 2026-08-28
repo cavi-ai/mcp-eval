@@ -31,9 +31,22 @@ release; see the [changelog](CHANGELOG.md).
 
 ## Track 1: benchmark battery
 
-Write a strict `mcp-eval.manifest.json` beside the server project (unknown
-fields, unsupported versions, and unsafe access/sandbox combinations are
-rejected before the server process starts):
+Scaffold a starter manifest from a live server, then refine it. `init`
+introspects the catalog, derives generous discovery and token budgets, and
+smoke-tests each candidate tool with a naive `{}` call before declaring it —
+so the generated manifest passes on its first run:
+
+```sh
+mcpeval init --server demo -- your-mcp-server --flags
+# wrote mcp-eval.manifest.json (7 tools, 5 schema-guessability cases)
+mcpeval probe --server demo -- your-mcp-server --flags
+```
+
+Manifests are strict: unknown fields, unsupported versions, and unsafe
+access/sandbox combinations are rejected before the server process starts.
+For editor support, validate against the JSON Schema (print it with
+`mcpeval schema`, or reference [docs/mcp-eval.manifest.schema.json](docs/mcp-eval.manifest.schema.json)
+via `"$schema"`):
 
 ```json
 {
@@ -92,6 +105,38 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
   --format json -- your-mcp-server --flags
 ```
 
+`--format json` emits a versioned, deterministic document
+(`mcpeval.probe-report/v1`): server label, per-case verdicts, fixed reason
+labels, measurement numbers, and the readiness score — no timestamps,
+sessions, or payloads, so it is safe to commit as a baseline or attach to CI
+artifacts.
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json \
+  --format json -- your-mcp-server --flags
+```
+
+`--format markdown` renders the same verdicts as a pull-request-ready report
+with a readiness score and badge:
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json \
+  --format markdown -- your-mcp-server --flags
+```
+
+The **readiness score** (0–100) is a deterministic composite over four
+weighted categories — discovery (discovery-cost, token-cost, pagination),
+reliability (degradation-over-n, error-honesty, state-recovery,
+latency-budget), contract (schema-guessability, instruction-fidelity), and
+concurrency (contention). Only categories present in the manifest are scored,
+so partial manifests are never penalized for probes they did not declare.
+The same score drives the badge URL embedded in the markdown report; no
+payload or server detail ever leaves the report.
+
+Every full-battery run appends a content-free score record to
+`<MCPEVAL_HOME>/store/probes/history.jsonl`; `mcpeval trends` renders the
+per-server history with score deltas.
+
 The deterministic battery:
 
 | Probe | What it checks |
@@ -104,6 +149,27 @@ The deterministic battery:
 | `error-honesty` | Stable error codes, truthful retryability metadata, recovery within a declared bound |
 | `state-recovery` | An explicit failure → recovery → validation sequence, with both later calls succeeding |
 | `contention` | Two synchronized independent MCP clients both succeed against the same declared tool |
+| `latency-budget` | A read-only call stays within a declared `max_latency_ms` budget across N attempts; the slowest observed latency is reported |
+| `pagination` | `tools/list` cursor pagination completes within `max_pages` with unique, schema-valid entries on every page |
+
+## Comparing servers
+
+Run one manifest against several Streamable HTTP endpoints and diff the
+verdicts side by side — useful when selecting between vendor servers or
+checking a deployment against your local build. Comparison is informational:
+it never exits non-zero for probe failures, so it complements rather than
+replaces the `probe` gate.
+
+```sh
+mcpeval compare --server demo \
+  --endpoint staging=https://staging.example/mcp \
+  --endpoint vendor=https://vendor.example/mcp \
+  --format markdown
+```
+
+Comparison endpoints are loopback-only unless `--allow-remote-http` is
+passed, and remote endpoints require HTTPS. See [the CI guide](docs/ci.md)
+for gating recipes, including the composite GitHub Action.
 
 Mutation has two independent gates: the manifest must declare a named sandbox
 referenced by the case, and the operator must pass `--allow-mutation`. A
@@ -163,6 +229,29 @@ finding to `verifying`, the third consecutive green closes it, and any red
 resets the streak and reopens it. History is append-only and survives
 index/promotion rebuilds. Findings without an attached probe remain open and
 are capped at medium severity.
+
+Findings become actionable where work happens. `export-issues` writes one
+GitHub-issue-ready markdown file per open finding — evidence, severity,
+shape-level repro, and the exact `generate`/`verify` commands — so the loop
+can run through your issue tracker:
+
+```sh
+mcpeval export-issues --dir issues/
+```
+
+Agents can also consume the data natively: `serve` exposes findings and
+readiness trends as MCP tools over a loopback Streamable HTTP endpoint, so a
+coding agent can query its own friction without touching the store:
+
+```sh
+mcpeval serve --listen 127.0.0.1:8091
+```
+
+| Tool | Returns |
+| --- | --- |
+| `list_findings` | Sanitized finding rows (server, tool, state, severity, evidence counts), optionally filtered by lifecycle state |
+| `get_finding` | One finding by `finding-*` identifier, including its shape-level repro |
+| `get_readiness_trends` | Readiness-score history per server, oldest first |
 
 ## What is recorded
 

@@ -34,6 +34,37 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   model-independent estimator over each tool's `tools/list` entry.
 - `mcpeval probe --format json`: versioned, deterministic
   `mcpeval.probe-report/v1` report for CI artifacts and committed baselines.
+- `mcpeval init`: scaffolds a strict starter manifest from a live server's
+  `tools/list` catalog, deriving discovery/token budgets from measured sizes
+  and smoke-testing each candidate tool with a naive read-only call before
+  declaring it; refuses to overwrite an existing manifest without `--force`.
+- `mcpeval schema`: prints the embedded draft-2020-12 JSON Schema for
+  `mcp-eval.manifest.json` for editor validation.
+- Readiness score (0-100): deterministic, privacy-safe composite over four
+  weighted categories, included additively in `mcpeval.probe-report/v1` and
+  rendered by the text and markdown report formats. Partial manifests score
+  only on the categories they declare.
+- `mcpeval probe --format markdown`: pull-request-ready report with a
+  per-category breakdown, readiness score, and a static shields.io badge URL.
+- `latency-budget` probe: read-only calls against a declared millisecond
+  budget with the slowest observed latency reported and a fixed
+  `latency-budget-exceeded` failure reason.
+- `pagination` probe: cursor-driven `tools/list` traversal with entry
+  validation, duplicate-tool detection across pages, and a stalled-cursor
+  bound; servers that do not paginate pass trivially.
+- `mcpeval compare`: run one manifest against several Streamable HTTP
+  endpoints and render a side-by-side verdict and readiness grid in text,
+  markdown, or JSON; informational by design and never gates.
+- `mcpeval export-issues`: one GitHub-issue-ready markdown file per promoted
+  finding with severity labels, evidence, shape-level repro, and the
+  `generate`/`verify` next steps.
+- `mcpeval trends` and readiness-score history: full-battery probe runs append
+  content-free score records to `<MCPEVAL_HOME>/store/probes/history.jsonl`.
+- `mcpeval serve`: loopback-only Streamable HTTP MCP server exposing
+  `list_findings`, `get_finding`, and `get_readiness_trends` so coding agents
+  can query their own findings natively; serves only share-safe content.
+- Composite GitHub Action (`action.yml`) and a CI gating guide
+  ([docs/ci.md](docs/ci.md)) covering baseline diffs and readiness badges.
 
 ### Security
 

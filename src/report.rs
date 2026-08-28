@@ -13,7 +13,7 @@ pub enum ReportFormat {
 }
 
 #[derive(Debug, Serialize)]
-struct Finding {
+pub struct Finding {
     finding_id: String,
     state: String,
     probe_id: Option<String>,
@@ -65,7 +65,9 @@ fn open_index(root: &Path) -> anyhow::Result<Connection> {
     Ok(db)
 }
 
-fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {
+/// Sanitized finding rows for consumers that serve them programmatically
+/// (`mcpeval serve`); identical content to `findings --format json`.
+pub fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {
     let db = open_index(root)?;
     let mut statement = db.prepare(
         "SELECT i.finding_id,l.state,l.probe_id,l.consecutive_passes,

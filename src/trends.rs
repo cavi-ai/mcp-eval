@@ -15,14 +15,14 @@ use serde::{Deserialize, Serialize};
 use crate::probe::ProbeReport;
 use crate::score;
 
-#[derive(Debug, Serialize, Deserialize)]
-struct TrendPoint {
-    ts: String,
-    server: String,
-    passed: bool,
-    cases_total: u64,
-    cases_passed: u64,
-    score: u64,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrendPoint {
+    pub ts: String,
+    pub server: String,
+    pub passed: bool,
+    pub cases_total: u64,
+    pub cases_passed: u64,
+    pub score: u64,
 }
 
 pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result<()> {
@@ -52,6 +52,38 @@ pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result
 
 fn history_path(root: &Path) -> std::path::PathBuf {
     root.join("store").join("probes").join("history.jsonl")
+}
+
+/// Recent trend points for consumers that serve them programmatically
+/// (`mcpeval serve`); oldest first, at most `last` per server.
+pub fn load(root: &Path, last: usize) -> anyhow::Result<Vec<TrendPoint>> {
+    let path = history_path(root);
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    let body = std::fs::read_to_string(&path).context("reading trend history")?;
+    let mut points: Vec<TrendPoint> = body
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()
+        .context("trend history is corrupt")?;
+    points.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.server.cmp(&b.server)));
+    let mut servers: Vec<String> = Vec::new();
+    for point in &points {
+        if !servers.contains(&point.server) {
+            servers.push(point.server.clone());
+        }
+    }
+    let mut selected = Vec::new();
+    for server in servers {
+        let runs: Vec<&TrendPoint> = points
+            .iter()
+            .filter(|point| point.server == server)
+            .collect();
+        selected.extend(runs.iter().rev().take(last).map(|point| (*point).clone()));
+    }
+    Ok(selected)
 }
 
 /// Grouped-by-server recent history, oldest first within each group, with a

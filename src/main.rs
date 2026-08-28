@@ -219,6 +219,7 @@ fn main() -> anyhow::Result<()> {
             print!("{}", mcpeval::trends::render(store.root(), last)?);
             Ok(())
         }
+        cli::Command::Serve { listen } => mcpeval::serve::run(listen),
         cli::Command::Verify {
             finding,
             case,

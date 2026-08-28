@@ -22,12 +22,20 @@ credentials never persist. Only `<MCPEVAL_HOME>/store/` is share-safe.
 ## Install
 
 ```sh
+cargo install mcpeval --locked
+```
+
+Or grab a prebuilt binary with its SHA256 checksum from the
+[releases page](https://github.com/cavi-ai/mcp-eval/releases) (Linux x64/arm64,
+macOS x64/arm64, Windows x64). Building from a checkout works too:
+
+```sh
 cargo build --release
 ```
 
-The binary is `target/release/mcpeval` (`mcpeval.exe` on Windows). crates.io,
-prebuilt binaries, npm, and Homebrew distribution land with the first tagged
-release; see the [changelog](CHANGELOG.md).
+The binary is `target/release/mcpeval` (`mcpeval.exe` on Windows). npm and
+Homebrew distribution land after the first tagged release; see
+[RELEASE.md](RELEASE.md) and the [changelog](CHANGELOG.md).
 
 ## Track 1: benchmark battery
 

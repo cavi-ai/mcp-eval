@@ -69,6 +69,17 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `--broken <aspect>` personalities (`schema`, `fidelity`, `unstable-errors`,
   `bloated`, `duplicate-page`, `stalled-cursor`, `slow`) that reproduce each
   probe's fixed failure reason for zero-infrastructure onboarding.
+- `payload-bounds` probe: injects one exact-size argument to verify the server
+  never crashes or hangs under load; a clean structured rejection is honest
+  bounded behavior unless `expect_handled` asserts the size must be handled.
+- `surface-listing` probe: envelope-shape and cursor-bound checks over declared
+  `resources`/`prompts` surfaces; undeclared surfaces pass trivially.
+- `output-schema` probe: tools declaring `outputSchema` must return
+  `structuredContent` covering the schema's required fields.
+- Demo aspects `surface` and `output-schema` exercising the new probes, and a
+  `report_weather` tool with structured output.
+- Readiness categories rebalanced for the deeper battery: discovery 0.25,
+  reliability 0.35, contract 0.30, concurrency 0.10.
 - Stdio client interoperability hardening from dogfooding against the official
   reference server: stdout banners and unsolicited notifications no longer
   abort a session, while mismatched response ids still fail fast; a server

@@ -153,13 +153,14 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
 ```
 
 The **readiness score** (0–100) is a deterministic composite over four
-weighted categories — discovery (discovery-cost, token-cost, pagination),
-reliability (degradation-over-n, error-honesty, state-recovery,
-latency-budget), contract (schema-guessability, instruction-fidelity), and
-concurrency (contention). Only categories present in the manifest are scored,
-so partial manifests are never penalized for probes they did not declare.
-The same score drives the badge URL embedded in the markdown report; no
-payload or server detail ever leaves the report.
+weighted categories — discovery (discovery-cost, token-cost, pagination,
+surface-listing), reliability (degradation-over-n, error-honesty,
+state-recovery, latency-budget, payload-bounds), contract
+(schema-guessability, instruction-fidelity, output-schema), and concurrency
+(contention). Only categories present in the manifest are scored, so partial
+manifests are never penalized for probes they did not declare. The same score
+drives the badge URL embedded in the markdown report; no payload or server
+detail ever leaves the report.
 
 Every full-battery run appends a content-free score record to
 `<MCPEVAL_HOME>/store/probes/history.jsonl`; `mcpeval trends` renders the
@@ -179,6 +180,9 @@ The deterministic battery:
 | `contention` | Two synchronized independent MCP clients both succeed against the same declared tool |
 | `latency-budget` | A read-only call stays within a declared `max_latency_ms` budget across N attempts; the slowest observed latency is reported |
 | `pagination` | `tools/list` cursor pagination completes within `max_pages` with unique, schema-valid entries on every page |
+| `payload-bounds` | A declared-oversize argument never crashes or hangs the server; `expect_handled` decides whether a clean rejection also counts as failure |
+| `surface-listing` | Declared `resources`/`prompts` surfaces return well-formed, cursor-bounded listings; undeclared surfaces pass trivially |
+| `output-schema` | A tool that declares `outputSchema` returns `structuredContent` covering the schema's required fields |
 
 ## Comparing servers
 

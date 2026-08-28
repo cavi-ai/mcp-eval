@@ -16,9 +16,14 @@ pub struct HttpMcpClient {
     endpoint: String,
     session_id: Option<String>,
     next_id: u64,
+    /// The server's advertised capabilities from `initialize`.
+    capabilities: Option<Value>,
 }
 
 impl HttpMcpClient {
+    pub fn capabilities(&self) -> Option<Value> {
+        self.capabilities.clone()
+    }
     pub fn connect(endpoint: &str, allow_remote: bool) -> anyhow::Result<Self> {
         let endpoint = validate_endpoint(endpoint, allow_remote)?;
         Ok(Self {
@@ -31,11 +36,12 @@ impl HttpMcpClient {
             endpoint,
             session_id: None,
             next_id: 1,
+            capabilities: None,
         })
     }
 
     pub fn initialize(&mut self) -> anyhow::Result<()> {
-        self.request(
+        let response = self.request(
             "initialize",
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
@@ -43,6 +49,10 @@ impl HttpMcpClient {
                 "clientInfo": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")}
             }),
         )?;
+        self.capabilities = response
+            .get("result")
+            .and_then(|result| result.get("capabilities"))
+            .cloned();
         self.notify("notifications/initialized", json!({}))
     }
 
@@ -84,6 +94,10 @@ impl HttpMcpClient {
                     name: name.to_owned(),
                     input_schema,
                     entry_bytes: serde_json::to_vec(tool)?.len(),
+                    output_schema: tool
+                        .get("outputSchema")
+                        .filter(|schema| schema.is_object())
+                        .cloned(),
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;

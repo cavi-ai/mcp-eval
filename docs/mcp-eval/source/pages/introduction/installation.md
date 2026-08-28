@@ -1,13 +1,18 @@
 # Installation
 
-MCP Eval {{PRODUCT_VERSION}} is the Cargo package `mcpeval` and installs the `mcpeval` binary. Build the checked-out release source with the stable Rust toolchain declared by the repository:
+MCP Eval {{PRODUCT_VERSION}} is the Cargo package `mcpeval` and installs the `mcpeval` (and `mcpeval-demo`) binaries. Install from crates.io, or download a checksummed prebuilt binary from the release page:
+
+```sh
+cargo install mcpeval --locked
+mcpeval --version
+```
+
+The version command must print `mcpeval {{PRODUCT_VERSION}}`. Building from a checked-out release source works too:
 
 ```sh
 cargo build --release
 ./target/release/mcpeval --version
 ```
-
-The version command must print `mcpeval {{PRODUCT_VERSION}}`.
 
 Set `MCPEVAL_HOME` when you want a capture root other than the default:
 

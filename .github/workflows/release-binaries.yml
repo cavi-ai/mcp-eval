@@ -41,7 +41,7 @@ jobs:
 
   binaries:
     name: build ${{ matrix.target }}
-    needs: gates
+    needs: gate
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false

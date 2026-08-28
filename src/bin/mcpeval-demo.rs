@@ -68,7 +68,11 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
         let response = match method {
             "initialize" => Ok(json!({
                 "protocolVersion": "2025-06-18",
-                "capabilities": {"tools": {}},
+                "capabilities": {
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {}
+                },
                 "serverInfo": {"name": "mcpeval-demo", "version": env!("CARGO_PKG_VERSION")}
             })),
             "tools/list" => tools_page(&params, broken, &mut calls),
@@ -79,6 +83,26 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                 &mut flaky_calls,
                 &mut broken_state,
             ),
+            "resources/list" => {
+                if broken == Some("surface") {
+                    Ok(json!({"unexpected": true}))
+                } else {
+                    Ok(json!({"resources": [
+                        {"uri": "demo://status", "name": "status"}
+                    ]}))
+                }
+            }
+            "prompts/list" => {
+                if broken == Some("surface") {
+                    // A declared surface that never answers: the probe
+                    // treats a transport failure as an invalid envelope.
+                    Err((-32005, "prompts listing unavailable".into(), false))
+                } else {
+                    Ok(json!({"prompts": [
+                        {"name": "welcome", "description": "Greeting prompt"}
+                    ]}))
+                }
+            }
             _ => Ok(json!({})),
         };
         match response {
@@ -160,7 +184,29 @@ fn catalog(broken: Option<&str>) -> Vec<Value> {
             "Report session health; false while broken. Read-only.",
             json!({}),
         ),
+        tool_entry(
+            "report_weather",
+            "Return a structured weather reading. Read-only.",
+            json!({"city": {"type": "string", "description": "City name"}}),
+        ),
     ];
+    if broken == Some("output-schema") {
+        // report_weather declares an outputSchema but responds without
+        // structuredContent: exactly the contract break the probe checks.
+        if let Some(entry) = entries
+            .iter_mut()
+            .find(|entry| entry["name"] == "report_weather")
+        {
+            entry["outputSchema"] = json!({
+                "type": "object",
+                "properties": {
+                    "temperature": {"type": "number"},
+                    "conditions": {"type": "string"}
+                },
+                "required": ["temperature", "conditions"]
+            });
+        }
+    }
     if broken == Some("schema") {
         // Declares a required field the naive {} call cannot supply, and
         // never lists the property: incoherent schema.
@@ -232,6 +278,7 @@ fn call_tool(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
+    let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
     *calls += 1;
     if name == "slow_read" {
         std::thread::sleep(Duration::from_millis(200));
@@ -296,6 +343,23 @@ fn call_tool(
                 "content": [{"type": "text", "text": "healthy"}],
                 "structuredContent": {"healthy": true}
             }))
+        }
+        "report_weather" => {
+            let city = arguments
+                .get("city")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            if broken == Some("output-schema") {
+                // Declares outputSchema but omits structuredContent.
+                Ok(json!({
+                    "content": [{"type": "text", "text": format!("weather for {city}")}]
+                }))
+            } else {
+                Ok(json!({
+                    "content": [{"type": "text", "text": format!("weather for {city}")}],
+                    "structuredContent": {"temperature": 21.0, "conditions": "clear"}
+                }))
+            }
         }
         _ => Err((-32602, format!("unknown tool {name}"), false)),
     }

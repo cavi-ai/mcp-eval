@@ -35,11 +35,12 @@ pub struct ReadinessScore {
 const WEIGHTS: &[(&str, f64, &[ProbeKind])] = &[
     (
         "discovery",
-        0.30,
+        0.25,
         &[
             ProbeKind::DiscoveryCost,
             ProbeKind::TokenCost,
             ProbeKind::Pagination,
+            ProbeKind::SurfaceListing,
         ],
     ),
     (
@@ -50,14 +51,16 @@ const WEIGHTS: &[(&str, f64, &[ProbeKind])] = &[
             ProbeKind::ErrorHonesty,
             ProbeKind::StateRecovery,
             ProbeKind::LatencyBudget,
+            ProbeKind::PayloadBounds,
         ],
     ),
     (
         "contract",
-        0.25,
+        0.30,
         &[
             ProbeKind::SchemaGuessability,
             ProbeKind::InstructionFidelity,
+            ProbeKind::OutputSchema,
         ],
     ),
     ("concurrency", 0.10, &[ProbeKind::Contention]),

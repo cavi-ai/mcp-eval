@@ -19,6 +19,9 @@ pub enum ProbeSelection {
     InstructionFidelity,
     LatencyBudget,
     Pagination,
+    PayloadBounds,
+    SurfaceListing,
+    OutputSchema,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]

@@ -137,6 +137,38 @@ pub enum ProbeCase {
         access: Access,
         max_pages: u64,
     },
+    #[serde(rename = "payload-bounds")]
+    PayloadBounds {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        /// Base argument object; the probe injects one oversized string
+        /// field into a deep copy of it.
+        arguments: Value,
+        /// Name of the field receiving the oversized string.
+        field: String,
+        /// Exact encoded size of the injected string in bytes.
+        size_bytes: u64,
+        /// When true, a clean JSON-RPC error is a failure: the operator
+        /// asserts the tool must handle this payload size, not merely
+        /// reject it politely.
+        expect_handled: bool,
+    },
+    #[serde(rename = "surface-listing")]
+    SurfaceListing {
+        id: String,
+        access: Access,
+        max_pages: u64,
+    },
+    #[serde(rename = "output-schema")]
+    OutputSchema {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        arguments: Value,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -151,6 +183,9 @@ pub enum ProbeKind {
     InstructionFidelity,
     LatencyBudget,
     Pagination,
+    PayloadBounds,
+    SurfaceListing,
+    OutputSchema,
 }
 
 impl ProbeKind {
@@ -166,6 +201,9 @@ impl ProbeKind {
             Self::InstructionFidelity => "instruction-fidelity",
             Self::LatencyBudget => "latency-budget",
             Self::Pagination => "pagination",
+            Self::PayloadBounds => "payload-bounds",
+            Self::SurfaceListing => "surface-listing",
+            Self::OutputSchema => "output-schema",
         }
     }
 }
@@ -182,20 +220,28 @@ impl ProbeCase {
             | Self::DegradationOverN { id, .. }
             | Self::InstructionFidelity { id, .. }
             | Self::LatencyBudget { id, .. }
-            | Self::Pagination { id, .. } => id,
+            | Self::Pagination { id, .. }
+            | Self::PayloadBounds { id, .. }
+            | Self::SurfaceListing { id, .. }
+            | Self::OutputSchema { id, .. } => id,
         }
     }
 
     pub fn tool(&self) -> Option<&str> {
         match self {
-            Self::DiscoveryCost { .. } | Self::TokenCost { .. } | Self::Pagination { .. } => None,
+            Self::DiscoveryCost { .. }
+            | Self::TokenCost { .. }
+            | Self::Pagination { .. }
+            | Self::SurfaceListing { .. } => None,
             Self::Contention { tool, .. } => Some(tool),
             Self::ErrorHonesty { tool, .. } => Some(tool),
             Self::StateRecovery { failure_tool, .. } => Some(failure_tool),
             Self::SchemaGuessability { tool, .. }
             | Self::DegradationOverN { tool, .. }
             | Self::InstructionFidelity { tool, .. }
-            | Self::LatencyBudget { tool, .. } => Some(tool),
+            | Self::LatencyBudget { tool, .. }
+            | Self::PayloadBounds { tool, .. }
+            | Self::OutputSchema { tool, .. } => Some(tool),
         }
     }
 
@@ -210,13 +256,19 @@ impl ProbeCase {
             | Self::DegradationOverN { access, .. }
             | Self::InstructionFidelity { access, .. }
             | Self::LatencyBudget { access, .. }
-            | Self::Pagination { access, .. } => *access,
+            | Self::Pagination { access, .. }
+            | Self::PayloadBounds { access, .. }
+            | Self::SurfaceListing { access, .. }
+            | Self::OutputSchema { access, .. } => *access,
         }
     }
 
     pub fn sandbox(&self) -> Option<&str> {
         match self {
-            Self::DiscoveryCost { .. } | Self::TokenCost { .. } | Self::Pagination { .. } => None,
+            Self::DiscoveryCost { .. }
+            | Self::TokenCost { .. }
+            | Self::Pagination { .. }
+            | Self::SurfaceListing { .. } => None,
             Self::Contention { sandbox, .. } => sandbox.as_deref(),
             Self::ErrorHonesty { sandbox, .. } | Self::StateRecovery { sandbox, .. } => {
                 sandbox.as_deref()
@@ -224,7 +276,9 @@ impl ProbeCase {
             Self::SchemaGuessability { sandbox, .. }
             | Self::DegradationOverN { sandbox, .. }
             | Self::InstructionFidelity { sandbox, .. }
-            | Self::LatencyBudget { sandbox, .. } => sandbox.as_deref(),
+            | Self::LatencyBudget { sandbox, .. }
+            | Self::PayloadBounds { sandbox, .. }
+            | Self::OutputSchema { sandbox, .. } => sandbox.as_deref(),
         }
     }
 
@@ -233,13 +287,16 @@ impl ProbeCase {
             Self::DiscoveryCost { .. }
             | Self::TokenCost { .. }
             | Self::StateRecovery { .. }
-            | Self::Pagination { .. } => None,
+            | Self::Pagination { .. }
+            | Self::SurfaceListing { .. } => None,
             Self::Contention { arguments, .. } => Some(arguments),
             Self::ErrorHonesty { arguments, .. } => Some(arguments),
             Self::SchemaGuessability { arguments, .. }
             | Self::DegradationOverN { arguments, .. }
             | Self::InstructionFidelity { arguments, .. }
-            | Self::LatencyBudget { arguments, .. } => Some(arguments),
+            | Self::LatencyBudget { arguments, .. }
+            | Self::PayloadBounds { arguments, .. }
+            | Self::OutputSchema { arguments, .. } => Some(arguments),
         }
     }
 
@@ -255,6 +312,9 @@ impl ProbeCase {
             Self::InstructionFidelity { .. } => ProbeKind::InstructionFidelity,
             Self::LatencyBudget { .. } => ProbeKind::LatencyBudget,
             Self::Pagination { .. } => ProbeKind::Pagination,
+            Self::PayloadBounds { .. } => ProbeKind::PayloadBounds,
+            Self::SurfaceListing { .. } => ProbeKind::SurfaceListing,
+            Self::OutputSchema { .. } => ProbeKind::OutputSchema,
         }
     }
 
@@ -272,9 +332,10 @@ impl ProbeCase {
 
     pub fn required_tools(&self) -> Vec<&str> {
         match self {
-            Self::DiscoveryCost { .. } | Self::TokenCost { .. } | Self::Pagination { .. } => {
-                Vec::new()
-            }
+            Self::DiscoveryCost { .. }
+            | Self::TokenCost { .. }
+            | Self::Pagination { .. }
+            | Self::SurfaceListing { .. } => Vec::new(),
             Self::StateRecovery {
                 failure_tool,
                 recovery_tool,
@@ -434,6 +495,37 @@ impl Manifest {
                     }
                     if !(1..=1000).contains(max_pages) {
                         bail!("pagination max_pages must be between 1 and 1000");
+                    }
+                }
+                ProbeCase::PayloadBounds {
+                    access,
+                    field,
+                    size_bytes,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("payload-bounds must be read-only");
+                    }
+                    if !privacy::valid_identifier(field) {
+                        bail!("payload field is invalid");
+                    }
+                    if !(1..=16_000_000).contains(size_bytes) {
+                        bail!("payload size is out of range");
+                    }
+                }
+                ProbeCase::SurfaceListing {
+                    access, max_pages, ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("surface-listing must be read-only");
+                    }
+                    if !(1..=1000).contains(max_pages) {
+                        bail!("surface-listing max_pages must be between 1 and 1000");
+                    }
+                }
+                ProbeCase::OutputSchema { access, .. } => {
+                    if *access != Access::ReadOnly {
+                        bail!("output-schema must be read-only");
                     }
                 }
                 ProbeCase::InstructionFidelity { expect, .. } => validate_expectation(expect)?,

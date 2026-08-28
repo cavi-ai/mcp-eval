@@ -9,7 +9,7 @@ use crate::mcp_client::{McpClient, ToolCatalog, ToolDefinition, ToolResponse};
 use crate::record::{error_info, CallRecord};
 use crate::store::Store;
 use anyhow::{bail, Context};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug)]
 pub struct ProbeOptions {
@@ -107,6 +107,13 @@ impl ProbeClient {
             Self::Http(client) => client.raw_request(method, params),
         }
     }
+
+    fn capabilities(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::Stdio(client) => client.capabilities(),
+            Self::Http(client) => client.capabilities(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,6 +138,11 @@ pub enum FailureReason {
     PaginationInvalidEntry,
     PaginationDuplicateTool,
     PaginationStalledCursor,
+    PayloadUnhandled,
+    SurfaceInvalidEnvelope,
+    SurfaceStalledCursor,
+    OutputSchemaDeclaredButMissing,
+    OutputSchemaFieldMissing,
 }
 
 impl FailureReason {
@@ -156,6 +168,11 @@ impl FailureReason {
             Self::PaginationInvalidEntry => "pagination-invalid-entry",
             Self::PaginationDuplicateTool => "pagination-duplicate-tool",
             Self::PaginationStalledCursor => "pagination-stalled-cursor",
+            Self::PayloadUnhandled => "payload-unhandled",
+            Self::SurfaceInvalidEnvelope => "surface-invalid-envelope",
+            Self::SurfaceStalledCursor => "surface-stalled-cursor",
+            Self::OutputSchemaDeclaredButMissing => "output-schema-declared-but-missing",
+            Self::OutputSchemaFieldMissing => "output-schema-field-missing",
         }
     }
 }
@@ -518,6 +535,19 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
             run_latency_budget(case, *max_latency_ms, context)
         }
         ProbeCase::Pagination { max_pages, .. } => run_pagination(case, *max_pages, context),
+        ProbeCase::PayloadBounds {
+            field, size_bytes, ..
+        } => {
+            let expect_handled = match case {
+                ProbeCase::PayloadBounds { expect_handled, .. } => *expect_handled,
+                _ => unreachable!("payload arm"),
+            };
+            run_payload_bounds(case, field, *size_bytes, expect_handled, context)
+        }
+        ProbeCase::SurfaceListing { max_pages, .. } => {
+            run_surface_listing(case, *max_pages, context)
+        }
+        ProbeCase::OutputSchema { .. } => run_output_schema(case, context),
     }
 }
 
@@ -959,4 +989,252 @@ fn check_expectation(expect: &Expectation, response: &ToolResponse) -> Option<Fa
             None
         }
     }
+}
+
+fn run_payload_bounds(
+    case: &ProbeCase,
+    field: &str,
+    size_bytes: u64,
+    expect_handled: bool,
+    context: &mut RunContext<'_>,
+) -> anyhow::Result<CaseReport> {
+    // Inject one exact-size ASCII string into a deep copy of the declared
+    // arguments. ASCII 'a' keeps the encoded size equal to the character
+    // count, so the measurement is exact and deterministic.
+    let mut arguments = case
+        .arguments()
+        .expect("payload case has arguments")
+        .clone();
+    let object = arguments
+        .as_object_mut()
+        .expect("manifest validates arguments as an object");
+    object.insert(
+        field.to_owned(),
+        Value::String("a".repeat(size_bytes as usize)),
+    );
+    let started = Instant::now();
+    let outcome = context
+        .client
+        .call_tool(case.tool().expect("payload case has a tool"), &arguments);
+    let latency_ms = started.elapsed().as_millis() as u64;
+    let (response, reason) = match outcome {
+        // The transport died: crash, hang, or non-JSON output under load.
+        // That is a robustness failure regardless of expect_handled.
+        Err(_) => (
+            ToolResponse::Error {
+                code: -32603,
+                payload: json!({}),
+            },
+            Some(FailureReason::PayloadUnhandled),
+        ),
+        Ok(response) => {
+            let handled_cleanly = match &response {
+                // Accepted and answered: the strongest pass.
+                ToolResponse::Success(_) => Some(None),
+                // A structured JSON-RPC error is honest bounded behavior;
+                // it only fails the case when the operator asserted the
+                // tool must actually handle this size.
+                ToolResponse::Error { .. } if !expect_handled => Some(None),
+                ToolResponse::Error { .. } => Some(Some(FailureReason::UnexpectedOutcome)),
+            };
+            match handled_cleanly {
+                Some(reason) => (response, reason),
+                None => unreachable!("both ToolResponse arms covered"),
+            }
+        }
+    };
+    let attempts = 1;
+    if let Some(reason) = reason {
+        return Ok(CaseReport {
+            id: case.id().to_owned(),
+            probe: case.kind(),
+            attempts,
+            first_failure: Some(attempts),
+            reason: Some(reason),
+            tool_count: None,
+            schema_bytes: None,
+            token_usage: None,
+            latency_ms: Some(latency_ms),
+            pages: None,
+        });
+    }
+    record_response(
+        case.tool().expect("payload case has a tool"),
+        &arguments,
+        latency_ms,
+        &response,
+        context,
+    )?;
+    Ok(CaseReport {
+        id: case.id().to_owned(),
+        probe: case.kind(),
+        attempts,
+        first_failure: None,
+        reason: None,
+        tool_count: None,
+        schema_bytes: None,
+        token_usage: None,
+        latency_ms: Some(latency_ms),
+        pages: None,
+    })
+}
+
+/// Cursor-driven traversal of one optional MCP surface (`resources/list`
+/// or `prompts/list`). Surfaces the server did not declare pass trivially:
+/// the probe only validates what the server claims to offer.
+fn run_surface_listing(
+    case: &ProbeCase,
+    max_pages: u64,
+    context: &mut RunContext<'_>,
+) -> anyhow::Result<CaseReport> {
+    let surfaces: [(&str, &str); 2] =
+        [("resources", "resources/list"), ("prompts", "prompts/list")];
+    let mut total_items = 0u64;
+    for (capability, method) in surfaces {
+        let declared = context
+            .client
+            .capabilities()
+            .is_some_and(|value| value.get(capability).is_some());
+        if !declared {
+            continue;
+        }
+        let mut cursor: Option<String> = None;
+        let mut pages = 0u64;
+        loop {
+            if pages >= max_pages {
+                return Ok(CaseReport {
+                    id: case.id().to_owned(),
+                    probe: case.kind(),
+                    attempts: pages + 1,
+                    first_failure: Some(pages + 1),
+                    reason: Some(FailureReason::SurfaceStalledCursor),
+                    tool_count: None,
+                    schema_bytes: None,
+                    token_usage: None,
+                    latency_ms: None,
+                    pages: Some(pages + 1),
+                });
+            }
+            pages += 1;
+            let mut params = serde_json::Map::new();
+            if let Some(value) = &cursor {
+                params.insert("cursor".into(), Value::String(value.clone()));
+            }
+            let response = match context
+                .client
+                .raw_request(method, Value::Object(params.clone()))
+            {
+                Ok(response) => response,
+                // A declared surface that errors on listing is a defect.
+                Err(_) => {
+                    return Ok(failed_case(
+                        case,
+                        pages,
+                        FailureReason::SurfaceInvalidEnvelope,
+                    ))
+                }
+            };
+            let Some(result) = response.get("result") else {
+                return Ok(failed_case(
+                    case,
+                    pages,
+                    FailureReason::SurfaceInvalidEnvelope,
+                ));
+            };
+            let items_key = if method == "resources/list" {
+                "resources"
+            } else {
+                "prompts"
+            };
+            match result.get(items_key).and_then(Value::as_array) {
+                Some(items) => total_items += items.len() as u64,
+                None => {
+                    return Ok(failed_case(
+                        case,
+                        pages,
+                        FailureReason::SurfaceInvalidEnvelope,
+                    ))
+                }
+            }
+            cursor = result
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned);
+            if cursor.is_none() {
+                break;
+            }
+        }
+    }
+    Ok(CaseReport {
+        id: case.id().to_owned(),
+        probe: case.kind(),
+        attempts: 1,
+        first_failure: None,
+        reason: None,
+        tool_count: Some(total_items),
+        schema_bytes: None,
+        token_usage: None,
+        latency_ms: None,
+        pages: None,
+    })
+}
+
+/// For a tool that declares `outputSchema`, the response must carry
+/// `structuredContent` whose required fields (per that schema) are present.
+fn run_output_schema(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
+    let tool_name = case.tool().expect("output case has a tool").to_owned();
+    let definition = context
+        .catalog
+        .tools
+        .iter()
+        .find(|tool| tool.name == tool_name)
+        .expect("selected tool was preflighted");
+    let Some(output_schema) = definition.declared_output_schema() else {
+        // The tool does not declare an output schema: nothing to verify.
+        return Ok(passed_case(case, 0));
+    };
+    let required: Vec<String> = output_schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|fields| {
+            fields
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let response = call_and_record(case, context)?;
+    let structured = match &response {
+        ToolResponse::Success(result) => result.get("structuredContent").cloned(),
+        ToolResponse::Error { .. } => None,
+    };
+    let Some(structured) = structured else {
+        return Ok(CaseReport {
+            id: case.id().to_owned(),
+            probe: case.kind(),
+            attempts: 1,
+            first_failure: Some(1),
+            reason: Some(FailureReason::OutputSchemaDeclaredButMissing),
+            tool_count: None,
+            schema_bytes: None,
+            token_usage: None,
+            latency_ms: None,
+            pages: None,
+        });
+    };
+    let missing = required.iter().any(|field| structured.get(field).is_none());
+    Ok(CaseReport {
+        id: case.id().to_owned(),
+        probe: case.kind(),
+        attempts: 1,
+        first_failure: missing.then_some(1),
+        reason: missing.then_some(FailureReason::OutputSchemaFieldMissing),
+        tool_count: None,
+        schema_bytes: None,
+        token_usage: None,
+        latency_ms: None,
+        pages: None,
+    })
 }

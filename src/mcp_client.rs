@@ -29,6 +29,15 @@ pub struct ToolDefinition {
     /// Encoded size of the complete `tools/list` entry for this tool
     /// (name, description, schema, annotations). Measured in memory only.
     pub entry_bytes: usize,
+    /// The tool's declared `outputSchema`, when present. Structural
+    /// metadata only; never persisted.
+    pub output_schema: Option<Value>,
+}
+
+impl ToolDefinition {
+    pub fn declared_output_schema(&self) -> Option<&Value> {
+        self.output_schema.as_ref()
+    }
 }
 
 #[derive(Debug)]
@@ -42,9 +51,14 @@ pub struct McpClient {
     stdin: Option<ChildStdin>,
     lines: Receiver<std::io::Result<Vec<u8>>>,
     next_id: u64,
+    /// The server's advertised capabilities from `initialize`.
+    capabilities: Option<Value>,
 }
 
 impl McpClient {
+    pub fn capabilities(&self) -> Option<Value> {
+        self.capabilities.clone()
+    }
     pub fn spawn(command: &[String]) -> anyhow::Result<Self> {
         let (program, args) = command
             .split_first()
@@ -82,11 +96,12 @@ impl McpClient {
             stdin: Some(stdin),
             lines,
             next_id: 1,
+            capabilities: None,
         })
     }
 
     pub fn initialize(&mut self) -> anyhow::Result<()> {
-        self.request(
+        let response = self.request(
             "initialize",
             json!({
                 "protocolVersion": "2025-06-18",
@@ -94,6 +109,10 @@ impl McpClient {
                 "clientInfo": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")}
             }),
         )?;
+        self.capabilities = response
+            .get("result")
+            .and_then(|result| result.get("capabilities"))
+            .cloned();
         self.notify("notifications/initialized", json!({}))
     }
 
@@ -135,6 +154,10 @@ impl McpClient {
                     name: name.to_owned(),
                     input_schema,
                     entry_bytes: serde_json::to_vec(tool)?.len(),
+                    output_schema: tool
+                        .get("outputSchema")
+                        .filter(|schema| schema.is_object())
+                        .cloned(),
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;

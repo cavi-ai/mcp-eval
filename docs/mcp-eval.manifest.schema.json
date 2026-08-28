@@ -220,6 +220,52 @@
             "access": { "const": "read_only" },
             "max_pages": { "type": "integer", "minimum": 1, "maximum": 1000 }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id", "probe", "tool", "access", "arguments",
+            "field", "size_bytes", "expect_handled"
+          ],
+          "properties": {
+            "probe": { "const": "payload-bounds" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "const": "read_only" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" },
+            "field": { "$ref": "#/$defs/identifier" },
+            "size_bytes": { "type": "integer", "minimum": 1, "maximum": 16000000 },
+            "expect_handled": {
+              "type": "boolean",
+              "description": "When true, a clean rejection at this size fails the case: the tool must actually handle it."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "access", "max_pages"],
+          "properties": {
+            "probe": { "const": "surface-listing" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "access": { "const": "read_only" },
+            "max_pages": { "type": "integer", "minimum": 1, "maximum": 1000 }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "tool", "access", "arguments"],
+          "properties": {
+            "probe": { "const": "output-schema" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "const": "read_only" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" }
+          }
         }
       ]
     }

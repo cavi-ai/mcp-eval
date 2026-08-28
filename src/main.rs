@@ -86,6 +86,9 @@ fn main() -> anyhow::Result<()> {
                 }
                 cli::ProbeSelection::LatencyBudget => mcpeval::manifest::ProbeKind::LatencyBudget,
                 cli::ProbeSelection::Pagination => mcpeval::manifest::ProbeKind::Pagination,
+                cli::ProbeSelection::PayloadBounds => mcpeval::manifest::ProbeKind::PayloadBounds,
+                cli::ProbeSelection::SurfaceListing => mcpeval::manifest::ProbeKind::SurfaceListing,
+                cli::ProbeSelection::OutputSchema => mcpeval::manifest::ProbeKind::OutputSchema,
             });
             let full_battery = selected_probe.is_none();
             let mut store = mcpeval::store::Store::open(None)?;

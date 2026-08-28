@@ -546,7 +546,7 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
         Ok((response, started.elapsed().as_millis() as u64))
     });
     ready_rx
-        .recv_timeout(std::time::Duration::from_secs(5))
+        .recv_timeout(std::time::Duration::from_secs(30))
         .map_err(|_| anyhow::anyhow!("contended client failed to initialize"))?;
     barrier.wait();
     let primary = call_named_and_record(&tool, &arguments, context)?;

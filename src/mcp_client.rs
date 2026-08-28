@@ -9,7 +9,12 @@ use serde_json::{json, Value};
 
 use crate::privacy;
 
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(5);
+// Generous by design: cold CI runners (first python spawn, antivirus
+// scans) can exceed a few seconds before the first response. A genuinely
+// hung server still fails; it just takes longer to be declared dead.
+// The HTTP transport's five-second network timeouts are separate and
+// deliberately stay tight — they bound network I/O, not process startup.
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug)]
 pub enum ToolResponse {

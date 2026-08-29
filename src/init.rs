@@ -174,24 +174,66 @@ pub fn run(options: InitOptions) -> anyhow::Result<InitSummary> {
         bail!("server label is invalid");
     }
     write_guarded(&options.output, options.force)?;
-    let mut client = InitClient::connect(&options)?;
+    let mut client = InitClient::connect(&InitOptions {
+        server: options.server.clone(),
+        output: std::path::PathBuf::new(),
+        force: false,
+        confirm_read_only: options.confirm_read_only,
+        command: options.command.clone(),
+        http_url: options.http_url.clone(),
+        allow_remote_http: options.allow_remote_http,
+    })?;
     client.initialize().context("initializing MCP server")?;
     let catalog = client.catalog().context("listing tools")?;
     if catalog.tools.is_empty() {
         bail!("the server declared no tools; there is nothing to scaffold");
     }
+    let tool_count = catalog.tools.len() as u64;
     let manifest = scaffold(&mut client, &catalog, options.confirm_read_only)?;
     let body = serde_json::to_string_pretty(&manifest).context("serializing manifest")?;
     std::fs::write(&options.output, body + "\n").context("writing manifest")?;
     Ok(InitSummary {
         path: options.output,
-        tool_count: catalog.tools.len() as u64,
+        tool_count,
         schema_cases: manifest
             .probes
             .iter()
             .filter(|case| matches!(case, crate::manifest::ProbeCase::SchemaGuessability { .. }))
             .count(),
     })
+}
+
+/// In-memory scaffolding input shared by the CLI (`init`) and the agent
+/// surface (`serve`'s scaffold tool).
+pub struct ScaffoldRequest {
+    pub server: String,
+    pub confirm_read_only: bool,
+    pub command: Vec<String>,
+    pub http_url: Option<String>,
+    pub allow_remote_http: bool,
+}
+
+/// Probe a live server and derive its starter manifest without touching
+/// the filesystem.
+pub fn probe_scaffold(request: ScaffoldRequest) -> anyhow::Result<crate::manifest::Manifest> {
+    if !privacy::valid_server(&request.server) {
+        bail!("server label is invalid");
+    }
+    let mut client = InitClient::connect(&InitOptions {
+        server: request.server.clone(),
+        output: std::path::PathBuf::new(),
+        force: false,
+        confirm_read_only: request.confirm_read_only,
+        command: request.command,
+        http_url: request.http_url,
+        allow_remote_http: request.allow_remote_http,
+    })?;
+    client.initialize().context("initializing MCP server")?;
+    let catalog = client.catalog().context("listing tools")?;
+    if catalog.tools.is_empty() {
+        bail!("the server declared no tools; there is nothing to scaffold");
+    }
+    scaffold(&mut client, &catalog, request.confirm_read_only)
 }
 
 fn write_guarded(path: &Path, force: bool) -> anyhow::Result<()> {

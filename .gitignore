@@ -4,9 +4,10 @@
 .claude/
 .worktrees/
 .DS_Store
-data/
-# The readiness corpus is a deliberate, share-safe check-in (no payloads,
-# only server labels and scores). It must ship with the repo.
+# Capture-root artifacts stay out of the repo, except the readiness
+# corpus: a deliberate, share-safe check-in (no payloads, only server
+# labels and scores) that must ship with the release.
+data/*
 !data/readiness-corpus.json
 .quarantine/
 .remember/

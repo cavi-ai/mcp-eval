@@ -89,6 +89,12 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `scripts/corpus/collect.sh`) places every score in the observed
   distribution — percentile and corpus median appear in text and markdown
   reports; a private override at `<MCPEVAL_HOME>/corpus.json` wins.
+- Agent-loop tools on the `mcpeval serve` surface: `run_probe` executes the
+  deterministic battery with an inline manifest against any targeted server
+  and returns the full versioned report plus remediation hints (mutation is
+  never authorized through this surface), and `scaffold` derives a starter
+  manifest from a live catalog in memory. The scaffold → probe → fix →
+  re-run loop now runs natively inside the agent's own MCP protocol.
 - Stdio client interoperability hardening from dogfooding against the official
   reference server: stdout banners and unsolicited notifications no longer
   abort a session, while mismatched response ids still fail fast; a server

@@ -15,6 +15,9 @@ use serde_json::{json, Value};
 pub struct ProbeOptions {
     pub server: String,
     pub manifest_path: PathBuf,
+    /// Inline manifest JSON; when set, `manifest_path` is ignored. Used by
+    /// surfaces that receive the manifest over the wire (mcpeval serve).
+    pub manifest_inline: Option<String>,
     pub selected_probe: Option<ProbeKind>,
     pub selected_case: Option<String>,
     pub allow_mutation: bool,
@@ -326,7 +329,15 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     if !crate::privacy::valid_server(&options.server) {
         bail!("server label is invalid");
     }
-    let manifest = Manifest::load(&options.manifest_path)?;
+    let manifest = match &options.manifest_inline {
+        Some(body) => {
+            let manifest: Manifest =
+                serde_json::from_str(body).context("parsing inline manifest structure")?;
+            manifest.validate()?;
+            manifest
+        }
+        None => Manifest::load(&options.manifest_path)?,
+    };
     if options.selected_probe.is_some() && options.selected_case.is_some() {
         bail!("select a probe kind or a probe case, not both");
     }

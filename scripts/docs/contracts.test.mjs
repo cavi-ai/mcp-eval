@@ -144,6 +144,8 @@ test("official docs cover recovery and authorization contracts", async () => {
     "mcpeval.probe-report/v1",
     "cavi-ai/mcp-eval@main",
     "mcpeval explain",
+    "run_probe",
+    "scaffold",
     "Remediation",
     "--brief",
     "corpus median",

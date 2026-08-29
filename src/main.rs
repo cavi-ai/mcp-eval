@@ -114,6 +114,7 @@ fn main() -> anyhow::Result<()> {
                 mcpeval::probe::ProbeOptions {
                     server: server.clone(),
                     manifest_path: manifest,
+                    manifest_inline: None,
                     selected_probe,
                     selected_case: None,
                     allow_mutation,
@@ -302,6 +303,7 @@ fn main() -> anyhow::Result<()> {
                 mcpeval::probe::ProbeOptions {
                     server,
                     manifest_path: manifest,
+                    manifest_inline: None,
                     selected_probe: None,
                     selected_case: Some(case.clone()),
                     allow_mutation,

@@ -302,6 +302,12 @@ mcpeval serve --listen 127.0.0.1:8091
 | `list_findings` | Sanitized finding rows (server, tool, state, severity, evidence counts), optionally filtered by lifecycle state |
 | `get_finding` | One finding by `finding-*` identifier, including its shape-level repro |
 | `get_readiness_trends` | Readiness-score history per server, oldest first |
+| `run_probe` | Execute the read-only battery against any server with an inline manifest and get the full `mcpeval.probe-report/v1` document plus remediation hints — mutation is never authorized through this surface |
+| `scaffold` | Introspect a live server's catalog and return a starter manifest JSON, without writing files |
+
+With `run_probe` and `scaffold`, the whole loop is native MCP: the agent
+scaffolds a manifest, probes the server it is editing, reads structured
+verdicts and fixes, and re-runs — without leaving its tool protocol.
 
 ## What is recorded
 

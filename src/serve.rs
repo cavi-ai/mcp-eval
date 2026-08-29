@@ -70,6 +70,8 @@ fn handle_connection(stream: &mut TcpStream, root: &std::path::Path) -> anyhow::
                 list_findings_tool(),
                 get_finding_tool(),
                 readiness_trends_tool(),
+                run_probe_tool(),
+                scaffold_tool(),
             ];
             json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools}})
         }
@@ -137,6 +139,70 @@ fn get_finding_tool() -> Value {
     )
 }
 
+fn run_probe_tool() -> Value {
+    tool(
+        "run_probe",
+        "Run the deterministic, read-only probe battery against an MCP \
+         server and return the full mcpeval.probe-report/v1 document: \
+         per-case verdicts with fixed failure reasons and remediation \
+         hints, measurements, and the readiness score. Mutation is never \
+         authorized through this tool. Provide `manifest` as an inline \
+         JSON manifest object and target the server with `command` (stdio, \
+         split into arguments) or `url` (Streamable HTTP).",
+        Some(json!({
+            "type": "object",
+            "properties": {
+                "manifest": {
+                    "type": "object",
+                    "description": "Inline mcp-eval manifest (version 1) with the probe cases to run."
+                },
+                "command": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "stdio server command split into program and arguments."
+                },
+                "url": {"type": "string", "description": "Streamable HTTP endpoint to probe instead of a stdio command."},
+                "server_label": {
+                    "type": "string",
+                    "description": "Server label for the report; defaults to 'probed'."
+                }
+            },
+            "required": ["manifest"]
+        })),
+    )
+}
+
+fn scaffold_tool() -> Value {
+    tool(
+        "scaffold",
+        "Introspect a live MCP server's tool catalog and derive a starter \
+         manifest: discovery/token budgets from measured sizes plus \
+         schema-guessability cases for tools observed to answer naive \
+         read-only calls. Returns the manifest JSON; nothing is written to \
+         disk. Pass `confirm_read_only` true to attest the candidate tools \
+         are read-only.",
+        Some(json!({
+            "type": "object",
+            "properties": {
+                "command": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "stdio server command split into program and arguments."
+                },
+                "url": {"type": "string", "description": "Streamable HTTP endpoint instead of a stdio command."},
+                "server_label": {
+                    "type": "string",
+                    "description": "Server label; defaults to 'probed'."
+                },
+                "confirm_read_only": {
+                    "type": "boolean",
+                    "description": "Attest that every empty-argument schema check targets read-only tools."
+                }
+            }
+        })),
+    )
+}
+
 fn tool(name: &str, description: &str, input_schema: Option<Value>) -> Value {
     let mut entry = json!({"name": name, "inputSchema": {"type": "object", "properties": {}}});
     if let Some(schema) = input_schema {
@@ -199,8 +265,129 @@ fn handle_call(message: &Value, root: &std::path::Path) -> anyhow::Result<Value>
             let points = crate::trends::load(root, 10)?;
             Ok(text_result(&format_trends(&points)))
         }
+        "run_probe" => run_probe_tool_call(&arguments),
+        "scaffold" => scaffold_tool_call(&arguments),
         other => bail!("unknown tool {other}"),
     }
+}
+
+/// Shared targeting for the agent-loop tools: `command` (array of words)
+/// or `url`, plus an optional server label.
+struct AgentTarget {
+    server: String,
+    command: Vec<String>,
+    http_url: Option<String>,
+}
+
+fn agent_target(arguments: &Value) -> anyhow::Result<AgentTarget> {
+    let server = arguments
+        .get("server_label")
+        .and_then(Value::as_str)
+        .unwrap_or("probed")
+        .to_owned();
+    let command = arguments
+        .get("command")
+        .and_then(Value::as_array)
+        .map(|words| {
+            words
+                .iter()
+                .map(|word| {
+                    Ok(word
+                        .as_str()
+                        .context("command items must be strings")?
+                        .to_owned())
+                })
+                .collect::<anyhow::Result<Vec<_>>>()
+        })
+        .transpose()?;
+    let http_url = arguments
+        .get("url")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    match (&http_url, &command) {
+        (Some(_), Some(words)) if !words.is_empty() => {
+            bail!("select a URL or a stdio command, not both")
+        }
+        (Some(_), None | Some(_)) => Ok(AgentTarget {
+            server,
+            command: Vec::new(),
+            http_url,
+        }),
+        (None, Some(words)) if !words.is_empty() => Ok(AgentTarget {
+            server,
+            command: words.clone(),
+            http_url: None,
+        }),
+        (None, _) => bail!("a command array or a url is required"),
+    }
+}
+
+fn run_probe_tool_call(arguments: &Value) -> anyhow::Result<Value> {
+    let target = agent_target(arguments)?;
+    let manifest_body = arguments
+        .get("manifest")
+        .map(serde_json::to_string)
+        .transpose()
+        .context("serializing inline manifest")?
+        .context("run_probe requires a manifest object")?;
+    let mut store = crate::store::Store::open(None)?;
+    let report = crate::probe::run(
+        crate::probe::ProbeOptions {
+            server: target.server.clone(),
+            manifest_path: std::path::PathBuf::new(),
+            manifest_inline: Some(manifest_body),
+            selected_probe: None,
+            selected_case: None,
+            // The agent surface is read-only by construction: no flag or
+            // manifest combination can authorize mutation through it.
+            allow_mutation: false,
+            command: target.command,
+            http_url: target.http_url,
+            allow_remote_http: false,
+        },
+        &mut store,
+    )?;
+    let document = report.to_json(&target.server);
+    // The report document is the structured payload; the text block adds
+    // the remediation hints that the raw document does not carry.
+    let mut lines = Vec::new();
+    for case in &report.cases {
+        if let Some(reason) = case.reason {
+            lines.push(format!(
+                "{}: {} — {}",
+                case.id,
+                reason.as_str(),
+                crate::remediation::hint(reason)
+            ));
+        }
+    }
+    let text = if lines.is_empty() {
+        format!(
+            "all cases passed; readiness {}/100",
+            crate::score::readiness(&report).overall
+        )
+    } else {
+        lines.join("\n")
+    };
+    Ok(json!({
+        "content": [{"type": "text", "text": text}],
+        "structuredContent": document,
+    }))
+}
+
+fn scaffold_tool_call(arguments: &Value) -> anyhow::Result<Value> {
+    let target = agent_target(arguments)?;
+    let manifest = crate::init::probe_scaffold(crate::init::ScaffoldRequest {
+        server: target.server,
+        confirm_read_only: arguments
+            .get("confirm_read_only")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        command: target.command,
+        http_url: target.http_url,
+        allow_remote_http: false,
+    })?;
+    Ok(text_result(&serde_json::to_string_pretty(&manifest)?))
 }
 
 fn finding_state(finding: &Value) -> &str {

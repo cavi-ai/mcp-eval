@@ -30,3 +30,18 @@ mcpeval verify --finding finding-0123456789abcdef \
 ```
 
 The first green result moves an open finding to `verifying`; the third consecutive green closes it. A red result resets the streak and reopens a verifying or closed finding. Findings without an attached probe remain open, require manual closure, and are capped at medium severity.
+
+## Serving findings and the agent loop
+
+`mcpeval serve` exposes a loopback Streamable HTTP MCP endpoint so agents can consume evaluation data natively:
+
+```sh
+mcpeval serve --listen 127.0.0.1:8091
+```
+
+The surface offers three read-only data tools — `list_findings`, `get_finding`, and `get_readiness_trends` — plus two agent-loop tools:
+
+- `run_probe` executes the deterministic battery against any server using an inline manifest and returns the full `mcpeval.probe-report/v1` document with per-case verdicts, measurements, and remediation hints. Mutation is never authorized through this tool: no argument combination can enable sandboxed or mutating cases.
+- `scaffold` introspects a live server's catalog and returns a starter manifest JSON without writing files; `confirm_read_only` attests the candidate tools are read-only, exactly as with `mcpeval init`.
+
+Together they close the loop inside the agent's own protocol: scaffold a manifest, probe the server under development, read structured verdicts and fixes, and re-run until green. The endpoint is loopback-only, serves only share-safe content, and never persists anything.

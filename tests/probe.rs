@@ -68,6 +68,7 @@ fn options(home: &TestHome, mode: &str, selected_probe: Option<ProbeKind>) -> Pr
     ProbeOptions {
         server: "fixture".into(),
         manifest_path: write_manifest(home, false),
+        manifest_inline: None,
         selected_probe,
         selected_case: None,
         allow_mutation: false,
@@ -167,6 +168,7 @@ fn token_cost_options(
     ProbeOptions {
         server: "fixture".into(),
         manifest_path: path,
+        manifest_inline: None,
         selected_probe: None,
         selected_case: None,
         allow_mutation: false,

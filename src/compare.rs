@@ -40,6 +40,7 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Str
             ProbeOptions {
                 server: options.server.clone(),
                 manifest_path: options.manifest_path.clone(),
+                manifest_inline: None,
                 selected_probe: None,
                 selected_case: None,
                 allow_mutation: options.allow_mutation,

@@ -6,7 +6,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | --- | --- | --- |
 | `shim` | `--server <SERVER> -- <CMD>...` | Proxy an stdio server and capture sanitized metadata. |
 | `shim-http` | `--server <SERVER> --listen <LISTEN> --upstream <UPSTREAM>` | Proxy Streamable HTTP capture. `--allow-remote-http` permits an explicitly selected remote HTTPS upstream. |
-| `probe` | `--server <SERVER>` plus `[-- <CMD>...]` or `--url <URL>` | Run manifest probes. Supports `--manifest`, `--probe`, `--format text\|json\|markdown`, `--allow-mutation`, and `--allow-remote-http`. |
+| `probe` | `--server <SERVER>` plus `[-- <CMD>...]` or `--url <URL>` | Run manifest probes. Supports `--manifest`, `--probe`, `--format text\|json\|markdown`, `--price-per-mtok <USD>` for session-cost interpretation in text and markdown, `--allow-mutation`, and `--allow-remote-http`. |
 | `init` | `--server <SERVER>` plus a target | Scaffold a discovery/token-cost manifest from `tools/list`. `--confirm-read-only` additionally permits empty-argument schema checks. |
 | `schema` | no options | Print the strict manifest JSON Schema for editor validation. |
 | `compare` | `--server <SERVER> --endpoint <LABEL=URL>` twice or more | Compare one manifest across Streamable HTTP endpoints. Supports text, Markdown, and JSON output. |
@@ -20,6 +20,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | `serve` | `--listen <LISTEN>` | Serve findings and trends over a loopback Streamable HTTP MCP endpoint. |
 | `annotate` | `--session <SESSION> --seq <SEQ> --kind <KIND> --note <NOTE>` | Record a bounded agent-authored observation. |
 | `doctor` | optional `--check-redaction` | Run store-hygiene checks. |
+| `share` | `--dir <DIR>` | Package the share-safe envelope: the store records plus a SHARE.md manifest, after a clean redaction sweep. The salt, index databases, and manifests are never copied. Supports `--include-probe-history` and `--force`. |
 
 The default manifest path for `probe` and `verify` is `mcp-eval.manifest.json`. The five headline evaluation dimension values for `--probe` are `contention`, `error-honesty`, `state-recovery`, `discovery-cost`, and `schema-guessability`. The CLI also accepts the supplemental probes `token-cost`, `degradation-over-n`, `instruction-fidelity`, `latency-budget`, `pagination`, `payload-bounds`, `surface-listing`, and `output-schema`; they are not additional headline dimensions in version {{PRODUCT_VERSION}}.
 

@@ -128,6 +128,20 @@ pub fn badge_url(score: u64) -> String {
     format!("https://img.shields.io/badge/mcpeval-{score}%2F100-{color}")
 }
 
+/// A model-independent estimator feeds the measurement; this is the
+/// operator's interpretation layer. The catalog is charged to every
+/// session before any tool fires, so the meaningful framing is cost per
+/// session and per 1,000 sessions at the configured price.
+pub fn cost_context(total_tokens: u64, price_per_mtok: f64) -> String {
+    let per_session = total_tokens as f64 / 1_000_000.0 * price_per_mtok;
+    let per_thousand = per_session * 1000.0;
+    format!(
+        "the catalog costs {total_tokens} tokens of every session before the first \
+         tool call — ${per_session:.4} per session at ${price_per_mtok:.2}/Mtok \
+         (${per_thousand:.2} per 1,000 sessions)"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

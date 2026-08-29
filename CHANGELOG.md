@@ -95,6 +95,15 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   never authorized through this surface), and `scaffold` derives a starter
   manifest from a live catalog in memory. The scaffold → probe → fix →
   re-run loop now runs natively inside the agent's own MCP protocol.
+- Session-cost interpretation: `probe --price-per-mtok <USD>` translates the
+  measured catalog tokens into cost per session and per 1,000 sessions in
+  text and markdown reports; the JSON report stays price-free so committed
+  baselines remain deterministic.
+- `mcpeval share --dir <DIR>`: packages the share-safe envelope
+  mechanically — store records plus a SHARE.md manifest of contents and
+  exclusions, produced only after a clean redaction sweep, with loud
+  warnings when annotation notes need review. The salt, index databases,
+  and manifests are never copied.
 - Stdio client interoperability hardening from dogfooding against the official
   reference server: stdout banners and unsolicited notifications no longer
   abort a session, while mismatched response ids still fail fast; a server

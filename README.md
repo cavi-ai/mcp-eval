@@ -156,11 +156,17 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
 ```
 
 `--format markdown` renders the same verdicts as a pull-request-ready report
-with a readiness score and badge:
+with a readiness score and badge. Add `--price-per-mtok <USD>` to translate
+the measured catalog cost into consequence: the catalog is charged to every
+session before the first tool call, so a 2,000-token catalog at $3/Mtok is
+$0.006 per session ($6 per 1,000 sessions) of pure context tax. The
+estimator stays model-independent — pricing is interpretation only, and the
+JSON report stays price-free so committed baselines never drift when prices
+change:
 
 ```sh
 mcpeval probe --server demo --manifest mcp-eval.manifest.json \
-  --format markdown -- your-mcp-server --flags
+  --format markdown --price-per-mtok 3 -- your-mcp-server --flags
 ```
 
 The **readiness score** (0–100) is a deterministic composite over four
@@ -368,6 +374,18 @@ at `<MCPEVAL_HOME>/.salt` (mode 0600 on Unix) — a dotfile sibling of
 share** or attach to an issue; the salt must never accompany it.
 `mcpeval doctor --check-redaction` prints the salt path on its own line as a
 must-not-share reminder every time it runs.
+
+`mcpeval share` turns that boundary into a produced artifact instead of a
+hand-picked file list. It runs the redaction sweep first and **refuses to
+package a store the sweep flags**, then assembles a directory containing the
+store records, a `SHARE.md` manifest of what is inside and what was
+deliberately excluded (salt, `index.db`, manifests), and a loud warning when
+annotation notes need manual review:
+
+```sh
+mcpeval share --dir mcpeval-envelope
+# attach mcpeval-envelope/ to the issue — the salt is never in it
+```
 
 ## Project status
 

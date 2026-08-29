@@ -69,6 +69,10 @@ Readiness: 75/100 — beats 35% of observed servers (corpus median 100)
 
 A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; when no corpus is available, reports simply omit the percentile line. Calibration is deterministic: the same score against the same corpus always produces the same percentile (midpoint method, so the median observation sits at 50).
 
+## Session cost
+
+The token-cost probe's measurement is model-independent; interpreting it is the operator's call. Pass `--price-per-mtok <USD>` and the text and markdown reports translate the measurement into consequence: the catalog is charged to every session before the first tool call, so a 2,000-token catalog at $3/Mtok is $0.006 per session ($6 per 1,000 sessions) of pure context tax. Pricing never enters the JSON report — committed baselines stay byte-identical when prices change.
+
 ## Trends
 
 Every full-battery run appends a content-free score record — server label, verdict counts, score, timestamp — to `<MCPEVAL_HOME>/store/probes/history.jsonl`. `mcpeval trends` renders the per-server history with score deltas between consecutive runs:

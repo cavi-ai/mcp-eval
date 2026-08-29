@@ -100,6 +100,11 @@ pub enum Command {
         /// Suppress remediation hints in text output (for scripts).
         #[arg(long)]
         brief: bool,
+        /// US dollars per million tokens, for interpreting the measured
+        /// catalog cost in text and markdown reports. The JSON report
+        /// stays price-free and deterministic.
+        #[arg(long, value_name = "USD")]
+        price_per_mtok: Option<f64>,
         /// Explicitly authorize manifest-declared sandbox mutations.
         #[arg(long)]
         allow_mutation: bool,
@@ -269,5 +274,19 @@ pub enum Command {
         /// unredacted and exit non-zero if any is found.
         #[arg(long)]
         check_redaction: bool,
+    },
+    /// Package the share-safe envelope: the store subtree, minus trend
+    /// history, with a SHARE.md manifest. Refuses to package a store the
+    /// redaction sweep flags.
+    Share {
+        /// Directory that receives the envelope.
+        #[arg(long)]
+        dir: std::path::PathBuf,
+        /// Include the readiness-trend history.
+        #[arg(long)]
+        include_probe_history: bool,
+        /// Replace an existing populated directory.
+        #[arg(long)]
+        force: bool,
     },
 }

@@ -200,6 +200,7 @@ pub fn render_probe_markdown(
     server: &str,
     report: &crate::probe::ProbeReport,
     corpus: Option<&crate::corpus::Corpus>,
+    price_per_mtok: Option<f64>,
 ) -> String {
     let readiness = crate::score::readiness(report);
     let mut out = String::new();
@@ -290,6 +291,14 @@ pub fn render_probe_markdown(
                 usage.per_tool.len()
             )
             .ok();
+            if let Some(price) = price_per_mtok {
+                writeln!(
+                    measurements,
+                    "- **Session cost:** {}",
+                    crate::score::cost_context(usage.total_tokens, price)
+                )
+                .ok();
+            }
         }
     }
     out.push_str(&measurements);

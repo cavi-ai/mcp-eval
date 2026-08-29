@@ -7,6 +7,7 @@ fn render_probe_text(
     report: &mcpeval::probe::ProbeReport,
     brief: bool,
     corpus: Option<&mcpeval::corpus::Corpus>,
+    price_per_mtok: Option<f64>,
 ) {
     for case in &report.cases {
         let probe = case.probe.as_str();
@@ -61,6 +62,21 @@ fn render_probe_text(
         ),
         None => println!("{server} readiness {}/100 {categories}", readiness.overall),
     }
+    if let (Some(price), Some(usage)) = (price_per_mtok, catalog_tokens(report)) {
+        println!("  cost: {}", mcpeval::score::cost_context(usage, price));
+    }
+}
+
+/// The catalog-wide token measurement from a token-cost case, when the
+/// battery included one.
+fn catalog_tokens(report: &mcpeval::probe::ProbeReport) -> Option<u64> {
+    report
+        .cases
+        .iter()
+        .filter(|case| case.passed())
+        .filter_map(|case| case.token_usage.as_ref())
+        .map(|usage| usage.total_tokens)
+        .max()
 }
 
 fn main() -> anyhow::Result<()> {
@@ -82,6 +98,7 @@ fn main() -> anyhow::Result<()> {
             probe,
             format,
             brief,
+            price_per_mtok,
             allow_mutation,
             url,
             allow_remote_http,
@@ -140,11 +157,16 @@ fn main() -> anyhow::Result<()> {
                 cli::ProbeFormat::Markdown => {
                     print!(
                         "{}",
-                        mcpeval::report::render_probe_markdown(&server, &report, corpus.as_ref())
+                        mcpeval::report::render_probe_markdown(
+                            &server,
+                            &report,
+                            corpus.as_ref(),
+                            price_per_mtok
+                        )
                     );
                 }
                 cli::ProbeFormat::Text => {
-                    render_probe_text(&server, &report, brief, corpus.as_ref())
+                    render_probe_text(&server, &report, brief, corpus.as_ref(), price_per_mtok)
                 }
             }
             if !report.passed() {
@@ -402,6 +424,29 @@ fn main() -> anyhow::Result<()> {
         // silent pass. When a second check is added, gate each one on its
         // own flag being set OR no flag being named at all, so this
         // "run everything by default" behavior survives.
+        cli::Command::Share {
+            dir,
+            include_probe_history,
+            force,
+        } => {
+            let summary = mcpeval::share::run(mcpeval::share::ShareOptions {
+                output: dir,
+                force,
+                include_probe_history,
+            })?;
+            println!(
+                "share envelope: {} ({} record files)",
+                summary.directory.display(),
+                summary.files
+            );
+            if summary.notes_requiring_review > 0 {
+                println!(
+                    "review before sharing: {} annotation note(s) contain prose",
+                    summary.notes_requiring_review
+                );
+            }
+            Ok(())
+        }
         cli::Command::Doctor { check_redaction: _ } => {
             let store = mcpeval::store::Store::open(None)?;
             let report = mcpeval::doctor::check_redaction(store.root())?;

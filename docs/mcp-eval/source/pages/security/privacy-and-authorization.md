@@ -11,3 +11,7 @@ Capture records under `<MCPEVAL_HOME>/store/` are content-minimized, but annotat
 Mutation requires two independent controls: the manifest case uses `"access": "mutating"` and names a declared sandbox, and the operator passes `--allow-mutation`. A missing or invalid manifest, undeclared sandbox, or missing flag never authorizes mutation. `generate --confirm-read-only` attests that an eligible tool is read-only and does not authorize mutation.
 
 HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS plus `--allow-remote-http`. Optional authorization is read from `MCPEVAL_HTTP_AUTHORIZATION`, validated, used in memory, and never persisted or printed. The HTTP proxy may relay an incoming `Authorization` value in memory, but it does not originate calls or grant mutation permission.
+
+## Producing the share envelope
+
+`mcpeval share --dir <directory>` assembles the shareable artifact mechanically instead of asking you to hand-pick files. It runs the redaction sweep first and refuses to package a store the sweep flags. The envelope contains the store's JSONL records (plus optionally the readiness-trend history with `--include-probe-history`) and a `SHARE.md` manifest describing what is inside, what was deliberately excluded — the fingerprint salt, derived databases such as `index.db`, and manifest files — and whether annotation notes need manual review. The salt is never copied into the envelope; keep any file containing it separate from the envelope when attaching either.

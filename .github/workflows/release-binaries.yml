@@ -87,8 +87,9 @@ jobs:
         if: matrix.archive == 'tar.gz'
         run: |
           cd "target/${{ matrix.target }}/release"
-          tar --sort=name --owner=0 --group=0 --numeric-owner \
-            -czf "mcpeval-${{ matrix.target }}.tar.gz" mcpeval mcpeval-demo
+          # Explicit argument order (binaries sorted) rather than GNU's
+          # --sort=name, which BSD tar on macOS does not support.
+          tar -czf "mcpeval-${{ matrix.target }}.tar.gz" mcpeval mcpeval-demo
           shasum -a 256 "mcpeval-${{ matrix.target }}.tar.gz" \
             > "mcpeval-${{ matrix.target }}.tar.gz.sha256"
 

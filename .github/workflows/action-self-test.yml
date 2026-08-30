@@ -65,10 +65,23 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install --path . --locked
-      - name: scaffold the manifest (documented downstream flow)
+      - name: scaffold a pagination manifest targeting the broken aspect
         run: |
           mcpeval init --server demo --confirm-read-only \
             --output mcp-eval.manifest.json -- ./target/release/mcpeval-demo
+          # The scaffold covers catalog health; add the pagination case
+          # whose fixed reason the broken aspect reproduces.
+          python3 - <<'EOF'
+          import json
+          manifest = json.load(open("mcp-eval.manifest.json"))
+          manifest["probes"].append({
+              "id": "catalog-pages",
+              "probe": "pagination",
+              "access": "read_only",
+              "max_pages": 3,
+          })
+          json.dump(manifest, open("mcp-eval.manifest.json", "w"), indent=2)
+          EOF
       - name: expect a red probe gate
         id: probe
         continue-on-error: true

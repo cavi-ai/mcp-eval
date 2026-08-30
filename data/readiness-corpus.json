@@ -1,6 +1,6 @@
 {
   "schema": "mcpeval.readiness-corpus/v1",
-  "source": "readiness battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services are re-run before release",
+  "source": "readiness battery over popular public MCP servers, collected via scripts/corpus/collect.sh at the v0.1.0 release; servers requiring live credentials or services are re-run before each release",
   "observations": [
     {
       "server": "everything",

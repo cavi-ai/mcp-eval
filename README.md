@@ -119,6 +119,12 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
   --probe discovery-cost --url http://127.0.0.1:8080/mcp
 ```
 
+`--format sarif` emits a SARIF 2.1.0 document for GitHub code scanning:
+upload it (`github/codeql-action/upload-sarif` or the `code-scanning` API)
+and every failing case appears as an inline pull-request annotation with its
+fixed reason and remediation hint — the red gate lands on the diff, not in a
+log.
+
 The command exits zero only when every selected case passes. Summaries contain
 case IDs, probe kinds, attempt counts, first-failure positions, and fixed
 reason labels — never actual arguments, responses, or errors. Every failing
@@ -225,7 +231,16 @@ mcpeval compare --server demo \
 
 Comparison endpoints are loopback-only unless `--allow-remote-http` is
 passed, and remote endpoints require HTTPS. See [the CI guide](docs/ci.md)
-for gating recipes, including the composite GitHub Action.
+for gating recipes, including the composite GitHub Action — which is
+self-tested in this repository on every push, consuming itself exactly as a
+downstream repository would.
+
+Reports are portable: `mcpeval report <baseline.json> --format markdown|sarif`
+re-renders any committed `mcpeval.probe-report/v1` document without
+re-running a server, so a probe job can run in CI, publish the JSON as an
+artifact, and a separate step (or a human, later) renders the report.
+`mcpeval serve --print-config` emits a ready-to-paste MCP client config for
+the agent loop.
 
 Mutation has two independent gates: the manifest must declare a named sandbox
 referenced by the case, and the operator must pass `--allow-mutation`. A

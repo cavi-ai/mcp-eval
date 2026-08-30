@@ -33,6 +33,19 @@ pub enum ProbeFormat {
     Json,
     /// Pull-request-ready markdown with a readiness score and badge.
     Markdown,
+    /// SARIF 2.1.0 for GitHub code-scanning annotations.
+    Sarif,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum ReportFormat {
+    /// Human-readable summary with readiness and hints.
+    #[default]
+    Text,
+    /// Pull-request-ready markdown.
+    Markdown,
+    /// SARIF 2.1.0 for code-scanning uploads.
+    Sarif,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -191,12 +204,33 @@ pub enum Command {
         #[arg(long, default_value_t = 10)]
         last: usize,
     },
+    /// Re-render a committed mcpeval.probe-report/v1 document (a baseline
+    /// or CI artifact) into text, markdown, or SARIF without re-running
+    /// any server. Reads the document from a file or stdin with `-`.
+    Report {
+        /// Path to the report document, or `-` for stdin.
+        #[arg()]
+        document: std::path::PathBuf,
+        /// Output format for the re-rendered report.
+        #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
+        format: ReportFormat,
+        /// Suppress remediation hints in text output.
+        #[arg(long)]
+        brief: bool,
+        /// US dollars per million tokens for session-cost interpretation.
+        #[arg(long, value_name = "USD")]
+        price_per_mtok: Option<f64>,
+    },
     /// Serve findings and trends to agents over a loopback Streamable HTTP
     /// MCP endpoint (tools: list_findings, get_finding, get_readiness_trends).
     Serve {
         /// Loopback socket address to accept MCP requests on.
         #[arg(long)]
         listen: String,
+        /// Print an MCP client config JSON snippet for this endpoint and
+        /// exit without serving.
+        #[arg(long)]
+        print_config: bool,
     },
     /// Verify one finding with one manifest case and advance its lifecycle.
     Verify {

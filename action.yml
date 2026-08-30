@@ -3,7 +3,6 @@ description: >
   Run the mcp-eval deterministic probe battery against an MCP server and fail
   the workflow when any selected case fails. Installs mcpeval from crates.io
   (or uses a preinstalled binary) and emits the versioned JSON report.
-description: 'Deterministic MCP probe battery for CI gating'
 author: 'CAVI'
 
 inputs:

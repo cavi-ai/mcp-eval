@@ -73,6 +73,12 @@ A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/cor
 
 The token-cost probe's measurement is model-independent; interpreting it is the operator's call. Pass `--price-per-mtok <USD>` and the text and markdown reports translate the measurement into consequence: the catalog is charged to every session before the first tool call, so a 2,000-token catalog at $3/Mtok is $0.006 per session ($6 per 1,000 sessions) of pure context tax. Pricing never enters the JSON report — committed baselines stay byte-identical when prices change.
 
+## SARIF and re-rendering
+
+`--format sarif` emits a SARIF 2.1.0 document: one result per failing case, the probe kind as the rule id, and the fixed reason plus remediation hint as the message. Upload it through GitHub code scanning and failing cases appear as inline pull-request annotations. The document is deterministic and derived only from the sanitized report.
+
+Reports traveled as JSON stay useful offline: `mcpeval report <baseline.json> --format markdown` re-renders any committed `mcpeval.probe-report/v1` document without re-running a server, so the probe run and the report rendering can live in different jobs — or on different days. Re-rendering a failing document exits non-zero, so a rendered report can gate in its own right.
+
 ## Trends
 
 Every full-battery run appends a content-free score record — server label, verdict counts, score, timestamp — to `<MCPEVAL_HOME>/store/probes/history.jsonl`. `mcpeval trends` renders the per-server history with score deltas between consecutive runs:

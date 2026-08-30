@@ -45,6 +45,12 @@ jobs:
       # first so `mcpeval` is on PATH and the install step is skipped.
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install --path . --locked
+      # The documented downstream flow: scaffold a manifest from the live
+      # server, then let the action run it.
+      - name: scaffold the manifest (documented downstream flow)
+        run: |
+          mcpeval init --server demo --confirm-read-only \
+            --output mcp-eval.manifest.json -- ./target/release/mcpeval-demo
       - uses: ./
         with:
           server: demo
@@ -59,6 +65,10 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install --path . --locked
+      - name: scaffold the manifest (documented downstream flow)
+        run: |
+          mcpeval init --server demo --confirm-read-only \
+            --output mcp-eval.manifest.json -- ./target/release/mcpeval-demo
       - name: expect a red probe gate
         id: probe
         continue-on-error: true

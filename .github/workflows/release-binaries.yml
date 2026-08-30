@@ -5,7 +5,10 @@ on:
     tags:
       - "v*.*.*"
 
-permissions: {}
+# The publish job attaches assets to the release and needs write access;
+# everything else stays read-only.
+permissions:
+  contents: read
 
 concurrency:
   group: release-binaries-${{ github.ref }}
@@ -120,6 +123,8 @@ jobs:
     name: publish release assets
     needs: binaries
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:

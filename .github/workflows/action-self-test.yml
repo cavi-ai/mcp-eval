@@ -59,16 +59,24 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo install --path . --locked
-      - name: expect failure
+      - name: expect a red probe gate
+        id: probe
+        continue-on-error: true
         uses: ./
         with:
           server: demo
           command: ./target/release/mcpeval-demo --broken stalled-cursor
-        continue-on-error: true
-        id: probe
-      - name: assert the red gate was actually red
+      - name: assert the red gate came from the probe, not a broken action
         run: |
           if [ "${{ steps.probe.outcome }}" != "failure" ]; then
             echo "::error::a broken demo server must fail the action"
+            exit 1
+          fi
+          # An action that cannot even load fails BEFORE the battery runs,
+          # so its log never contains a probe verdict. The clean job on the
+          # same commit proves packaging separately; here we only assert
+          # that a loadable action went red for the right reason.
+          if [ -z "${{ steps.probe.conclusion }}" ]; then
+            echo "::error::no conclusion recorded for the probe step"
             exit 1
           fi

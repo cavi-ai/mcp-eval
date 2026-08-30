@@ -1,5 +1,6 @@
 mod cli;
 
+use anyhow::Context;
 use clap::Parser;
 
 fn render_probe_text(
@@ -165,6 +166,9 @@ fn main() -> anyhow::Result<()> {
                         )
                     );
                 }
+                cli::ProbeFormat::Sarif => {
+                    println!("{}", mcpeval::sarif::render_sarif(&server, &report));
+                }
                 cli::ProbeFormat::Text => {
                     render_probe_text(&server, &report, brief, corpus.as_ref(), price_per_mtok)
                 }
@@ -296,7 +300,67 @@ fn main() -> anyhow::Result<()> {
             print!("{}", mcpeval::trends::render(store.root(), last)?);
             Ok(())
         }
-        cli::Command::Serve { listen } => mcpeval::serve::run(listen),
+        cli::Command::Serve {
+            listen,
+            print_config,
+        } => {
+            if print_config {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "mcpServers": {
+                            "mcpeval": {
+                                "type": "http",
+                                "url": format!("http://{listen}/mcp")
+                            }
+                        }
+                    })
+                );
+                return Ok(());
+            }
+            mcpeval::serve::run(listen)
+        }
+        cli::Command::Report {
+            document,
+            format,
+            brief,
+            price_per_mtok,
+        } => {
+            let body = if document.as_os_str() == "-" {
+                use std::io::Read;
+                let mut buffer = String::new();
+                std::io::stdin().read_to_string(&mut buffer)?;
+                buffer
+            } else {
+                std::fs::read_to_string(&document)
+                    .with_context(|| format!("reading {}", document.display()))?
+            };
+            let parsed: serde_json::Value =
+                serde_json::from_str(&body).context("report document is not valid JSON")?;
+            let report = mcpeval::probe::ProbeReport::from_json_document(&parsed)
+                .context("not a usable probe report")?;
+            let server = parsed
+                .get("server")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown")
+                .to_owned();
+            match format {
+                cli::ReportFormat::Text => {
+                    render_probe_text(&server, &report, brief, None, price_per_mtok)
+                }
+                cli::ReportFormat::Markdown => print!(
+                    "{}",
+                    mcpeval::report::render_probe_markdown(&server, &report, None, price_per_mtok)
+                ),
+                cli::ReportFormat::Sarif => {
+                    println!("{}", mcpeval::sarif::render_sarif(&server, &report));
+                }
+            }
+            if !report.passed() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         cli::Command::Verify {
             finding,
             case,

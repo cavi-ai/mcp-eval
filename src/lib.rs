@@ -19,6 +19,7 @@ pub mod promote;
 pub mod record;
 pub mod remediation;
 pub mod report;
+pub mod sarif;
 pub mod score;
 pub mod serve;
 pub mod shape;

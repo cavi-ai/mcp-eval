@@ -148,6 +148,28 @@ pub enum FailureReason {
     OutputSchemaFieldMissing,
 }
 
+impl ProbeKind {
+    pub fn from_report_label(label: &str) -> Option<Self> {
+        let candidate = match label {
+            "contention" => Self::Contention,
+            "error-honesty" => Self::ErrorHonesty,
+            "state-recovery" => Self::StateRecovery,
+            "discovery-cost" => Self::DiscoveryCost,
+            "token-cost" => Self::TokenCost,
+            "schema-guessability" => Self::SchemaGuessability,
+            "degradation-over-n" => Self::DegradationOverN,
+            "instruction-fidelity" => Self::InstructionFidelity,
+            "latency-budget" => Self::LatencyBudget,
+            "pagination" => Self::Pagination,
+            "payload-bounds" => Self::PayloadBounds,
+            "surface-listing" => Self::SurfaceListing,
+            "output-schema" => Self::OutputSchema,
+            _ => return None,
+        };
+        Some(candidate)
+    }
+}
+
 impl FailureReason {
     /// Every reason, in stable order, for `mcpeval explain` with no
     /// argument.
@@ -178,6 +200,37 @@ impl FailureReason {
         Self::OutputSchemaDeclaredButMissing,
         Self::OutputSchemaFieldMissing,
     ];
+
+    pub fn from_report_label(label: &str) -> Option<Self> {
+        Some(match label {
+            "unexpected-outcome" => Self::UnexpectedOutcome,
+            "missing-field" => Self::MissingField,
+            "value-mismatch" => Self::ValueMismatch,
+            "error-code-mismatch" => Self::ErrorCodeMismatch,
+            "discovery-limit-exceeded" => Self::DiscoveryLimitExceeded,
+            "token-budget-exceeded" => Self::TokenBudgetExceeded,
+            "invalid-schema" => Self::InvalidSchema,
+            "missing-required-argument" => Self::MissingRequiredArgument,
+            "expected-error" => Self::ExpectedError,
+            "unstable-error-code" => Self::UnstableErrorCode,
+            "retryability-mismatch" => Self::RetryabilityMismatch,
+            "retry-did-not-recover" => Self::RetryDidNotRecover,
+            "failure-not-observed" => Self::FailureNotObserved,
+            "recovery-failed" => Self::RecoveryFailed,
+            "validation-failed" => Self::ValidationFailed,
+            "contended-client-failed" => Self::ContendedClientFailed,
+            "latency-budget-exceeded" => Self::LatencyBudgetExceeded,
+            "pagination-invalid-entry" => Self::PaginationInvalidEntry,
+            "pagination-duplicate-tool" => Self::PaginationDuplicateTool,
+            "pagination-stalled-cursor" => Self::PaginationStalledCursor,
+            "payload-unhandled" => Self::PayloadUnhandled,
+            "surface-invalid-envelope" => Self::SurfaceInvalidEnvelope,
+            "surface-stalled-cursor" => Self::SurfaceStalledCursor,
+            "output-schema-declared-but-missing" => Self::OutputSchemaDeclaredButMissing,
+            "output-schema-field-missing" => Self::OutputSchemaFieldMissing,
+            _ => return None,
+        })
+    }
 
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -261,6 +314,96 @@ pub struct ProbeReport {
 }
 
 impl ProbeReport {
+    /// Reconstruct a report from its `mcpeval.probe-report/v1` document —
+    /// the committed-baseline format. Measurements are restored where the
+    /// document carries them; the reconstructed report renders text,
+    /// markdown, and SARIF identically to the run that produced it.
+    pub fn from_json_document(document: &serde_json::Value) -> anyhow::Result<Self> {
+        if document.get("schema").and_then(serde_json::Value::as_str)
+            != Some("mcpeval.probe-report/v1")
+        {
+            bail!("document is not an mcpeval.probe-report/v1 report");
+        }
+        let cases = document
+            .get("cases")
+            .and_then(serde_json::Value::as_array)
+            .context("report document has no cases array")?;
+        let mut parsed = Vec::with_capacity(cases.len());
+        for case in cases {
+            let probe_label = case
+                .get("probe")
+                .and_then(serde_json::Value::as_str)
+                .context("case is missing a probe label")?;
+            let probe = ProbeKind::from_report_label(probe_label)
+                .with_context(|| format!("unknown probe label {probe_label}"))?;
+            let reason = match case.get("reason") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(label) => Some(
+                    FailureReason::from_report_label(
+                        label.as_str().context("reason must be a string")?,
+                    )
+                    .with_context(|| format!("unknown reason label {}", label))?,
+                ),
+            };
+            let measurements = case
+                .get("measurements")
+                .cloned()
+                .unwrap_or(serde_json::json!({}));
+            let token_usage = measurements.get("total_tokens").and_then(|total| {
+                let total_tokens = total.as_u64()?;
+                let per_tool = measurements
+                    .get("per_tool")
+                    .and_then(serde_json::Value::as_array)
+                    .map(|tools| {
+                        tools
+                            .iter()
+                            .filter_map(|tool| {
+                                Some(ToolTokenUsage {
+                                    tool: tool.get("tool")?.as_str()?.to_owned(),
+                                    tokens: tool.get("tokens")?.as_u64()?,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                Some(TokenUsage {
+                    total_tokens,
+                    per_tool,
+                })
+            });
+            parsed.push(CaseReport {
+                id: case
+                    .get("id")
+                    .and_then(serde_json::Value::as_str)
+                    .context("case is missing an id")?
+                    .to_owned(),
+                probe,
+                attempts: case
+                    .get("attempts")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0),
+                first_failure: case
+                    .get("first_failure")
+                    .and_then(serde_json::Value::as_u64),
+                reason,
+                tool_count: measurements
+                    .get("tool_count")
+                    .and_then(serde_json::Value::as_u64),
+                schema_bytes: measurements
+                    .get("schema_bytes")
+                    .and_then(serde_json::Value::as_u64),
+                token_usage,
+                latency_ms: measurements
+                    .get("latency_ms")
+                    .and_then(serde_json::Value::as_u64),
+                pages: measurements
+                    .get("pages")
+                    .and_then(serde_json::Value::as_u64),
+            });
+        }
+        Ok(Self { cases: parsed })
+    }
+
     pub fn passed(&self) -> bool {
         self.cases.iter().all(CaseReport::passed)
     }

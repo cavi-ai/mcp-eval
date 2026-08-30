@@ -104,6 +104,18 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   exclusions, produced only after a clean redaction sweep, with loud
   warnings when annotation notes need review. The salt, index databases,
   and manifests are never copied.
+- `probe --format sarif`: SARIF 2.1.0 output for GitHub code scanning; one
+  result per failing case with the fixed reason and remediation hint as the
+  message, deterministic and derived only from the sanitized report.
+- `mcpeval report <document>`: re-render a committed
+  `mcpeval.probe-report/v1` document (baseline or CI artifact) as text,
+  markdown, or SARIF without re-running any server; a failing document
+  exits non-zero so rendered reports can gate in their own right.
+- `mcpeval serve --print-config`: emits a ready-to-paste MCP client config
+  snippet for the agent-loop endpoint.
+- Action self-test workflow: the repository consumes its own composite
+  action on every push (clean demo passes; a broken demo must fail the
+  action), exercising the distribution channel itself.
 - Stdio client interoperability hardening from dogfooding against the official
   reference server: stdout banners and unsolicited notifications no longer
   abort a session, while mismatched response ids still fail fast; a server

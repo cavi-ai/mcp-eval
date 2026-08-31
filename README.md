@@ -33,9 +33,10 @@ macOS x64/arm64, Windows x64). Building from a checkout works too:
 cargo build --release
 ```
 
-The binary is `target/release/mcpeval` (`mcpeval.exe` on Windows). npm and
-Homebrew distribution land after the first tagged release; see
-[RELEASE.md](RELEASE.md) and the [changelog](CHANGELOG.md).
+The binary is `target/release/mcpeval` (`mcpeval.exe` on Windows). The npm
+package definition and Homebrew formula are pinned to the same immutable
+v0.1.0 release archives and SHA-256 checksums. Registry and tap publication
+remain separate release operations; see [RELEASE.md](RELEASE.md).
 
 ## Quickstart
 
@@ -191,6 +192,12 @@ refreshed by `scripts/corpus/collect.sh`), and every report places your score
 in that distribution — *"beats 40% of observed servers; corpus median 100"*.
 The shipped corpus overrides cleanly: point a personal one at
 `<MCPEVAL_HOME>/corpus.json`.
+
+**[State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md)** —
+the corpus is also published: how healthy are the MCP servers agents actually
+use? 16 popular public servers, probed with the same battery, distribution
+published with full method notes. Reproduce it locally with one script; add
+your server by PR.
 
 Every full-battery run appends a content-free score record to
 `<MCPEVAL_HOME>/store/probes/history.jsonl`; `mcpeval trends` renders the

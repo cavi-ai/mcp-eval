@@ -173,9 +173,13 @@ pub enum Command {
         /// Strict versioned probe and sandbox declaration.
         #[arg(long, default_value = "mcp-eval.manifest.json")]
         manifest: std::path::PathBuf,
-        /// Endpoint as label=url; repeat to compare more than two.
-        #[arg(long = "endpoint", value_name = "LABEL=URL", required = true)]
+        /// Endpoint as label=url; repeat for each HTTP endpoint.
+        #[arg(long = "endpoint", value_name = "LABEL=URL")]
         endpoints: Vec<String>,
+        /// Optional stdio command (after `--`) compared alongside the
+        /// endpoints; its column is labeled `stdio`.
+        #[arg(last = true)]
+        command: Vec<String>,
         /// Output format for the comparison table.
         #[arg(long, value_enum, default_value_t = CompareFormat::Text)]
         format: CompareFormat,

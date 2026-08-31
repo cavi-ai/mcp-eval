@@ -17,6 +17,7 @@
         { "title": "Readiness reporting", "path": "guides/readiness-reporting.md" },
         { "title": "Findings and verification", "path": "guides/findings-and-verification.md" },
         { "title": "Continuous integration", "path": "guides/continuous-integration.md" },
+        { "title": "State of MCP servers", "path": "guides/state-of-mcp-servers.md" },
         { "title": "Troubleshooting", "path": "guides/troubleshooting.md" }
       ]
     },

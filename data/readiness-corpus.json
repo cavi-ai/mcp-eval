@@ -1,9 +1,29 @@
 {
   "schema": "mcpeval.readiness-corpus/v1",
-  "source": "readiness battery over popular public MCP servers, collected via scripts/corpus/collect.sh at the v0.1.0 release; servers requiring live credentials or services are re-run before each release",
+  "source": "readiness battery over popular public MCP servers, collected via scripts/corpus/collect.sh after the v0.1.0 release; servers requiring live credentials or services are re-run before each release",
   "observations": [
     {
+      "server": "postgres",
+      "score": 75
+    },
+    {
+      "server": "browserbase",
+      "score": 100
+    },
+    {
+      "server": "context7",
+      "score": 100
+    },
+    {
+      "server": "desktop-commander",
+      "score": 100
+    },
+    {
       "server": "everything",
+      "score": 100
+    },
+    {
+      "server": "fetch",
       "score": 100
     },
     {
@@ -15,6 +35,14 @@
       "score": 100
     },
     {
+      "server": "markitdown",
+      "score": 100
+    },
+    {
+      "server": "mcp-atlassian",
+      "score": 100
+    },
+    {
       "server": "memory",
       "score": 100
     },
@@ -23,8 +51,8 @@
       "score": 100
     },
     {
-      "server": "postgres",
-      "score": 75
+      "server": "pandoc",
+      "score": 100
     },
     {
       "server": "puppeteer",
@@ -32,10 +60,6 @@
     },
     {
       "server": "sequential-thinking",
-      "score": 100
-    },
-    {
-      "server": "time",
       "score": 100
     },
     {

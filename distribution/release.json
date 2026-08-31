@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "package": "@cavi-ai/mcp-eval",
+  "repository": "cavi-ai/mcp-eval",
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "commit": "ffc0b2d0d0922f3f4daa246effcfa25fe7be349a",
+  "assets": {
+    "darwin-arm64": {
+      "target": "aarch64-apple-darwin",
+      "archive": "mcpeval-aarch64-apple-darwin.tar.gz",
+      "sha256": "d6ab42cd065a536b082730a1054d71fc86f863eab81608c46261f2a9350aa6f2"
+    },
+    "darwin-x64": {
+      "target": "x86_64-apple-darwin",
+      "archive": "mcpeval-x86_64-apple-darwin.tar.gz",
+      "sha256": "fe32b9bcb10f54209a3d819614049b2c8bb12ef4182808deb9152e5d6b3769f8"
+    },
+    "linux-arm64": {
+      "target": "aarch64-unknown-linux-gnu",
+      "archive": "mcpeval-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "dfa94d7e8c553196d857e017e76b221c8d57d6f5703acc4e781454cbdd68df6f"
+    },
+    "linux-x64": {
+      "target": "x86_64-unknown-linux-gnu",
+      "archive": "mcpeval-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "6d2f2c5df822e9be6f786ab41512d869d41fb9170c36f3f6f60f48b02caedb7e"
+    },
+    "win32-x64": {
+      "target": "x86_64-pc-windows-msvc",
+      "archive": "mcpeval-x86_64-pc-windows-msvc.zip",
+      "sha256": "c1cf80f4b0a70739de2b44d3322c9888da0ebb91fc05ed2285b0a8ae70340055"
+    }
+  }
+}

@@ -1,0 +1,118 @@
+name: Publish npm and Homebrew distributions
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Distribution to publish
+        required: true
+        type: choice
+        options:
+          - npm
+          - homebrew
+          - all
+      confirmation:
+        description: Type publish-v0.1.0
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  verify:
+    name: Verify immutable v0.1.0 inputs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.18.1
+      - name: Require explicit release confirmation
+        env:
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: test "$CONFIRMATION" = "publish-v0.1.0"
+      - run: node --test scripts/distribution/*.test.mjs
+      - run: node scripts/distribution/verify.mjs --online
+      - run: npm pack --dry-run --ignore-scripts
+
+  npm:
+    name: Publish @cavi-ai/mcp-eval
+    needs: verify
+    if: inputs.target == 'npm' || inputs.target == 'all'
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.18.1
+          registry-url: https://registry.npmjs.org
+      - name: Refuse to overwrite an existing package version
+        run: |
+          if npm view "@cavi-ai/mcp-eval@0.1.0" version >/dev/null 2>&1; then
+            echo "::error::@cavi-ai/mcp-eval@0.1.0 already exists; npm versions are immutable"
+            exit 1
+          fi
+      - name: Require one-time first-publication credential
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+        run: test -n "$NODE_AUTH_TOKEN"
+      - run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
+
+  homebrew:
+    name: Open Homebrew tap update
+    needs: verify
+    if: inputs.target == 'homebrew' || inputs.target == 'all'
+    runs-on: ubuntu-latest
+    environment: homebrew
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require tap publication credential
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: test -n "$GH_TOKEN"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: cavi-ai/homebrew-tap
+          path: tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - run: node source/scripts/distribution/stage-homebrew.mjs --source source --tap tap
+      - name: Open formula pull request
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if git -C tap diff --quiet -- Formula/mcpeval.rb README.md; then
+            echo "Tap already contains the exact formula and index entry"
+            exit 0
+          fi
+          branch="automation/mcpeval-v0.1.0"
+          if git -C tap ls-remote --exit-code origin "refs/heads/$branch" >/dev/null 2>&1; then
+            echo "::error::Remote branch $branch already exists; inspect its pull request before retrying"
+            exit 1
+          fi
+          git -C tap switch -c "$branch"
+          git -C tap config user.name "cavi-ai release automation"
+          git -C tap config user.email "release-automation@users.noreply.github.com"
+          git -C tap add Formula/mcpeval.rb README.md
+          git -C tap commit -m "mcpeval 0.1.0"
+          git -C tap push origin "HEAD:refs/heads/$branch"
+          gh pr create --repo cavi-ai/homebrew-tap --base main --head "$branch" \
+            --title "mcpeval 0.1.0" \
+            --body "Adds the checksummed mcpeval 0.1.0 formula from the upstream release contract."

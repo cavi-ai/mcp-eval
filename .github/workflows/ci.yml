@@ -60,6 +60,21 @@ jobs:
           node-version: 24.18.1
       - run: node --test scripts/docs/*.test.mjs
 
+  distribution:
+    name: npm + Homebrew distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.18.1
+      - run: node --test scripts/distribution/*.test.mjs
+      - run: node scripts/distribution/verify.mjs
+      - run: npm pack --dry-run --ignore-scripts
+
   whitespace:
     name: git diff --check
     runs-on: ubuntu-latest

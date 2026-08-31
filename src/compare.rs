@@ -15,8 +15,26 @@ pub struct CompareOptions {
     pub manifest_path: PathBuf,
     /// Ordered label=url pairs; labels were validated by the CLI layer.
     pub endpoints: Vec<(String, String)>,
+    /// Optional stdio command comparison target (label fixed to "stdio").
+    pub command: Vec<String>,
     pub allow_mutation: bool,
     pub allow_remote_http: bool,
+}
+
+/// One comparison column: an HTTP endpoint or a stdio command.
+#[derive(Clone)]
+pub enum CompareTarget {
+    Http { label: String, url: String },
+    Stdio { command: Vec<String> },
+}
+
+impl CompareTarget {
+    pub fn label(&self) -> &str {
+        match self {
+            Self::Http { label, .. } => label,
+            Self::Stdio { .. } => "stdio",
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -30,12 +48,29 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Str
     if !crate::privacy::valid_server(&options.server) {
         bail!("server label is invalid");
     }
-    if options.endpoints.len() < 2 {
-        bail!("comparison needs at least two --endpoint entries");
+    let mut targets: Vec<CompareTarget> = options
+        .endpoints
+        .iter()
+        .map(|(label, url)| CompareTarget::Http {
+            label: label.clone(),
+            url: url.clone(),
+        })
+        .collect();
+    if !options.command.is_empty() {
+        targets.push(CompareTarget::Stdio {
+            command: options.command.clone(),
+        });
+    }
+    if targets.len() < 2 {
+        bail!("comparison needs at least two targets (--endpoint twice, or --endpoint plus a stdio command)");
     }
     let mut store = Store::open(None)?;
-    let mut results = Vec::with_capacity(options.endpoints.len());
-    for (label, url) in &options.endpoints {
+    let mut results = Vec::with_capacity(targets.len());
+    for target in &targets {
+        let (label, command, http_url) = match target {
+            CompareTarget::Http { label, url } => (label.to_owned(), Vec::new(), Some(url.clone())),
+            CompareTarget::Stdio { command, .. } => ("stdio".to_owned(), command.clone(), None),
+        };
         let report = probe::run(
             ProbeOptions {
                 server: options.server.clone(),
@@ -44,14 +79,14 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Str
                 selected_probe: None,
                 selected_case: None,
                 allow_mutation: options.allow_mutation,
-                command: Vec::new(),
-                http_url: Some(url.clone()),
+                command,
+                http_url,
                 allow_remote_http: options.allow_remote_http,
             },
             &mut store,
         )
-        .map_err(|error| anyhow::anyhow!("endpoint {label}: {error}"))?;
-        results.push((label.clone(), report));
+        .map_err(|error| anyhow::anyhow!("endpoint {}: {error}", label))?;
+        results.push((label, report));
     }
     Ok(match format {
         CompareFormat::Text => render_text(&results),

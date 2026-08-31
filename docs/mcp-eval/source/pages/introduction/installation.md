@@ -14,6 +14,11 @@ cargo build --release
 ./target/release/mcpeval --version
 ```
 
+The repository also defines `@cavi-ai/mcp-eval` for npm and
+`cavi-ai/tap/mcpeval` for Homebrew. Both consume the same checksummed GitHub
+release archives; availability is determined by the public npm registry and
+Homebrew tap rather than by the source definition alone.
+
 Set `MCPEVAL_HOME` when you want a capture root other than the default:
 
 ```sh

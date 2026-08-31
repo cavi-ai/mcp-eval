@@ -222,3 +222,51 @@ fn compare_requires_two_endpoints_and_unique_labels() {
     assert!(!duplicate.status.success());
     server.join().unwrap();
 }
+
+#[test]
+fn compare_accepts_a_stdio_command_alongside_endpoints() {
+    let dir = std::env::temp_dir().join(format!("mcpeval-compare-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let manifest_path = manifest(&dir);
+
+    // One stdio command alone is not a comparison.
+    let solo = Command::new(bin())
+        .args(["compare", "--server", "demo", "--manifest", &manifest_path])
+        .args(["--", env!("CARGO_BIN_EXE_mcpeval-demo")])
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(!solo.status.success());
+    let stderr = String::from_utf8_lossy(&solo.stderr);
+    assert!(stderr.contains("at least two targets"), "{stderr}");
+
+    // An endpoint plus the stdio command produces a two-column grid whose
+    // stdio column reflects the demo server.
+    let (endpoint, server) = fixture(false, 5);
+    let output = Command::new(bin())
+        .args([
+            "compare",
+            "--server",
+            "demo",
+            "--manifest",
+            &manifest_path,
+            "--endpoint",
+            &format!("http-target={endpoint}"),
+        ])
+        .args(["--", env!("CARGO_BIN_EXE_mcpeval-demo")])
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("stdio"), "{stdout}");
+    assert!(stdout.contains("http-target"), "{stdout}");
+    assert!(stdout.contains("readiness"), "{stdout}");
+    server.join().unwrap();
+}

@@ -121,9 +121,13 @@ export async function verifyDistribution({ root = DEFAULT_ROOT, online = false }
     assert.match(asset.sha256, SHA256);
   }
 
+  // Git may check the formula out with CRLF on Windows; compare the
+  // normalized content so the generated-formula contract is
+  // platform-independent.
+  const normalize = (value) => value.replaceAll("\r\n", "\n");
   assert.equal(
-    await readFile(path.join(root, "Formula/mcpeval.rb"), "utf8"),
-    renderFormula(manifest),
+    normalize(await readFile(path.join(root, "Formula/mcpeval.rb"), "utf8")),
+    normalize(renderFormula(manifest)),
     "Formula/mcpeval.rb is not generated from distribution/release.json",
   );
   const ruby = spawnSync("ruby", ["-c", path.join(root, "Formula/mcpeval.rb")], { encoding: "utf8" });

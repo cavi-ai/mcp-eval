@@ -129,5 +129,19 @@ pub fn hint(reason: FailureReason) -> &'static str {
             "`structuredContent` is missing a field the declared `outputSchema` marks \
              required; return the full declared shape on every success"
         }
+        FailureReason::CancellationIgnored => {
+            "the server completed the work and returned a result for a request the \
+             client had cancelled; check for the cancellation notification, stop the \
+             work, and never send a response for the cancelled request id"
+        }
+        FailureReason::CancellationErrored => {
+            "the server answered a cancelled request with a JSON-RPC error; a \
+             cancellation must leave the request id unresolved — drop the operation \
+             instead of replying"
+        }
+        FailureReason::CancellationUnsupportedTransport => {
+            "the cancellation probe requires a stdio target; Streamable HTTP answers \
+             the call POST synchronously and cannot observe a mid-flight cancellation"
+        }
     }
 }

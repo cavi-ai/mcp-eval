@@ -52,6 +52,7 @@ const WEIGHTS: &[(&str, f64, &[ProbeKind])] = &[
             ProbeKind::StateRecovery,
             ProbeKind::LatencyBudget,
             ProbeKind::PayloadBounds,
+            ProbeKind::Cancellation,
         ],
     ),
     (

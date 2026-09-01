@@ -22,6 +22,7 @@ pub enum ProbeSelection {
     PayloadBounds,
     SurfaceListing,
     OutputSchema,
+    Cancellation,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]

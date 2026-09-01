@@ -1,7 +1,7 @@
 # typed: false
 # frozen_string_literal: true
 
-# Generated from distribution/release.json by scripts/distribution/verify.mjs.
+# Validated against distribution/release.json by scripts/distribution/verify.mjs.
 class Mcpeval < Formula
   desc "Privacy-preserving MCP friction capture and deterministic evaluation"
   homepage "https://github.com/cavi-ai/mcp-eval"
@@ -36,5 +36,6 @@ class Mcpeval < Formula
 
   test do
     assert_match "mcpeval 0.1.0", shell_output("#{bin}/mcpeval --version")
+    assert_predicate bin/"mcpeval-demo", :executable?
   end
 end

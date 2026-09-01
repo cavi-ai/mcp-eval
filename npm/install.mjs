@@ -14,10 +14,32 @@ function assetFor(manifest, platform, arch) {
   return asset;
 }
 
-async function download(url) {
-  const response = await fetch(url, { redirect: "follow" });
+async function download(url, { maxBytes, expectedBytes } = {}) {
+  const response = await fetch(url, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(30_000),
+  });
   if (!response.ok) throw new Error(`mcp-eval: download failed (${response.status}) for ${url}`);
-  return Buffer.from(await response.arrayBuffer());
+
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && maxBytes !== undefined && contentLength > maxBytes) {
+    throw new Error(`mcp-eval: download exceeds the pinned size for ${url}`);
+  }
+  if (!response.body) throw new Error(`mcp-eval: download returned no body for ${url}`);
+
+  const chunks = [];
+  let total = 0;
+  for await (const chunk of response.body) {
+    total += chunk.byteLength;
+    if (maxBytes !== undefined && total > maxBytes) {
+      throw new Error(`mcp-eval: download exceeds the pinned size for ${url}`);
+    }
+    chunks.push(Buffer.from(chunk));
+  }
+  if (expectedBytes !== undefined && total !== expectedBytes) {
+    throw new Error(`mcp-eval: download size mismatch for ${url}: expected ${expectedBytes}, received ${total}`);
+  }
+  return Buffer.concat(chunks, total);
 }
 
 function verifyCompanion(bytes, asset) {
@@ -61,8 +83,8 @@ export async function installRelease({
   let installed = false;
 
   try {
-    verifyCompanion(await download(checksumUrl), asset);
-    const archive = await download(assetUrl);
+    verifyCompanion(await download(checksumUrl, { maxBytes: 1024 }), asset);
+    const archive = await download(assetUrl, { maxBytes: asset.size, expectedBytes: asset.size });
     const actual = createHash("sha256").update(archive).digest("hex");
     if (actual !== asset.sha256) {
       throw new Error(`mcp-eval: archive SHA-256 mismatch for ${asset.archive}`);

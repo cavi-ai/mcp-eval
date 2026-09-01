@@ -34,7 +34,7 @@ export function renderFormula(manifest) {
   return `# typed: false
 # frozen_string_literal: true
 
-# Generated from distribution/release.json by scripts/distribution/verify.mjs.
+# Validated against distribution/release.json by scripts/distribution/verify.mjs.
 class Mcpeval < Formula
   desc "Privacy-preserving MCP friction capture and deterministic evaluation"
   homepage "https://github.com/cavi-ai/mcp-eval"
@@ -69,6 +69,7 @@ class Mcpeval < Formula
 
   test do
     assert_match "mcpeval ${manifest.version}", shell_output("#{bin}/mcpeval --version")
+    assert_predicate bin/"mcpeval-demo", :executable?
   end
 end
 `;
@@ -88,7 +89,9 @@ async function verifyOnline(manifest) {
     verifyChecksumCompanion(await checksumResponse.text(), asset);
     const assetResponse = await fetch(url);
     assert.equal(assetResponse.status, 200, `missing release asset: ${asset.archive}`);
-    const actual = createHash("sha256").update(Buffer.from(await assetResponse.arrayBuffer())).digest("hex");
+    const bytes = Buffer.from(await assetResponse.arrayBuffer());
+    assert.equal(bytes.length, asset.size, `published asset size mismatch: ${asset.archive}`);
+    const actual = createHash("sha256").update(bytes).digest("hex");
     assert.equal(actual, asset.sha256, `published asset mismatch: ${asset.archive}`);
   }
 }
@@ -114,6 +117,7 @@ export async function verifyDistribution({ root = DEFAULT_ROOT, online = false }
     const asset = manifest.assets[key];
     assert.equal(asset.target, target);
     assert.equal(asset.archive, `mcpeval-${target}.${extension}`);
+    assert.ok(Number.isSafeInteger(asset.size) && asset.size > 0, `invalid release size: ${asset.archive}`);
     assert.match(asset.sha256, SHA256);
   }
 

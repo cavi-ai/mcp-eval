@@ -61,7 +61,7 @@ jobs:
       - run: node --test scripts/docs/*.test.mjs
 
   distribution:
-    name: npm + Homebrew distribution
+    name: distribution contract
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -74,6 +74,45 @@ jobs:
       - run: node --test scripts/distribution/*.test.mjs
       - run: node scripts/distribution/verify.mjs
       - run: npm pack --dry-run --ignore-scripts
+
+  npm-install:
+    name: npm install (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 24.18.1
+      - run: node scripts/distribution/package-e2e.mjs
+
+  homebrew-install:
+    name: Homebrew audit + install
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Stage local tap
+        run: |
+          brew tap-new --no-git cavi-ai/mcpeval-ci
+          tap_root="$(brew --repository cavi-ai/mcpeval-ci)"
+          cp Formula/mcpeval.rb "$tap_root/Formula/mcpeval.rb"
+      - run: brew audit --strict cavi-ai/mcpeval-ci/mcpeval
+      - run: brew install cavi-ai/mcpeval-ci/mcpeval
+      - run: brew test cavi-ai/mcpeval-ci/mcpeval
+      - name: Clean up local tap
+        if: always()
+        run: |
+          brew uninstall --force mcpeval || true
+          brew untap --force cavi-ai/mcpeval-ci || true
 
   whitespace:
     name: git diff --check

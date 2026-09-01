@@ -29,7 +29,7 @@ async function fixtureArchive(directory) {
   };
 }
 
-function releaseManifest(sha256) {
+function releaseManifest(sha256, size) {
   return {
     schemaVersion: 1,
     package: "@cavi-ai/mcp-eval",
@@ -42,6 +42,7 @@ function releaseManifest(sha256) {
         target: "x86_64-unknown-linux-gnu",
         archive: "mcpeval-x86_64-unknown-linux-gnu.tar.gz",
         sha256,
+        size,
       },
     },
   };
@@ -80,7 +81,7 @@ test("installer verifies the pinned checksum before exposing the binary", async 
   const packageRoot = path.join(temporary, "package");
   await mkdir(path.join(packageRoot, "npm"), { recursive: true });
   await installRelease({
-    manifest: releaseManifest(fixture.sha256),
+    manifest: releaseManifest(fixture.sha256, fixture.bytes.length),
     packageRoot,
     platform: "linux",
     arch: "x64",
@@ -99,7 +100,8 @@ test("installer rejects altered archive bytes even when the checksum filename is
   context.after(() => rm(temporary, { recursive: true, force: true }));
   const fixture = await fixtureArchive(temporary);
   const assetName = path.basename(fixture.archive);
-  const altered = Buffer.concat([fixture.bytes, Buffer.from("tampered")]);
+  const altered = Buffer.from(fixture.bytes);
+  altered[Math.floor(altered.length / 2)] ^= 0xff;
   const server = await fixtureServer(new Map([
     [`/${assetName}`, altered],
     [`/${assetName}.sha256`, `${fixture.sha256}  ${assetName}\n`],
@@ -110,7 +112,7 @@ test("installer rejects altered archive bytes even when the checksum filename is
 
   await assert.rejects(
     installRelease({
-      manifest: releaseManifest(fixture.sha256),
+      manifest: releaseManifest(fixture.sha256, fixture.bytes.length),
       packageRoot,
       platform: "linux",
       arch: "x64",
@@ -121,11 +123,36 @@ test("installer rejects altered archive bytes even when the checksum filename is
   await assert.rejects(readFile(path.join(packageRoot, "npm/vendor/mcpeval")), { code: "ENOENT" });
 });
 
+test("installer rejects an archive larger than its pinned release size", async (context) => {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "mcpeval-npm-oversize-"));
+  context.after(() => rm(temporary, { recursive: true, force: true }));
+  const fixture = await fixtureArchive(temporary);
+  const assetName = path.basename(fixture.archive);
+  const oversized = Buffer.concat([fixture.bytes, Buffer.from("unexpected")]);
+  const server = await fixtureServer(new Map([
+    [`/${assetName}`, oversized],
+    [`/${assetName}.sha256`, `${fixture.sha256}  ${assetName}\n`],
+  ]));
+  context.after(server.close);
+  const { installRelease } = await import(path.join(ROOT, "npm/install.mjs"));
+
+  await assert.rejects(
+    installRelease({
+      manifest: releaseManifest(fixture.sha256, fixture.bytes.length),
+      packageRoot: path.join(temporary, "package"),
+      platform: "linux",
+      arch: "x64",
+      downloadBaseUrl: server.baseUrl,
+    }),
+    /download exceeds the pinned size/u,
+  );
+});
+
 test("installer rejects unsupported platform pairs before download", async () => {
   const { installRelease } = await import(path.join(ROOT, "npm/install.mjs"));
   await assert.rejects(
     installRelease({
-      manifest: releaseManifest("0".repeat(64)),
+      manifest: releaseManifest("0".repeat(64), 1),
       packageRoot: "/unused",
       platform: "freebsd",
       arch: "x64",

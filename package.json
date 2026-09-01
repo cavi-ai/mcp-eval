@@ -24,6 +24,7 @@
     "postinstall": "node npm/install.mjs",
     "test:distribution": "node --test scripts/distribution/*.test.mjs",
     "verify:distribution": "node scripts/distribution/verify.mjs",
+    "verify:package": "node scripts/distribution/package-e2e.mjs",
     "prepack": "node scripts/distribution/verify.mjs"
   },
   "engines": {

@@ -1,4 +1,4 @@
-name: Publish npm and Homebrew distributions
+name: Publish v0.1.0 npm bootstrap and Homebrew distributions
 
 on:
   workflow_dispatch:
@@ -22,6 +22,9 @@ jobs:
   verify:
     name: Verify immutable v0.1.0 inputs
     runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.sha }}
+      package_sha256: ${{ steps.package.outputs.sha256 }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -30,13 +33,34 @@ jobs:
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24.18.1
-      - name: Require explicit release confirmation
+      - name: Require default branch and explicit release confirmation
+        id: source
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
-        run: test "$CONFIRMATION" = "publish-v0.1.0"
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          test "$CONFIRMATION" = "publish-v0.1.0"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          echo "sha=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+          echo "Publishing definitions from $GITHUB_SHA"
       - run: node --test scripts/distribution/*.test.mjs
       - run: node scripts/distribution/verify.mjs --online
-      - run: npm pack --dry-run --ignore-scripts
+      - name: Pack verified npm artifact
+        id: package
+        run: |
+          mkdir -p "$RUNNER_TEMP/npm-package"
+          package_name="$(npm pack --pack-destination "$RUNNER_TEMP/npm-package" --ignore-scripts)"
+          package_path="$RUNNER_TEMP/npm-package/$package_name"
+          package_sha256="$(sha256sum "$package_path" | cut -d ' ' -f 1)"
+          echo "sha256=$package_sha256" >> "$GITHUB_OUTPUT"
+          echo "$package_name sha256:$package_sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: npm-v0.1.0
+          path: ${{ runner.temp }}/npm-package/*.tgz
+          if-no-files-found: error
+          retention-days: 1
 
   npm:
     name: Publish @cavi-ai/mcp-eval
@@ -48,14 +72,23 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 0
-          persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24.18.1
           registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: npm-v0.1.0
+          path: package
+      - name: Verify staged package digest
+        env:
+          EXPECTED_SHA256: ${{ needs.verify.outputs.package_sha256 }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
+        run: |
+          package_file="$(find package -maxdepth 1 -name '*.tgz' -type f)"
+          test -n "$package_file"
+          test "$(sha256sum "$package_file" | cut -d ' ' -f 1)" = "$EXPECTED_SHA256"
+          echo "Publishing $package_file from source $SOURCE_SHA with sha256:$EXPECTED_SHA256"
       - name: Refuse to overwrite an existing package version
         run: |
           if npm view "@cavi-ai/mcp-eval@0.1.0" version >/dev/null 2>&1; then
@@ -66,7 +99,7 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
         run: test -n "$NODE_AUTH_TOKEN"
-      - run: npm publish --access public --provenance
+      - run: npm publish package/*.tgz --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
 
@@ -97,22 +130,39 @@ jobs:
       - name: Open formula pull request
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source_sha }}
         run: |
           if git -C tap diff --quiet -- Formula/mcpeval.rb README.md; then
             echo "Tap already contains the exact formula and index entry"
             exit 0
           fi
           branch="automation/mcpeval-v0.1.0"
+          formula_sha="$(sha256sum tap/Formula/mcpeval.rb | cut -d ' ' -f 1)"
+          readme_sha="$(sha256sum tap/README.md | cut -d ' ' -f 1)"
           if git -C tap ls-remote --exit-code origin "refs/heads/$branch" >/dev/null 2>&1; then
-            echo "::error::Remote branch $branch already exists; inspect its pull request before retrying"
-            exit 1
+            git -C tap fetch origin "$branch:refs/remotes/origin/$branch"
+            remote_formula_sha="$(git -C tap show "origin/$branch:Formula/mcpeval.rb" | sha256sum | cut -d ' ' -f 1)"
+            remote_readme_sha="$(git -C tap show "origin/$branch:README.md" | sha256sum | cut -d ' ' -f 1)"
+            if test "$formula_sha" != "$remote_formula_sha" || test "$readme_sha" != "$remote_readme_sha"; then
+              echo "::error::Remote branch $branch differs from the verified formula or tap index"
+              exit 1
+            fi
+            pr="$(gh pr list --repo cavi-ai/homebrew-tap --state open --head "$branch" --json url --jq '.[0].url')"
+            if test -n "$pr"; then
+              echo "Reusing exact existing pull request: $pr"
+              exit 0
+            fi
+            gh pr create --repo cavi-ai/homebrew-tap --base main --head "$branch" \
+              --title "mcpeval 0.1.0" \
+              --body "Adds the checksummed mcpeval 0.1.0 formula from upstream source $SOURCE_SHA."
+            exit 0
           fi
           git -C tap switch -c "$branch"
           git -C tap config user.name "cavi-ai release automation"
           git -C tap config user.email "release-automation@users.noreply.github.com"
           git -C tap add Formula/mcpeval.rb README.md
-          git -C tap commit -m "mcpeval 0.1.0"
+          git -C tap commit -m "mcpeval 0.1.0" -m "Source: $SOURCE_SHA"
           git -C tap push origin "HEAD:refs/heads/$branch"
           gh pr create --repo cavi-ai/homebrew-tap --base main --head "$branch" \
             --title "mcpeval 0.1.0" \
-            --body "Adds the checksummed mcpeval 0.1.0 formula from the upstream release contract."
+            --body "Adds the checksummed mcpeval 0.1.0 formula from upstream source $SOURCE_SHA."

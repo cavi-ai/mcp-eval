@@ -83,6 +83,7 @@ test("official docs publish exactly five headline dimensions and label supplemen
     "payload-bounds",
     "surface-listing",
     "output-schema",
+    "cancellation",
   ];
   const overview = await readFile(path.join(SOURCE, "pages/introduction/overview.md"), "utf8");
   const reference = await readFile(path.join(SOURCE, "pages/reference/evaluation-dimensions.md"), "utf8");
@@ -154,6 +155,7 @@ test("official docs cover recovery and authorization contracts", async () => {
     "--print-config",
     "State of MCP servers",
     "corpus",
+    "notifications/cancelled",
     "Remediation",
     "--brief",
     "corpus median",

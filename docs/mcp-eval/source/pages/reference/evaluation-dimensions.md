@@ -1,6 +1,6 @@
 # Evaluation dimensions
 
-MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes eight supplemental probes, documented separately below.
+MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes nine supplemental probes, documented separately below.
 
 ## Headline evaluation dimensions
 
@@ -80,5 +80,15 @@ For a tool that declares `outputSchema`, the response must carry
 `structuredContent` covering that schema's required fields. Tools without a
 declared output schema pass trivially. The probe never inspects values, only
 field presence.
+
+### `cancellation`
+
+Issues a read-only call, cancels it with `notifications/cancelled`, and
+requires the server to honor the cancellation: no result and no error may
+arrive for the cancelled request id within `grace_seconds`. The probe first
+confirms the tool succeeds uncancelled, so an honoring server cannot pass by
+accident. Requires a stdio target: Streamable HTTP answers the call POST
+synchronously and cannot observe a mid-flight cancellation, so the probe
+fails closed with a fixed reason on that transport.
 
 All tool calls pass through the normal sanitized synthetic-record boundary.

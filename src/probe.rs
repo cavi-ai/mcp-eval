@@ -117,6 +117,21 @@ impl ProbeClient {
             Self::Http(client) => client.capabilities(),
         }
     }
+
+    fn cancel_tool_call(
+        &mut self,
+        tool: &str,
+        arguments: &serde_json::Value,
+        reason: &str,
+        grace: std::time::Duration,
+    ) -> anyhow::Result<crate::mcp_client::CancellationOutcome> {
+        match self {
+            Self::Stdio(client) => client.cancel_tool_call(tool, arguments, reason, grace),
+            // The HTTP client has no mid-flight cancellation path; the
+            // runner never reaches this arm (it fails closed first).
+            Self::Http(_) => bail!("cancellation requires a stdio target"),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -146,6 +161,9 @@ pub enum FailureReason {
     SurfaceStalledCursor,
     OutputSchemaDeclaredButMissing,
     OutputSchemaFieldMissing,
+    CancellationIgnored,
+    CancellationErrored,
+    CancellationUnsupportedTransport,
 }
 
 impl ProbeKind {
@@ -199,6 +217,9 @@ impl FailureReason {
         Self::SurfaceStalledCursor,
         Self::OutputSchemaDeclaredButMissing,
         Self::OutputSchemaFieldMissing,
+        Self::CancellationIgnored,
+        Self::CancellationErrored,
+        Self::CancellationUnsupportedTransport,
     ];
 
     pub fn from_report_label(label: &str) -> Option<Self> {
@@ -228,6 +249,9 @@ impl FailureReason {
             "surface-stalled-cursor" => Self::SurfaceStalledCursor,
             "output-schema-declared-but-missing" => Self::OutputSchemaDeclaredButMissing,
             "output-schema-field-missing" => Self::OutputSchemaFieldMissing,
+            "cancellation-ignored" => Self::CancellationIgnored,
+            "cancellation-errored" => Self::CancellationErrored,
+            "cancellation-unsupported-transport" => Self::CancellationUnsupportedTransport,
             _ => return None,
         })
     }
@@ -259,6 +283,9 @@ impl FailureReason {
             Self::SurfaceStalledCursor => "surface-stalled-cursor",
             Self::OutputSchemaDeclaredButMissing => "output-schema-declared-but-missing",
             Self::OutputSchemaFieldMissing => "output-schema-field-missing",
+            Self::CancellationIgnored => "cancellation-ignored",
+            Self::CancellationErrored => "cancellation-errored",
+            Self::CancellationUnsupportedTransport => "cancellation-unsupported-transport",
         }
     }
 }
@@ -732,6 +759,7 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
             run_surface_listing(case, *max_pages, context)
         }
         ProbeCase::OutputSchema { .. } => run_output_schema(case, context),
+        ProbeCase::Cancellation { .. } => run_cancellation(case, context),
     }
 }
 
@@ -1421,4 +1449,74 @@ fn run_output_schema(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::
         latency_ms: None,
         pages: None,
     })
+}
+
+/// Cancellation probe: issue a read-only call, cancel it immediately, and
+/// require the server to honor the cancellation by never resolving the
+/// request id. Streamable HTTP is not supported: answering the call POST
+/// synchronously cannot observe a mid-flight cancellation, so the probe
+/// fails closed with a fixed reason rather than pretending to verify.
+fn run_cancellation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
+    let (tool, arguments, grace_seconds, reason) = match case {
+        ProbeCase::Cancellation {
+            tool,
+            arguments,
+            grace_seconds,
+            reason,
+            ..
+        } => (
+            tool.to_owned(),
+            arguments.to_owned(),
+            *grace_seconds,
+            reason.to_owned(),
+        ),
+        _ => unreachable!("cancellation arm"),
+    };
+    match context.target {
+        ClientTarget::Http { .. } => {
+            return Ok(failed_case(
+                case,
+                1,
+                FailureReason::CancellationUnsupportedTransport,
+            ));
+        }
+        ClientTarget::Stdio(_) => {}
+    }
+    // Preflight: the tool must succeed uncancelled, otherwise a pass here
+    // would only mean the server was broken in a different way.
+    let preflight = call_named_and_record(&tool, &arguments, context)?;
+    if matches!(preflight, ToolResponse::Error { .. }) {
+        return Ok(failed_case(case, 1, FailureReason::UnexpectedOutcome));
+    }
+    let outcome = context
+        .client
+        .cancel_tool_call(
+            &tool,
+            &arguments,
+            &reason,
+            std::time::Duration::from_secs(grace_seconds),
+        )
+        .map_err(|error| anyhow::anyhow!("cancellation probe failed: {error}"))?;
+    let attempts = 2;
+    let failure = outcome_had_failure(outcome);
+    Ok(CaseReport {
+        id: case.id().to_owned(),
+        probe: case.kind(),
+        attempts,
+        first_failure: failure.map(|_| attempts),
+        reason: failure,
+        tool_count: None,
+        schema_bytes: None,
+        token_usage: None,
+        latency_ms: None,
+        pages: None,
+    })
+}
+
+fn outcome_had_failure(outcome: crate::mcp_client::CancellationOutcome) -> Option<FailureReason> {
+    match outcome {
+        crate::mcp_client::CancellationOutcome::Honored => None,
+        crate::mcp_client::CancellationOutcome::Ignored => Some(FailureReason::CancellationIgnored),
+        crate::mcp_client::CancellationOutcome::Errored => Some(FailureReason::CancellationErrored),
+    }
 }

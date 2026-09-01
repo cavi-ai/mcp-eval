@@ -169,6 +169,19 @@ pub enum ProbeCase {
         sandbox: Option<String>,
         arguments: Value,
     },
+    #[serde(rename = "cancellation")]
+    Cancellation {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        arguments: Value,
+        /// Bound on how long the probe waits post-cancel for a response
+        /// the server must never send. 1..=60 seconds.
+        grace_seconds: u64,
+        /// Free-form reason recorded in the notification; identifier-shaped.
+        reason: String,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,6 +199,7 @@ pub enum ProbeKind {
     PayloadBounds,
     SurfaceListing,
     OutputSchema,
+    Cancellation,
 }
 
 impl ProbeKind {
@@ -204,6 +218,7 @@ impl ProbeKind {
             Self::PayloadBounds => "payload-bounds",
             Self::SurfaceListing => "surface-listing",
             Self::OutputSchema => "output-schema",
+            Self::Cancellation => "cancellation",
         }
     }
 }
@@ -223,7 +238,8 @@ impl ProbeCase {
             | Self::Pagination { id, .. }
             | Self::PayloadBounds { id, .. }
             | Self::SurfaceListing { id, .. }
-            | Self::OutputSchema { id, .. } => id,
+            | Self::OutputSchema { id, .. }
+            | Self::Cancellation { id, .. } => id,
         }
     }
 
@@ -241,7 +257,8 @@ impl ProbeCase {
             | Self::InstructionFidelity { tool, .. }
             | Self::LatencyBudget { tool, .. }
             | Self::PayloadBounds { tool, .. }
-            | Self::OutputSchema { tool, .. } => Some(tool),
+            | Self::OutputSchema { tool, .. }
+            | Self::Cancellation { tool, .. } => Some(tool),
         }
     }
 
@@ -259,7 +276,8 @@ impl ProbeCase {
             | Self::Pagination { access, .. }
             | Self::PayloadBounds { access, .. }
             | Self::SurfaceListing { access, .. }
-            | Self::OutputSchema { access, .. } => *access,
+            | Self::OutputSchema { access, .. }
+            | Self::Cancellation { access, .. } => *access,
         }
     }
 
@@ -278,7 +296,8 @@ impl ProbeCase {
             | Self::InstructionFidelity { sandbox, .. }
             | Self::LatencyBudget { sandbox, .. }
             | Self::PayloadBounds { sandbox, .. }
-            | Self::OutputSchema { sandbox, .. } => sandbox.as_deref(),
+            | Self::OutputSchema { sandbox, .. }
+            | Self::Cancellation { sandbox, .. } => sandbox.as_deref(),
         }
     }
 
@@ -296,7 +315,8 @@ impl ProbeCase {
             | Self::InstructionFidelity { arguments, .. }
             | Self::LatencyBudget { arguments, .. }
             | Self::PayloadBounds { arguments, .. }
-            | Self::OutputSchema { arguments, .. } => Some(arguments),
+            | Self::OutputSchema { arguments, .. }
+            | Self::Cancellation { arguments, .. } => Some(arguments),
         }
     }
 
@@ -315,6 +335,7 @@ impl ProbeCase {
             Self::PayloadBounds { .. } => ProbeKind::PayloadBounds,
             Self::SurfaceListing { .. } => ProbeKind::SurfaceListing,
             Self::OutputSchema { .. } => ProbeKind::OutputSchema,
+            Self::Cancellation { .. } => ProbeKind::Cancellation,
         }
     }
 
@@ -526,6 +547,22 @@ impl Manifest {
                 ProbeCase::OutputSchema { access, .. } => {
                     if *access != Access::ReadOnly {
                         bail!("output-schema must be read-only");
+                    }
+                }
+                ProbeCase::Cancellation {
+                    access,
+                    grace_seconds,
+                    reason,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("cancellation must be read-only");
+                    }
+                    if !(1..=60).contains(grace_seconds) {
+                        bail!("cancellation grace_seconds must be between 1 and 60");
+                    }
+                    if !privacy::valid_identifier(reason) {
+                        bail!("cancellation reason is invalid");
                     }
                 }
                 ProbeCase::InstructionFidelity { expect, .. } => validate_expectation(expect)?,

@@ -14,7 +14,7 @@
 //! counter, nothing persists, and stderr is free-form.
 
 use std::io::{BufRead, Write};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
@@ -32,7 +32,7 @@ fn main() {
     }
     let broken = match broken {
         Some(aspect) if aspect.is_empty() => {
-            eprintln!("--broken requires an aspect: schema, fidelity, unstable-errors, bloated, duplicate-page, stalled-cursor, slow");
+            eprintln!("--broken requires an aspect: schema, fidelity, unstable-errors, bloated, duplicate-page, stalled-cursor, slow, cancellation");
             std::process::exit(2);
         }
         other => other,
@@ -44,28 +44,71 @@ fn main() {
 }
 
 fn serve(broken: Option<&str>) -> anyhow::Result<()> {
-    let stdin = std::io::stdin();
     let mut stdout = std::io::stdout().lock();
     let mut calls = 0u64;
     let mut flaky_calls = 0u64;
     let mut broken_state = false;
-    for line in stdin.lock().lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+    let mut cancelled_requests: Vec<u64> = Vec::new();
+    // Shared flag for the in-flight cancellable call. A dedicated reader
+    // thread owns stdin: it parses every frame, records cancellation
+    // notifications into the flag, and forwards requests to the dispatch
+    // loop over a channel. Without the separate reader, a slow tool would
+    // block the only stdin reader and no mid-flight cancellation could
+    // ever be observed.
+    let cancelled_flag: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>> =
+        Default::default();
+    let (sender, receiver) = std::sync::mpsc::channel::<Value>();
+    let reader_broken = broken.is_some_and(|aspect| aspect == "cancellation");
+    let reader_flag = std::sync::Arc::clone(&cancelled_flag);
+    std::thread::spawn(move || {
+        let stdin = std::io::stdin();
+        for line in stdin.lock().lines() {
+            let Ok(line) = line else { break };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(request) = serde_json::from_str::<Value>(&line) else {
+                continue;
+            };
+            let method = request.get("method").and_then(Value::as_str).unwrap_or("");
+            if method == "notifications/cancelled" {
+                if let Some(request_id) = request
+                    .get("params")
+                    .and_then(|params| params.get("requestId"))
+                    .and_then(Value::as_u64)
+                {
+                    if reader_broken {
+                        // The defect under test: the notification is dropped.
+                        continue;
+                    }
+                    reader_flag
+                        .lock()
+                        .expect("cancellation flag lock")
+                        .insert(request_id);
+                }
+                continue;
+            }
+            if method.starts_with("notifications/") {
+                continue;
+            }
+            if sender.send(request).is_err() {
+                break;
+            }
         }
-        let request: Value = serde_json::from_str(&line)
-            .map_err(|error| anyhow::anyhow!("malformed request: {error}"))?;
-        let method = request.get("method").and_then(Value::as_str).unwrap_or("");
-        if method.starts_with("notifications/") {
-            continue;
-        }
+    });
+    while let Ok(request) = receiver.recv() {
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_owned();
         let id = request
             .get("id")
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("request is missing an id"))?;
         let params = request.get("params").cloned().unwrap_or(json!({}));
-        let response = match method {
+        let response_id = id.as_u64();
+        let response = match method.as_str() {
             "initialize" => Ok(json!({
                 "protocolVersion": "2025-06-18",
                 "capabilities": {
@@ -82,6 +125,8 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                 &mut calls,
                 &mut flaky_calls,
                 &mut broken_state,
+                &cancelled_flag,
+                id.as_u64(),
             ),
             "resources/list" => {
                 if broken == Some("surface") {
@@ -105,6 +150,22 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
             }
             _ => Ok(json!({})),
         };
+        // A cancelled request is answered with nothing: the marker error
+        // (-32004) from the slow tool signals silence for this id. The
+        // cancellation verdict lives in the shared flag the reader thread
+        // updates.
+        let cancelled_marker = matches!(&response, Err((code, _, _)) if *code == -32004)
+            && response_id
+                .map(|rid| {
+                    cancelled_flag
+                        .lock()
+                        .expect("cancellation flag lock")
+                        .contains(&rid)
+                })
+                .unwrap_or(false);
+        if cancelled_marker {
+            continue;
+        }
         match response {
             Ok(result) => write_message(
                 &mut stdout,
@@ -120,6 +181,7 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                 }),
             )?,
         }
+        let _ = &mut cancelled_requests;
     }
     Ok(())
 }
@@ -272,6 +334,8 @@ fn call_tool(
     calls: &mut u64,
     flaky_calls: &mut u64,
     broken_state: &mut bool,
+    cancelled_flag: &std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
+    request_id: Option<u64>,
 ) -> Result<Value, (i64, String, bool)> {
     let name = params
         .get("name")
@@ -281,7 +345,23 @@ fn call_tool(
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
     *calls += 1;
     if name == "slow_read" {
-        std::thread::sleep(Duration::from_millis(200));
+        // A cancellable long-running call: sleep in short slices while
+        // polling the cancellation flag that the reader loop updates from
+        // notifications/cancelled. A cancelled request is never answered:
+        // the caller signals suppression via the marker error.
+        let deadline = Instant::now() + Duration::from_millis(400);
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+            if let Some(id) = request_id {
+                let cancelled = cancelled_flag
+                    .lock()
+                    .expect("cancellation flag lock")
+                    .contains(&id);
+                if cancelled {
+                    return Err((-32004, "cancelled".into(), false));
+                }
+            }
+        }
     }
     match name.as_str() {
         "describe_status" => {

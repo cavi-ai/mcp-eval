@@ -46,6 +46,20 @@ pub struct ToolCatalog {
     pub encoded_bytes: usize,
 }
 
+/// How a server resolved a cancelled request id.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancellationOutcome {
+    /// No response arrived for the cancelled request id within the grace
+    /// window: the server honored the cancellation.
+    Honored,
+    /// The server completed the work and returned the full result as if
+    /// the cancellation had never been sent.
+    Ignored,
+    /// The server answered the cancelled request with a structured
+    /// JSON-RPC error.
+    Errored,
+}
+
 pub struct McpClient {
     child: Child,
     stdin: Option<ChildStdin>,
@@ -190,6 +204,62 @@ impl McpClient {
     /// (for example pagination cursors) rather than tool semantics.
     pub fn raw_request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         self.request(method, params)
+    }
+
+    /// Issue a `tools/call` and immediately cancel it, then classify how
+    /// the server resolved the cancelled request id within the grace
+    /// window. The probe contract: a cancellation-honoring server sends
+    /// no response for the id.
+    pub fn cancel_tool_call(
+        &mut self,
+        tool: &str,
+        arguments: &Value,
+        reason: &str,
+        grace: Duration,
+    ) -> anyhow::Result<CancellationOutcome> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.write(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments}
+        }))?;
+        self.notify(
+            "notifications/cancelled",
+            json!({"requestId": id, "reason": reason}),
+        )?;
+        // The only frames that can still arrive for this id are the
+        // server's resolution. Anything without our id is skipped (the
+        // session is otherwise idle, so there should be nothing else).
+        let deadline = Instant::now() + grace;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Ok(CancellationOutcome::Honored);
+            }
+            let raw = match self.lines.recv_timeout(remaining) {
+                Ok(raw) => raw,
+                Err(mpsc::RecvTimeoutError::Timeout) => return Ok(CancellationOutcome::Honored),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    bail!("MCP server closed stdout")
+                }
+            }?;
+            let response: Value = match serde_json::from_slice(&raw) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let Some(object) = response.as_object() else {
+                continue;
+            };
+            if object.get("id").and_then(Value::as_u64) != Some(id) {
+                continue;
+            }
+            if object.contains_key("error") {
+                return Ok(CancellationOutcome::Errored);
+            }
+            return Ok(CancellationOutcome::Ignored);
+        }
     }
 
     fn notify(&mut self, method: &str, params: Value) -> anyhow::Result<()> {

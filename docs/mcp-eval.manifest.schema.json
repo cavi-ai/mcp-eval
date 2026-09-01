@@ -266,6 +266,32 @@
             "sandbox": { "$ref": "#/$defs/identifier" },
             "arguments": { "$ref": "#/$defs/arguments" }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id", "probe", "tool", "access", "arguments",
+            "grace_seconds", "reason"
+          ],
+          "properties": {
+            "probe": { "const": "cancellation" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "const": "read_only" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" },
+            "grace_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60,
+              "description": "How long the probe waits post-cancel for a response the server must never send."
+            },
+            "reason": {
+              "$ref": "#/$defs/identifier",
+              "description": "Free-form identifier recorded in the cancellation notification."
+            }
+          }
         }
       ]
     }

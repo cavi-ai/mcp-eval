@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
 
-use crate::mcp_client::{ToolCatalog, ToolDefinition, ToolResponse};
+use crate::mcp_client::{CancellationOutcome, ToolCatalog, ToolDefinition, ToolResponse};
 use crate::privacy;
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
@@ -132,6 +132,63 @@ impl HttpMcpClient {
         self.request(method, params)
     }
 
+    /// Issue a `tools/call` on its own connection, send
+    /// `notifications/cancelled` for it, then classify how the server
+    /// resolved the cancelled request.
+    ///
+    /// The call POST runs on a worker thread so the cancellation can land
+    /// while it is in flight. The classification follows what real
+    /// production servers do (the reference gateway answers a cancelled
+    /// request with the structured `-32800 Request cancelled` error):
+    /// a `-32800` error means the server observed the cancellation, a
+    /// full result means the server ignored it, any other error means the
+    /// server answered the cancelled id without cancellation awareness,
+    /// and a read timeout with no response counts as silence.
+    pub fn cancel_tool_call(
+        &mut self,
+        tool: &str,
+        arguments: &Value,
+        reason: &str,
+        _grace: Duration,
+    ) -> anyhow::Result<CancellationOutcome> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let (worker_agent, worker_endpoint, worker_session) = self.clone_for_request();
+        let call_message = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments}
+        });
+        let worker = std::thread::spawn(move || {
+            worker_call(
+                &worker_agent,
+                &worker_endpoint,
+                worker_session,
+                call_message,
+                id,
+            )
+        });
+        // Give the call a moment to reach the server before cancelling.
+        std::thread::sleep(Duration::from_millis(50));
+        self.notify(
+            "notifications/cancelled",
+            json!({"requestId": id, "reason": reason}),
+        )?;
+        match worker.join() {
+            Ok(joined) => joined,
+            Err(_) => bail!("cancelled call worker terminated unexpectedly"),
+        }
+    }
+
+    fn clone_for_request(&self) -> (ureq::Agent, String, Option<String>) {
+        (
+            self.agent.clone(),
+            self.endpoint.clone(),
+            self.session_id.clone(),
+        )
+    }
+
     fn notify(&mut self, method: &str, params: Value) -> anyhow::Result<()> {
         let message = json!({"jsonrpc": "2.0", "method": method, "params": params});
         let response = self.post(&message)?;
@@ -201,9 +258,12 @@ impl HttpMcpClient {
             }
             request = request.set("Authorization", &authorization);
         }
-        request
-            .send_json(message)
-            .map_err(|_| anyhow::anyhow!("MCP HTTP request failed"))
+        request.send_json(message).map_err(|error| match error {
+            ureq::Error::Status(status, _) => {
+                anyhow::anyhow!("MCP HTTP request failed with status {status}")
+            }
+            other => anyhow::anyhow!("MCP HTTP request failed: {other}"),
+        })
     }
 }
 
@@ -265,6 +325,68 @@ fn parse_sse_response(body: &[u8], expected_id: u64) -> anyhow::Result<Value> {
         }
     }
     bail!("MCP SSE stream ended without the matching response")
+}
+
+/// Run the in-flight call on a dedicated connection and classify the
+/// server's resolution of a cancelled request. The grace deadline is the
+/// read timeout: a response that never arrives counts as silence.
+fn worker_call(
+    agent: &ureq::Agent,
+    endpoint: &str,
+    session_id: Option<String>,
+    message: Value,
+    id: u64,
+) -> anyhow::Result<CancellationOutcome> {
+    let mut request = agent
+        .post(endpoint)
+        .set("Accept", "application/json, text/event-stream")
+        .set("Content-Type", "application/json")
+        .set("MCP-Protocol-Version", PROTOCOL_VERSION);
+    if let Some(session_id) = &session_id {
+        request = request.set("Mcp-Session-Id", session_id);
+    }
+    if let Ok(authorization) = std::env::var("MCPEVAL_HTTP_AUTHORIZATION") {
+        if authorization.is_empty()
+            || authorization.len() > 8192
+            || authorization.bytes().any(|byte| byte.is_ascii_control())
+        {
+            bail!("HTTP authorization environment value is invalid");
+        }
+        request = request.set("Authorization", &authorization);
+    }
+    let response = request
+        .send_json(message)
+        .map_err(|error| anyhow::anyhow!("cancelled call POST failed: {error}"))?;
+    if response.status() != 200 {
+        bail!("cancelled call returned an unexpected HTTP status");
+    }
+    let content_type = response
+        .header("Content-Type")
+        .and_then(|value| value.split(';').next())
+        .unwrap_or("")
+        .to_owned();
+    let body = read_bounded(response.into_reader())?;
+    let value: Value = match content_type.trim() {
+        "application/json" => {
+            serde_json::from_slice(&body).context("cancelled call response is not valid JSON")?
+        }
+        "text/event-stream" => parse_sse_response(&body, id)
+            .context("cancelled call SSE stream carried no matching response")?,
+        _ => bail!("cancelled call response has an unsupported content type"),
+    };
+    if let Some(error) = value.get("error") {
+        let code = error.get("code").and_then(Value::as_i64);
+        // -32800 "Request cancelled" is the structured cancellation
+        // acknowledgement used by production servers.
+        if code == Some(-32800) {
+            return Ok(CancellationOutcome::Honored);
+        }
+        return Ok(CancellationOutcome::Errored);
+    }
+    if value.get("result").is_some() {
+        return Ok(CancellationOutcome::Ignored);
+    }
+    bail!("cancelled call response is neither a result nor an error")
 }
 
 fn validate_response(value: &Value, id: u64) -> anyhow::Result<()> {

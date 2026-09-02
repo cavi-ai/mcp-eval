@@ -84,11 +84,12 @@ field presence.
 ### `cancellation`
 
 Issues a read-only call, cancels it with `notifications/cancelled`, and
-requires the server to honor the cancellation: no result and no error may
-arrive for the cancelled request id within `grace_seconds`. The probe first
-confirms the tool succeeds uncancelled, so an honoring server cannot pass by
-accident. Requires a stdio target: Streamable HTTP answers the call POST
-synchronously and cannot observe a mid-flight cancellation, so the probe
-fails closed with a fixed reason on that transport.
+requires the server to acknowledge the cancellation: either silence for the
+cancelled request id within `grace_seconds`, or the structured "Request
+cancelled" error (`-32800`) that production servers return for cancelled
+requests. The probe first confirms the tool succeeds uncancelled, so an
+honoring server cannot pass by accident. A full result delivered after the
+cancellation, or an unrelated error code, fails the case on both stdio and
+Streamable HTTP transports.
 
 All tool calls pass through the normal sanitized synthetic-record boundary.

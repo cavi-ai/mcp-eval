@@ -135,13 +135,9 @@ pub fn hint(reason: FailureReason) -> &'static str {
              work, and never send a response for the cancelled request id"
         }
         FailureReason::CancellationErrored => {
-            "the server answered a cancelled request with a JSON-RPC error; a \
-             cancellation must leave the request id unresolved — drop the operation \
-             instead of replying"
-        }
-        FailureReason::CancellationUnsupportedTransport => {
-            "the cancellation probe requires a stdio target; Streamable HTTP answers \
-             the call POST synchronously and cannot observe a mid-flight cancellation"
+            "the server answered a cancelled request with an error that shows no \\
+             cancellation awareness; observe notifications/cancelled for in-flight \\
+             requests and stop the work instead of replying with an unrelated error"
         }
     }
 }

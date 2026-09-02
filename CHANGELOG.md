@@ -83,13 +83,14 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Readiness categories rebalanced for the deeper battery: discovery 0.25,
   reliability 0.35, contract 0.30, concurrency 0.10.
 - `cancellation` probe: issues a read-only call, cancels it with
-  `notifications/cancelled`, and requires silence for the cancelled request
-  id within a declared grace window; preflight confirms the tool succeeds
-  uncancelled. Stdio targets; Streamable HTTP fails closed with a fixed
-  reason because its synchronous response cannot observe a mid-flight
-  cancellation. The demo server gained a `--broken cancellation` aspect that
-  drops the notification, and its slow tool now honors cancellation through
-  a dedicated stdin reader thread.
+  `notifications/cancelled`, and requires the server to acknowledge the
+  cancellation — silence for the cancelled request id or the structured
+  "Request cancelled" error (-32800) that production servers return;
+  preflight confirms the tool succeeds uncancelled. Works on stdio and
+  Streamable HTTP (the call POST runs on its own connection so the
+  cancellation lands mid-flight). The demo server gained a `--broken
+  cancellation` aspect that drops the notification, and its slow tool now
+  honors cancellation through a dedicated stdin reader thread.
 - Remediation hints: every fixed failure reason maps to a concrete server-side
   fix, printed under failing cases in text output (suppress with `--brief`),
   rendered in the markdown report under *Remediation*, and documented

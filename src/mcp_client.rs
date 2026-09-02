@@ -49,14 +49,15 @@ pub struct ToolCatalog {
 /// How a server resolved a cancelled request id.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancellationOutcome {
-    /// No response arrived for the cancelled request id within the grace
-    /// window: the server honored the cancellation.
+    /// The request id was never resolved, or the server answered with the
+    /// structured "Request cancelled" error (-32800): the cancellation was
+    /// observed and honored.
     Honored,
     /// The server completed the work and returned the full result as if
     /// the cancellation had never been sent.
     Ignored,
-    /// The server answered the cancelled request with a structured
-    /// JSON-RPC error.
+    /// The server answered the cancelled request with an error that shows
+    /// no cancellation awareness.
     Errored,
 }
 
@@ -256,7 +257,19 @@ impl McpClient {
                 continue;
             }
             if object.contains_key("error") {
-                return Ok(CancellationOutcome::Errored);
+                // The structured "Request cancelled" error (-32800) is how
+                // production servers acknowledge a cancellation while
+                // keeping the envelope well-formed: it counts as honored.
+                let acknowledged = object
+                    .get("error")
+                    .and_then(|error| error.get("code"))
+                    .and_then(Value::as_i64)
+                    == Some(-32800);
+                return Ok(if acknowledged {
+                    CancellationOutcome::Honored
+                } else {
+                    CancellationOutcome::Errored
+                });
             }
             return Ok(CancellationOutcome::Ignored);
         }

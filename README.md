@@ -220,7 +220,7 @@ The deterministic battery:
 | `payload-bounds` | A declared-oversize argument never crashes or hangs the server; `expect_handled` decides whether a clean rejection also counts as failure |
 | `surface-listing` | Declared `resources`/`prompts` surfaces return well-formed, cursor-bounded listings; undeclared surfaces pass trivially |
 | `output-schema` | A tool that declares `outputSchema` returns `structuredContent` covering the schema's required fields |
-| `cancellation` | A cancelled read-only call is never answered: no result, no error, silence for the request id (stdio targets) |
+| `cancellation` | A cancelled read-only call is acknowledged: silence or a structured "Request cancelled" error for the request id — a full result or unrelated error fails the case |
 
 ## Comparing servers
 

@@ -127,9 +127,7 @@ impl ProbeClient {
     ) -> anyhow::Result<crate::mcp_client::CancellationOutcome> {
         match self {
             Self::Stdio(client) => client.cancel_tool_call(tool, arguments, reason, grace),
-            // The HTTP client has no mid-flight cancellation path; the
-            // runner never reaches this arm (it fails closed first).
-            Self::Http(_) => bail!("cancellation requires a stdio target"),
+            Self::Http(client) => client.cancel_tool_call(tool, arguments, reason, grace),
         }
     }
 }
@@ -163,7 +161,6 @@ pub enum FailureReason {
     OutputSchemaFieldMissing,
     CancellationIgnored,
     CancellationErrored,
-    CancellationUnsupportedTransport,
 }
 
 impl ProbeKind {
@@ -219,7 +216,6 @@ impl FailureReason {
         Self::OutputSchemaFieldMissing,
         Self::CancellationIgnored,
         Self::CancellationErrored,
-        Self::CancellationUnsupportedTransport,
     ];
 
     pub fn from_report_label(label: &str) -> Option<Self> {
@@ -251,7 +247,6 @@ impl FailureReason {
             "output-schema-field-missing" => Self::OutputSchemaFieldMissing,
             "cancellation-ignored" => Self::CancellationIgnored,
             "cancellation-errored" => Self::CancellationErrored,
-            "cancellation-unsupported-transport" => Self::CancellationUnsupportedTransport,
             _ => return None,
         })
     }
@@ -285,7 +280,6 @@ impl FailureReason {
             Self::OutputSchemaFieldMissing => "output-schema-field-missing",
             Self::CancellationIgnored => "cancellation-ignored",
             Self::CancellationErrored => "cancellation-errored",
-            Self::CancellationUnsupportedTransport => "cancellation-unsupported-transport",
         }
     }
 }
@@ -1452,10 +1446,9 @@ fn run_output_schema(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::
 }
 
 /// Cancellation probe: issue a read-only call, cancel it immediately, and
-/// require the server to honor the cancellation by never resolving the
-/// request id. Streamable HTTP is not supported: answering the call POST
-/// synchronously cannot observe a mid-flight cancellation, so the probe
-/// fails closed with a fixed reason rather than pretending to verify.
+/// require the server to honor the cancellation: the cancelled request id
+/// must never be resolved, or only with the structured "Request
+/// cancelled" acknowledgement used by production servers.
 fn run_cancellation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
     let (tool, arguments, grace_seconds, reason) = match case {
         ProbeCase::Cancellation {
@@ -1472,16 +1465,6 @@ fn run_cancellation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::R
         ),
         _ => unreachable!("cancellation arm"),
     };
-    match context.target {
-        ClientTarget::Http { .. } => {
-            return Ok(failed_case(
-                case,
-                1,
-                FailureReason::CancellationUnsupportedTransport,
-            ));
-        }
-        ClientTarget::Stdio(_) => {}
-    }
     // Preflight: the tool must succeed uncancelled, otherwise a pass here
     // would only mean the server was broken in a different way.
     let preflight = call_named_and_record(&tool, &arguments, context)?;

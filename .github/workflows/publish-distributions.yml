@@ -95,13 +95,16 @@ jobs:
             echo "::error::@cavi-ai/mcp-eval@0.1.0 already exists; npm versions are immutable"
             exit 1
           fi
-      - name: Require one-time first-publication credential
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
-        run: test -n "$NODE_AUTH_TOKEN"
+      # Trusted publishing (OIDC), mirroring @cavi-ai/api-client and
+      # @cavi-ai/bobby-browser: no npm token is stored in this repository.
+      # `id-token: write` above lets the npm CLI (Node 24.18.1 bundles npm
+      # 11.16.0, >= 11.5.1) exchange the GitHub OIDC token for a short-lived
+      # publish grant and attach provenance. Requires a Trusted Publisher on
+      # npmjs.com for @cavi-ai/mcp-eval pointing at cavi-ai/mcp-eval, workflow
+      # filename publish-distributions.yml, environment npm. Renaming this file
+      # or the environment breaks the OIDC subject match until the trusted
+      # publisher is edited to match.
       - run: npm publish package/*.tgz --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_BOOTSTRAP_TOKEN }}
 
   homebrew:
     name: Open Homebrew tap update

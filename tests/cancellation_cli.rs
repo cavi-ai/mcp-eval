@@ -72,17 +72,26 @@ fn a_tool_that_cannot_be_cancelled_unless_it_works() {
     assert_eq!(report["cases"][0]["reason"], "unexpected-outcome");
 }
 
-#[test]
-fn cancellation_works_over_streamable_http() {
-    // A thread-based Streamable HTTP fixture that answers tools/call with
-    // the structured "Request cancelled" error when the cancellation
-    // notification arrives mid-flight (the production-server pattern),
-    // and a broken variant that returns the full result anyway.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum CancelMode {
+    /// Answer the cancelled call with the structured -32800 error.
+    Acknowledge,
+    /// Never answer the cancelled call: hold the connection past grace.
+    Silence,
+    /// Finish the work and return the full result anyway.
+    Ignore,
+}
+
+/// Run the cancellation probe against a thread-based Streamable HTTP
+/// fixture and return the CLI output with its wall-clock duration.
+fn probe_http(mode: CancelMode, grace_seconds: u64) -> (std::process::Output, std::time::Duration) {
     let dir = home();
     let manifest = dir.join("m.json");
     std::fs::write(
         &manifest,
-        r#"{"version":1,"probes":[{"id":"cancel-http","probe":"cancellation","tool":"slow_read","access":"read_only","arguments":{},"grace_seconds":3,"reason":"probe"}]}"#,
+        format!(
+            r#"{{"version":1,"probes":[{{"id":"cancel-http","probe":"cancellation","tool":"slow_read","access":"read_only","arguments":{{}},"grace_seconds":{grace_seconds},"reason":"probe"}}]}}"#
+        ),
     )
     .unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -92,16 +101,19 @@ fn cancellation_works_over_streamable_http() {
     // notification mid-flight.
     let cancel_seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let server = std::thread::spawn(move || {
+        // initialize, initialized, tools/list, preflight call, cancelled
+        // call, cancellation notification: six connections per run.
         for _ in 0..6 {
             let Ok((mut stream, _)) = listener.accept() else {
                 break;
             };
             let cancel_seen = std::sync::Arc::clone(&cancel_seen);
             std::thread::spawn(move || {
-                handle_http_connection(&mut stream, &cancel_seen);
+                handle_http_connection(&mut stream, &cancel_seen, mode);
             });
         }
     });
+    let started = std::time::Instant::now();
     let output = Command::new(bin())
         .args([
             "probe",
@@ -117,6 +129,16 @@ fn cancellation_works_over_streamable_http() {
         .env("MCPEVAL_HOME", &dir)
         .output()
         .unwrap();
+    let elapsed = started.elapsed();
+    server.join().unwrap();
+    (output, elapsed)
+}
+
+#[test]
+fn cancellation_works_over_streamable_http() {
+    // The production-server pattern: the cancelled call is answered with
+    // the structured "Request cancelled" error.
+    let (output, _) = probe_http(CancelMode::Acknowledge, 3);
     assert!(
         output.status.success(),
         "{} {}",
@@ -126,14 +148,43 @@ fn cancellation_works_over_streamable_http() {
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["cases"][0]["probe"], "cancellation");
     assert_eq!(report["cases"][0]["passed"], true);
-    server.join().unwrap();
+}
+
+#[test]
+fn http_silence_within_grace_is_honored() {
+    // A server that never answers the cancelled call is honoring the
+    // cancellation. The wait is bounded by the manifest's grace_seconds,
+    // not by the client's fixed read timeout: one second of grace must
+    // finish well under the five-second agent default.
+    let (output, elapsed) = probe_http(CancelMode::Silence, 1);
+    assert!(
+        output.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["cases"][0]["passed"], true);
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "silence took {elapsed:?}; grace_seconds was not applied"
+    );
+}
+
+#[test]
+fn http_full_result_after_cancel_is_ignored() {
+    let (output, _) = probe_http(CancelMode::Ignore, 3);
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["cases"][0]["reason"], "cancellation-ignored");
 }
 
 /// Minimal Streamable HTTP MCP fixture: initialize/tools-list plus a
-/// tools/call handler that answers the structured cancellation error.
+/// tools/call handler whose response to a cancelled call depends on `mode`.
 fn handle_http_connection(
     stream: &mut std::net::TcpStream,
     cancel_seen: &std::sync::atomic::AtomicBool,
+    mode: CancelMode,
 ) {
     use std::io::{BufRead, BufReader, Read, Write};
     let mut reader = BufReader::new(stream.try_clone().unwrap());
@@ -169,39 +220,37 @@ fn handle_http_connection(
         "tools/list" => serde_json::json!({"tools": [
             {"name": "slow_read", "inputSchema": {"type": "object", "properties": {}}}
         ]}),
-        "notifications/cancelled" => {
-            cancel_seen.store(true, std::sync::atomic::Ordering::SeqCst);
-            serde_json::json!({})
-        }
         _ => serde_json::json!({}),
     };
-    // A tools/call models a long-running operation: it holds its
-    // response until either the cancellation notification arrives (then
-    // answers the structured acknowledgement) or a bounded grace elapses
-    // (then answers normally). This is what makes the cancellation
-    // observable mid-flight for the client.
+    let mut frame = serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": result});
+    // A tools/call models a long-running operation: it holds its response
+    // until either the cancellation notification arrives or a bounded hold
+    // elapses (the uncancelled preflight call takes that path and is
+    // answered normally). This is what makes the cancellation observable
+    // mid-flight for the client.
     if request["method"] == "tools/call" {
-        // Shorter than the client's five-second read timeout so the
-        // fixture's own deadline fires first.
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-        while !cancel_seen.load(std::sync::atomic::Ordering::SeqCst) {
-            if std::time::Instant::now() >= deadline {
-                break;
-            }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
+        while !cancel_seen.load(std::sync::atomic::Ordering::SeqCst)
+            && std::time::Instant::now() < deadline
+        {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
+        if cancel_seen.load(std::sync::atomic::Ordering::SeqCst) {
+            match mode {
+                CancelMode::Acknowledge => {
+                    frame = serde_json::json!({"jsonrpc": "2.0", "id": request["id"],
+                        "error": {"code": -32800, "message": "Request cancelled"}});
+                }
+                CancelMode::Silence => {
+                    // Never answer: hold the connection until the client has
+                    // given up, then drop it without writing a frame.
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    return;
+                }
+                CancelMode::Ignore => {}
+            }
+        }
     }
-    // After the cancellation notification arrives, tools/call is
-    // answered with the structured acknowledgement: the server observed
-    // the cancellation mid-flight.
-    let frame = if request["method"] == "tools/call"
-        && cancel_seen.load(std::sync::atomic::Ordering::SeqCst)
-    {
-        serde_json::json!({"jsonrpc": "2.0", "id": request["id"],
-            "error": {"code": -32800, "message": "Request cancelled"}})
-    } else {
-        serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": result})
-    };
     let payload = frame.to_string();
     write!(
         stream,

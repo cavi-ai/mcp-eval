@@ -48,7 +48,6 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
     let mut calls = 0u64;
     let mut flaky_calls = 0u64;
     let mut broken_state = false;
-    let mut cancelled_requests: Vec<u64> = Vec::new();
     // Shared flag for the in-flight cancellable call. A dedicated reader
     // thread owns stdin: it parses every frame, records cancellation
     // notifications into the flag, and forwards requests to the dispatch
@@ -181,7 +180,6 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                 }),
             )?,
         }
-        let _ = &mut cancelled_requests;
     }
     Ok(())
 }

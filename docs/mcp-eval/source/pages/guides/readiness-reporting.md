@@ -89,10 +89,14 @@ mcpeval trends --last 5
 
 ## Comparing servers
 
-`mcpeval compare` runs one manifest against several Streamable HTTP endpoints and renders a side-by-side verdict and readiness grid in text, markdown, or JSON. Comparison is informational and never gates; endpoint URLs follow the same loopback-first, credential-free policy as the probes.
+`mcpeval compare` runs one manifest against several targets and renders a side-by-side verdict and readiness grid in text, markdown, or JSON. Targets are `--endpoint LABEL=URL` Streamable HTTP endpoints, optionally plus one stdio command after `--`, whose column is labeled `stdio`; at least two targets are required. Comparison is informational and never gates; endpoint URLs follow the same loopback-first, credential-free policy as the probes.
 
 ```sh
 mcpeval compare --server demo \
   --endpoint staging=http://127.0.0.1:8081/mcp \
   --endpoint candidate=http://127.0.0.1:8082/mcp
+
+mcpeval compare --server demo \
+  --endpoint staging=http://127.0.0.1:8081/mcp \
+  -- ./target/release/mcpeval-demo
 ```

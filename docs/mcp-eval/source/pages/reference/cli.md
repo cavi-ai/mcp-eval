@@ -9,7 +9,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | `probe` | `--server <SERVER>` plus `[-- <CMD>...]` or `--url <URL>` | Run manifest probes. Supports `--manifest`, `--probe`, `--format text\|json\|markdown\|sarif`, `--price-per-mtok <USD>` for session-cost interpretation in text and markdown, `--allow-mutation`, and `--allow-remote-http`. |
 | `init` | `--server <SERVER>` plus a target | Scaffold a discovery/token-cost manifest from `tools/list`. `--confirm-read-only` additionally permits empty-argument schema checks. |
 | `schema` | no options | Print the strict manifest JSON Schema for editor validation. |
-| `compare` | `--server <SERVER> --endpoint <LABEL=URL>` twice or more | Compare one manifest across Streamable HTTP endpoints. Supports text, Markdown, and JSON output. |
+| `compare` | `--server <SERVER>` plus two or more targets: `--endpoint <LABEL=URL>` per Streamable HTTP endpoint and optionally one stdio command after `--` | Compare one manifest across servers side by side; the stdio column is labeled `stdio`. Supports text, Markdown, and JSON output. |
 | `export-issues` | `--dir <DIR>` | Write content-free markdown issue drafts for open promoted findings. |
 | `trends` | optional `--last <COUNT>` | Show privacy-safe readiness history from full probe runs. |
 | `report` | `<DOCUMENT>` (or `-` for stdin) | Re-render a committed `mcpeval.probe-report/v1` document as text, markdown, or SARIF without re-running any server. Supports `--brief` and `--price-per-mtok`. |

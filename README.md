@@ -224,10 +224,12 @@ The deterministic battery:
 
 ## Comparing servers
 
-Run one manifest against several Streamable HTTP endpoints and diff the
-verdicts side by side — useful when selecting between vendor servers or
-checking a deployment against your local build. Comparison is informational:
-it never exits non-zero for probe failures, so it complements rather than
+Run one manifest against several servers and diff the verdicts side by
+side — useful when selecting between vendor servers or checking a deployment
+against your local build. Targets are `--endpoint LABEL=URL` Streamable HTTP
+endpoints, optionally plus one stdio command after `--` (its column is labeled
+`stdio`); two or more targets are required. Comparison is informational: it
+never exits non-zero for probe failures, so it complements rather than
 replaces the `probe` gate.
 
 ```sh
@@ -235,6 +237,11 @@ mcpeval compare --server demo \
   --endpoint staging=https://staging.example/mcp \
   --endpoint vendor=https://vendor.example/mcp \
   --format markdown
+
+# a hosted endpoint against the local stdio build
+mcpeval compare --server demo \
+  --endpoint staging=https://staging.example/mcp \
+  -- ./target/release/mcpeval-demo
 ```
 
 Comparison endpoints are loopback-only unless `--allow-remote-http` is

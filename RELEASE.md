@@ -13,7 +13,7 @@ manual:
 | --- | --- | --- |
 | [release-binaries.yml](.github/workflows/release-binaries.yml) | `push: tags v*.*.*` | Prebuilt binaries for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, each with a SHA256 checksum, attached to the GitHub release; crates.io publish |
 | [publish-docs.yml](.github/workflows/publish-docs.yml) | `release: published` | Deterministic versioned docs archive `mcp-eval-docs-vX.Y.Z.tar.gz` + release envelope dispatched to cavi-home |
-| [publish-distributions.yml](.github/workflows/publish-distributions.yml) | manual from the default branch, exact v0.1.0 confirmation | One-time bootstrapped npm publication and/or a pull request against `cavi-ai/homebrew-tap` |
+| [publish-distributions.yml](.github/workflows/publish-distributions.yml) | manual from the default branch, exact v0.1.0 confirmation | npm publication through trusted publishing (OIDC) with provenance and/or a pull request against `cavi-ai/homebrew-tap` |
 
 Binary uploads and the crates.io publish are idempotent: re-running against
 an existing release or published version verifies identical bytes and exits
@@ -35,13 +35,16 @@ cleanly instead of overwriting.
      `mcpeval`. Without it the binaries still attach but the crates.io step
      fails; publish manually with `cargo publish --locked` and re-run the
      workflow if preferred.
-   - Create a protected `npm` environment with a one-time
-     `NPM_BOOTSTRAP_TOKEN`. npm requires the package to exist before trusted
-     publishing can be configured, so this credential bootstraps v0.1.0 with
-     provenance. This workflow is pinned to that bootstrap release. After
-     publication, delete the token and configure trusted publishing for
-     `@cavi-ai/mcp-eval`, repository `cavi-ai/mcp-eval`, a future release
-     workflow, and its protected `npm` environment.
+   - npm: no token. The `npm` job publishes through npm trusted publishing
+     (OIDC) from the protected `npm` environment and attaches provenance;
+     `scripts/distribution/publish-auth.test.mjs` fails if a stored npm token
+     returns to the workflow. Configure a Trusted Publisher on npmjs.com for
+     `@cavi-ai/mcp-eval`: organization `cavi-ai`, repository `mcp-eval`,
+     workflow filename `publish-distributions.yml`, environment `npm`, and
+     allow `npm publish` (configurations created after 2026-09-03 default to
+     `npm stage publish` only). Renaming the workflow file or the environment
+     breaks the OIDC subject match until the trusted publisher is edited to
+     match.
    - `HOMEBREW_TAP_TOKEN` — a fine-grained token that can push a branch and
      open a pull request in `cavi-ai/homebrew-tap`; protect it with the
      `homebrew` environment.
@@ -51,9 +54,9 @@ cleanly instead of overwriting.
    and refuses any byte mismatch.
 6. **Publish npm/Homebrew.** Dispatch `publish-distributions.yml`, select the
    intended target, and enter the exact confirmation shown by the workflow.
-   The v0.1.0 npm publish uses the protected bootstrap credential and
+   The npm publish runs tokenless through the trusted publisher and attaches
    provenance. Do not reuse this version-pinned workflow for later releases;
-   move them to trusted publishing. Homebrew publication stages
+   generalize it on `distribution/release.json` first. Homebrew publication stages
    `Formula/mcpeval.rb` plus the tap index and opens a reviewable pull request;
    it never pushes directly to the tap's default branch.
 7. **Announce.** Update the README badge/badges section if the readiness

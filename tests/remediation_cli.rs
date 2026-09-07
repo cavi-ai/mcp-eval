@@ -196,5 +196,14 @@ fn every_failure_reason_has_a_nonempty_hint() {
         assert!(shown.status.success(), "{reason}");
         let body = String::from_utf8(shown.stdout).unwrap();
         assert!(body.trim().len() > 40, "{reason} hint is thin: {body:?}");
+        assert!(
+            !body.contains('\\'),
+            "{reason} hint carries a literal backslash: {body:?}"
+        );
+        assert_eq!(
+            body.trim().lines().count(),
+            1,
+            "{reason} hint spans more than one line: {body:?}"
+        );
     }
 }

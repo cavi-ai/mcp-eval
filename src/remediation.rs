@@ -135,8 +135,8 @@ pub fn hint(reason: FailureReason) -> &'static str {
              work, and never send a response for the cancelled request id"
         }
         FailureReason::CancellationErrored => {
-            "the server answered a cancelled request with an error that shows no \\
-             cancellation awareness; observe notifications/cancelled for in-flight \\
+            "the server answered a cancelled request with an error that shows no \
+             cancellation awareness; observe notifications/cancelled for in-flight \
              requests and stop the work instead of replying with an unrelated error"
         }
     }

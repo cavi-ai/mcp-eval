@@ -46,5 +46,9 @@ Supplemental probe fields:
 - `instruction-fidelity`: `tool`, object `arguments`, and `expect`.
 - `latency-budget`: read-only only, with `tool`, object `arguments`, `attempts` from 1 through 20, and `max_latency_ms` from 1 through 60,000.
 - `pagination`: read-only only, with `max_pages` from 1 through 100.
+- `payload-bounds`: read-only only, with `tool`, object `arguments`, identifier `field`, `size_bytes` from 1 through 16,000,000, and boolean `expect_handled`.
+- `surface-listing`: read-only only, with `max_pages` from 1 through 1,000.
+- `output-schema`: read-only only, with `tool` and object `arguments`.
+- `cancellation`: read-only only, with `tool`, object `arguments`, `grace_seconds` from 1 through 60 (how long the probe waits after cancelling for a response the server must never send), and an identifier `reason` recorded in the `notifications/cancelled` notification.
 
 An `expect` object declares `outcome` as `ok` or `error`. Successful expectations may include unique `required_result_fields` and scalar `equals` values. Error expectations may include a numeric `error_code`, but cannot declare result fields. This probe checks declared machine-readable result fields, values, outcomes, and error codes; it does not send descriptions or results to an external LLM.

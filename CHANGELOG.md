@@ -7,6 +7,38 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `cancellation` probe: issues a read-only call, cancels it with
+  `notifications/cancelled`, and requires the server to acknowledge the
+  cancellation — silence for the cancelled request id within `grace_seconds`
+  or the structured "Request cancelled" error (-32800) that production
+  servers return; preflight confirms the tool succeeds uncancelled. Works on
+  stdio and Streamable HTTP (the call POST runs on its own connection with
+  `grace_seconds` as its timeout, so the cancellation lands mid-flight). The
+  demo server gained a `--broken cancellation` aspect that drops the
+  notification, and its slow tool now honors cancellation through a
+  dedicated stdin reader thread.
+- `mcpeval compare` accepts one stdio command after `--` as an additional
+  comparison column labeled `stdio`, alongside `--endpoint` HTTP targets;
+  two or more targets are required.
+- State of MCP servers guide: the readiness corpus
+  (`data/readiness-corpus.json`) holds 16 public servers collected with
+  `scripts/corpus/collect.sh`, and the distribution is published with its
+  method notes.
+- npm package `@cavi-ai/mcp-eval` and Homebrew formula `Formula/mcpeval.rb`,
+  both pinned to the v0.1.0 release archives and SHA-256 digests recorded in
+  `distribution/release.json`; the npm installer verifies the checksum
+  companion, the pinned archive size, and the SHA-256 before extracting the
+  binary.
+- CI: distribution contract check, `npm install` end-to-end on Linux and
+  Windows, and Homebrew audit, install, and test on macOS.
+
+### Changed
+
+- npm publication uses trusted publishing (OIDC) with provenance; no npm
+  token is stored in the repository.
+
 ## [0.1.0] - 2026-08-30
 
 ### Added
@@ -82,15 +114,6 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `report_weather` tool with structured output.
 - Readiness categories rebalanced for the deeper battery: discovery 0.25,
   reliability 0.35, contract 0.30, concurrency 0.10.
-- `cancellation` probe: issues a read-only call, cancels it with
-  `notifications/cancelled`, and requires the server to acknowledge the
-  cancellation — silence for the cancelled request id or the structured
-  "Request cancelled" error (-32800) that production servers return;
-  preflight confirms the tool succeeds uncancelled. Works on stdio and
-  Streamable HTTP (the call POST runs on its own connection so the
-  cancellation lands mid-flight). The demo server gained a `--broken
-  cancellation` aspect that drops the notification, and its slow tool now
-  honors cancellation through a dedicated stdin reader thread.
 - Remediation hints: every fixed failure reason maps to a concrete server-side
   fix, printed under failing cases in text output (suppress with `--brief`),
   rendered in the markdown report under *Remediation*, and documented

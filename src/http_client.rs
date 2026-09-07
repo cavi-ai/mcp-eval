@@ -136,20 +136,22 @@ impl HttpMcpClient {
     /// `notifications/cancelled` for it, then classify how the server
     /// resolved the cancelled request.
     ///
-    /// The call POST runs on a worker thread so the cancellation can land
-    /// while it is in flight. The classification follows what real
-    /// production servers do (the reference gateway answers a cancelled
-    /// request with the structured `-32800 Request cancelled` error):
-    /// a `-32800` error means the server observed the cancellation, a
-    /// full result means the server ignored it, any other error means the
-    /// server answered the cancelled id without cancellation awareness,
-    /// and a read timeout with no response counts as silence.
+    /// The call POST runs on a worker thread, on its own connection with
+    /// `grace` as its timeout, so the cancellation can land while it is in
+    /// flight. The classification follows what real production servers do
+    /// (the reference gateway answers a cancelled request with the
+    /// structured `-32800 Request cancelled` error): a `-32800` error means
+    /// the server observed the cancellation, a full result means the server
+    /// ignored it, any other error means the server answered the cancelled
+    /// id without cancellation awareness, and no response within `grace`
+    /// (a read timeout, or an SSE stream that ends without a frame for the
+    /// id) counts as silence, which honors the cancellation.
     pub fn cancel_tool_call(
         &mut self,
         tool: &str,
         arguments: &Value,
         reason: &str,
-        _grace: Duration,
+        grace: Duration,
     ) -> anyhow::Result<CancellationOutcome> {
         let id = self.next_id;
         self.next_id += 1;
@@ -167,6 +169,7 @@ impl HttpMcpClient {
                 worker_session,
                 call_message,
                 id,
+                grace,
             )
         });
         // Give the call a moment to reach the server before cancelling.
@@ -306,6 +309,13 @@ fn read_bounded(mut reader: impl Read) -> anyhow::Result<Vec<u8>> {
 }
 
 fn parse_sse_response(body: &[u8], expected_id: u64) -> anyhow::Result<Value> {
+    find_sse_response(body, expected_id)?
+        .context("MCP SSE stream ended without the matching response")
+}
+
+/// Scan an SSE body for the frame carrying `expected_id`; `None` means the
+/// stream ended without one.
+fn find_sse_response(body: &[u8], expected_id: u64) -> anyhow::Result<Option<Value>> {
     let text = std::str::from_utf8(body)
         .context("MCP SSE response is not UTF-8")?
         .replace("\r\n", "\n");
@@ -321,24 +331,46 @@ fn parse_sse_response(body: &[u8], expected_id: u64) -> anyhow::Result<Value> {
         }
         let value: Value = serde_json::from_str(&data).context("MCP SSE data is not valid JSON")?;
         if value.get("id").and_then(Value::as_u64) == Some(expected_id) {
-            return Ok(value);
+            return Ok(Some(value));
         }
     }
-    bail!("MCP SSE stream ended without the matching response")
+    Ok(None)
+}
+
+/// ureq surfaces its overall request timeout as a transport error whose
+/// source is an `io::Error` of kind `TimedOut` (WouldBlock is normalized).
+fn request_timed_out(error: &ureq::Error) -> bool {
+    match error {
+        ureq::Error::Transport(transport) => std::error::Error::source(transport)
+            .and_then(|source| source.downcast_ref::<std::io::Error>())
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut),
+        ureq::Error::Status(..) => false,
+    }
+}
+
+fn read_timed_out(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::TimedOut)
 }
 
 /// Run the in-flight call on a dedicated connection and classify the
-/// server's resolution of a cancelled request. The grace deadline is the
-/// read timeout: a response that never arrives counts as silence.
+/// server's resolution of a cancelled request. `grace` bounds the whole
+/// request: a cancelled call that is never answered within it, or an SSE
+/// stream that ends without a frame for the id, is silence and honors the
+/// cancellation. A transport failure before any response, or a non-200
+/// status, is an error, mirroring the stdio client's closed-stdout case.
 fn worker_call(
     agent: &ureq::Agent,
     endpoint: &str,
     session_id: Option<String>,
     message: Value,
     id: u64,
+    grace: Duration,
 ) -> anyhow::Result<CancellationOutcome> {
     let mut request = agent
         .post(endpoint)
+        .timeout(grace)
         .set("Accept", "application/json, text/event-stream")
         .set("Content-Type", "application/json")
         .set("MCP-Protocol-Version", PROTOCOL_VERSION);
@@ -354,9 +386,11 @@ fn worker_call(
         }
         request = request.set("Authorization", &authorization);
     }
-    let response = request
-        .send_json(message)
-        .map_err(|error| anyhow::anyhow!("cancelled call POST failed: {error}"))?;
+    let response = match request.send_json(message) {
+        Ok(response) => response,
+        Err(error) if request_timed_out(&error) => return Ok(CancellationOutcome::Honored),
+        Err(error) => bail!("cancelled call POST failed: {error}"),
+    };
     if response.status() != 200 {
         bail!("cancelled call returned an unexpected HTTP status");
     }
@@ -365,13 +399,19 @@ fn worker_call(
         .and_then(|value| value.split(';').next())
         .unwrap_or("")
         .to_owned();
-    let body = read_bounded(response.into_reader())?;
+    let body = match read_bounded(response.into_reader()) {
+        Ok(body) => body,
+        Err(error) if read_timed_out(&error) => return Ok(CancellationOutcome::Honored),
+        Err(error) => return Err(error),
+    };
     let value: Value = match content_type.trim() {
         "application/json" => {
             serde_json::from_slice(&body).context("cancelled call response is not valid JSON")?
         }
-        "text/event-stream" => parse_sse_response(&body, id)
-            .context("cancelled call SSE stream carried no matching response")?,
+        "text/event-stream" => match find_sse_response(&body, id)? {
+            Some(value) => value,
+            None => return Ok(CancellationOutcome::Honored),
+        },
         _ => bail!("cancelled call response has an unsupported content type"),
     };
     if let Some(error) = value.get("error") {

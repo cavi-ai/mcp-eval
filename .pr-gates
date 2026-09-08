@@ -1,0 +1,13 @@
+# Repository CI-equivalent deterministic lanes.
+cargo fmt --all --check
+cargo clippy --all-targets -- -D warnings
+cargo build --all-targets --locked
+cargo test --all-targets --locked
+python3 scripts/check-version-agreement.py
+npm run docs:build
+npm run docs:verify
+npm run docs:test
+npm run test:distribution
+npm run verify:distribution
+npm pack --dry-run --ignore-scripts
+git diff --check

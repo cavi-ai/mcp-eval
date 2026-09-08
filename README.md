@@ -33,10 +33,11 @@ macOS x64/arm64, Windows x64). Building from a checkout works too:
 cargo build --release
 ```
 
-The binary is `target/release/mcpeval` (`mcpeval.exe` on Windows). The npm
-package definition and Homebrew formula are pinned to the same immutable
-v0.1.0 release archives and SHA-256 checksums. Registry and tap publication
-remain separate release operations; see [RELEASE.md](RELEASE.md).
+The binary is `target/release/mcpeval` (`mcpeval.exe` on Windows).
+`npm install --global @cavi-ai/mcp-eval` installs the same release archive
+through a bootstrap that pins its size and SHA-256. The Homebrew formula
+(`Formula/mcpeval.rb`) pins the same archives; publishing it to the
+`cavi-ai/tap` tap is a manual release step, see [RELEASE.md](RELEASE.md).
 
 ## Quickstart
 

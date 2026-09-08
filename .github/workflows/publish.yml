@@ -1,0 +1,106 @@
+name: Publish npm
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: publish-npm-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish-npm:
+    runs-on: ubuntu-latest
+    # Named in the npm trusted publisher, so it is part of the OIDC subject
+    # claim npm matches against — not decoration. Removing it changes the claim
+    # to a repo-level subject and npm rejects the exchange.
+    environment: production
+    permissions:
+      contents: read
+      # The whole of the publish credential: npm exchanges this OIDC token for a
+      # short-lived publish grant. No npm token is stored in this repository.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # verify.mjs resolves the release tag to its commit with git rev-list.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.1
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm >= 11.5.1; the pinned Node 24.18.1 bundles
+      # 11.16.0, so npm stays pinned with Node rather than floating on @latest.
+      - name: Resolve the version to publish
+        id: release
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          if [ "$EVENT_NAME" = "push" ] && [ "$RELEASE_TAG" != "v${PKG_VERSION}" ]; then
+            echo "::error::release tag ${RELEASE_TAG} does not match package version ${PKG_VERSION}"
+            exit 1
+          fi
+          if npm view "@cavi-ai/mcp-eval@${PKG_VERSION}" version >/dev/null 2>&1; then
+            echo "::notice::@cavi-ai/mcp-eval@${PKG_VERSION} is already published; skipping."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "version=${PKG_VERSION}"
+            echo "tag=v${PKG_VERSION}"
+          } >> "$GITHUB_OUTPUT"
+      # The npm package pins the release archives by size and SHA-256 through
+      # distribution/release.json. release-binaries generates that manifest
+      # from the built assets and attaches it to the GitHub Release; both
+      # workflows start from the same tag push, so wait for the asset here.
+      - name: Wait for the release manifest
+        if: steps.release.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx 'release.json'; then
+              gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern release.json --output distribution/release.json --clobber
+              exit 0
+            fi
+            echo "release.json is not attached to $TAG yet (attempt $attempt/60)"
+            sleep 30
+          done
+          echo "::error::release $TAG never published distribution/release.json"
+          exit 1
+      # The formula is derived from the manifest; verify.mjs (also run by
+      # prepack) refuses a formula that does not match it, and --online checks
+      # every pinned archive byte-for-byte before anything is packed.
+      - name: Render the formula and verify the pinned assets
+        if: steps.release.outputs.publish == 'true'
+        run: |
+          set -euo pipefail
+          node scripts/distribution/render-formula.mjs > Formula/mcpeval.rb
+          node --test scripts/distribution/*.test.mjs
+          node scripts/distribution/verify.mjs --online --strict
+      - name: Dry-run pack
+        if: steps.release.outputs.publish == 'true'
+        run: npm pack --dry-run
+      # No stored npm token: a user token cannot publish here because the
+      # account requires 2FA on publish, and a one-time password cannot be held
+      # by CI. OIDC is the way this package publishes from Actions.
+      #
+      # The trusted publisher on npmjs.com for @cavi-ai/mcp-eval is
+      # cavi-ai / mcp-eval, workflow filename `publish.yml`, environment
+      # `production`. Every one of those is matched exactly against the OIDC
+      # claim: renaming this file, or dropping the `environment:` above, stops
+      # publishing until the trusted publisher is edited to match.
+      #
+      # `--provenance` is explicit: it is documented as automatic under trusted
+      # publishing but is not reliably applied without the flag.
+      - name: Publish
+        if: steps.release.outputs.publish == 'true'
+        run: npm publish --access public --provenance

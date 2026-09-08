@@ -10,13 +10,27 @@ const MODULE_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = path.resolve(path.dirname(MODULE_PATH), "../..");
 const SHA256 = /^[a-f0-9]{64}$/u;
 const COMMIT = /^[a-f0-9]{40}$/u;
-const TARGETS = {
+export const TARGETS = {
   "darwin-arm64": ["aarch64-apple-darwin", "tar.gz"],
   "darwin-x64": ["x86_64-apple-darwin", "tar.gz"],
   "linux-arm64": ["aarch64-unknown-linux-gnu", "tar.gz"],
   "linux-x64": ["x86_64-unknown-linux-gnu", "tar.gz"],
   "win32-x64": ["x86_64-pc-windows-msvc", "zip"],
 };
+
+function parseSemver(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
+  assert.ok(match, `invalid semantic version: ${version}`);
+  return match.slice(1).map(Number);
+}
+
+function compareSemver(left, right) {
+  const [a, b] = [parseSemver(left), parseSemver(right)];
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
+}
 
 function releaseUrl(manifest, asset) {
   return `https://github.com/${manifest.repository}/releases/download/${manifest.tag}/${asset.archive}`;
@@ -96,7 +110,7 @@ async function verifyOnline(manifest) {
   }
 }
 
-export async function verifyDistribution({ root = DEFAULT_ROOT, online = false } = {}) {
+export async function verifyDistribution({ root = DEFAULT_ROOT, gitRoot = root, online = false, strict = false } = {}) {
   const manifest = JSON.parse(await readFile(path.join(root, "distribution/release.json"), "utf8"));
   const npmPackage = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
   const cargo = await readFile(path.join(root, "Cargo.toml"), "utf8");
@@ -108,9 +122,19 @@ export async function verifyDistribution({ root = DEFAULT_ROOT, online = false }
   assert.equal(manifest.tag, `v${manifest.version}`);
   assert.match(manifest.commit, COMMIT);
   assert.equal(npmPackage.name, manifest.package);
-  assert.equal(npmPackage.version, manifest.version);
-  assert.equal(cargoVersion, manifest.version);
-  assert.equal(git(root, "rev-list", "-n", "1", manifest.tag), manifest.commit);
+  assert.equal(npmPackage.version, cargoVersion, "package.json and Cargo.toml disagree on the version");
+  if (strict) {
+    // Publishing: the manifest must describe exactly the version being packed.
+    assert.equal(cargoVersion, manifest.version, "source version must equal the distribution manifest version");
+  } else {
+    // The committed manifest records the last published release and lags the
+    // source version between a version bump and the post-release refresh.
+    assert.ok(
+      compareSemver(cargoVersion, manifest.version) >= 0,
+      `Cargo.toml version ${cargoVersion} is behind the published distribution ${manifest.version}`,
+    );
+  }
+  assert.equal(git(gitRoot, "rev-list", "-n", "1", manifest.tag), manifest.commit);
   assert.deepEqual(Object.keys(manifest.assets).sort(), Object.keys(TARGETS).sort());
 
   for (const [key, [target, extension]] of Object.entries(TARGETS)) {
@@ -145,7 +169,10 @@ export async function verifyDistribution({ root = DEFAULT_ROOT, online = false }
 }
 
 async function main() {
-  const result = await verifyDistribution({ online: process.argv.includes("--online") });
+  const result = await verifyDistribution({
+    online: process.argv.includes("--online"),
+    strict: process.argv.includes("--strict"),
+  });
   console.log(JSON.stringify(result, null, 2));
 }
 

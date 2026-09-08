@@ -165,23 +165,43 @@ test("official docs cover recovery and authorization contracts", async () => {
   }
 });
 
-test("release workflow runs the full Cargo and documentation gates before dispatch", async () => {
+test("documentation publishes from the release chain and is gated in CI", async () => {
   const workflow = await readFile(path.join(ROOT, ".github/workflows/publish-docs.yml"), "utf8");
   for (const phrase of [
     "release:",
     "types: [published]",
-    "cargo fmt --check",
-    "cargo clippy --all-targets --all-features -- -D warnings",
-    "cargo test --all-targets --all-features",
-    "node --test scripts/docs/*.test.mjs",
+    "workflow_call:",
+    "workflow_dispatch:",
+    "dry_run:",
     "node scripts/docs/build.mjs",
     "node scripts/docs/verify.mjs",
+    "node scripts/docs/release-artifact.mjs",
     "mcp-eval-docs-${TAG}.tar.gz",
     "$DIRECTORY/$ARTIFACT.sha256",
+    "if: ${{ env.DRY_RUN != 'true' }}",
     "CONSUMER_DISPATCH_TOKEN",
   ]) {
     assert.ok(workflow.includes(phrase), phrase);
   }
-  assert.ok(workflow.indexOf("cargo fmt --check") < workflow.indexOf("node scripts/docs/build.mjs"));
+  assert.ok(workflow.indexOf("node scripts/docs/build.mjs") < workflow.indexOf("node scripts/docs/verify.mjs"));
   assert.ok(workflow.indexOf("node scripts/docs/verify.mjs") < workflow.indexOf("gh api --method POST"));
+
+  // A release created with GITHUB_TOKEN fires no `release` event, so the tag
+  // path must call this workflow directly once the release exists.
+  const releaseBinaries = await readFile(path.join(ROOT, ".github/workflows/release-binaries.yml"), "utf8");
+  assert.ok(releaseBinaries.includes("uses: ./.github/workflows/publish-docs.yml"));
+  assert.ok(releaseBinaries.indexOf("gh release create") < releaseBinaries.indexOf("uses: ./.github/workflows/publish-docs.yml"));
+
+  // The Cargo and documentation gates run on every push and pull request.
+  const ci = await readFile(path.join(ROOT, ".github/workflows/ci.yml"), "utf8");
+  for (const phrase of [
+    "cargo fmt --all --check",
+    "cargo clippy --all-targets",
+    "cargo test --all-targets --locked",
+    "npm run docs:build",
+    "npm run docs:verify",
+    "npm run docs:test",
+  ]) {
+    assert.ok(ci.includes(phrase), phrase);
+  }
 });

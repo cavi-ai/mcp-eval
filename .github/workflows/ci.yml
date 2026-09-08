@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 permissions: {}
 
@@ -11,103 +12,176 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
 jobs:
-  lint:
-    name: fmt + clippy
+  rust:
+    name: rust · build · test · lint
+    if: ${{ !github.event.repository.private }} # public repos only (Actions is billed when private)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c
-      - name: rustfmt
-        run: cargo fmt -- --check
-      - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
+      - uses: actions/checkout@v7
 
-  test:
-    name: test (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo
+        uses: actions/cache@v6
         with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
       - name: Python for fixture servers
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        uses: actions/setup-python@v6
         with:
           python-version: "3.x"
-      - name: cargo test
-        run: cargo test --all-targets
 
-  docs-scripts:
-    name: docs pipeline tests
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets
+
+      - name: Build
+        run: cargo build --all-targets --locked
+
+      - name: Test
+        run: cargo test --all-targets --locked
+
+      - name: Version and naming agreement
+        # One tag ships binaries, npm, and the crate, so a version that
+        # disagrees between manifests ships a mislabelled artifact.
+        run: python3 scripts/check-version-agreement.py
+
+  windows:
+    name: windows · build · test
+    # Every v* tag builds mcpeval for windows-msvc in release-binaries. Run the
+    # full suite on the same OS so a cfg(windows) break lands on the PR instead
+    # of the tag.
+    if: ${{ !github.event.repository.private }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Python for fixture servers
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Test
+        run: cargo test --all-targets --locked
+
+  macos:
+    name: macos · build · test
+    if: ${{ !github.event.repository.private }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Python for fixture servers
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+
+      - name: Test
+        run: cargo test --all-targets --locked
+
+  node:
+    name: node · distribution · docs
+    if: ${{ !github.event.repository.private }} # public repos only (Actions is billed when private)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@v7
         with:
-          persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
-        with:
-          node-version: 24.18.1
-      - run: node --test scripts/docs/*.test.mjs
-
-  distribution:
-    name: distribution contract
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
+          # verify.mjs resolves the published release tag to its commit.
           fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.18.1
-      - run: node --test scripts/distribution/*.test.mjs
-      - run: node scripts/distribution/verify.mjs
-      - run: npm pack --dry-run --ignore-scripts
+
+      - name: Docs artifact
+        run: |
+          npm run docs:build
+          npm run docs:verify
+          npm run docs:test
+
+      - name: Distribution contract
+        run: |
+          npm run test:distribution
+          npm run verify:distribution
+          npm pack --dry-run --ignore-scripts
 
   npm-install:
     name: npm install (${{ matrix.os }})
+    if: ${{ !github.event.repository.private }}
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+
+      - uses: actions/setup-node@v7
         with:
           node-version: 24.18.1
+
       - run: node scripts/distribution/package-e2e.mjs
 
   homebrew-install:
-    name: Homebrew audit + install
+    name: homebrew · audit · install
+    if: ${{ !github.event.repository.private }}
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          persist-credentials: false
+
       - name: Stage local tap
         run: |
           brew tap-new --no-git cavi-ai/mcpeval-ci
           tap_root="$(brew --repository cavi-ai/mcpeval-ci)"
           cp Formula/mcpeval.rb "$tap_root/Formula/mcpeval.rb"
+
       - run: brew audit --strict cavi-ai/mcpeval-ci/mcpeval
       - run: brew install cavi-ai/mcpeval-ci/mcpeval
       - run: brew test cavi-ai/mcpeval-ci/mcpeval
+
       - name: Clean up local tap
         if: always()
         run: |
@@ -116,13 +190,15 @@ jobs:
 
   whitespace:
     name: git diff --check
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@v7
         with:
-          persist-credentials: false
           fetch-depth: 0
+
       - run: git diff --check HEAD~1
         if: github.event_name == 'push'
+
       - run: git diff --check origin/${{ github.base_ref }}...HEAD
         if: github.event_name == 'pull_request'

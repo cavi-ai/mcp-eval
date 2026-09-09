@@ -22,10 +22,15 @@
   ],
   "scripts": {
     "postinstall": "node npm/install.mjs",
+    "docs:build": "node scripts/docs/build.mjs",
+    "docs:verify": "node scripts/docs/verify.mjs",
+    "docs:test": "node --test scripts/docs/*.test.mjs",
     "test:distribution": "node --test scripts/distribution/*.test.mjs",
     "verify:distribution": "node scripts/distribution/verify.mjs",
     "verify:package": "node scripts/distribution/package-e2e.mjs",
-    "prepack": "node scripts/distribution/verify.mjs"
+    "format": "cargo fmt --all --check",
+    "lint": "cargo clippy --all-targets -- -D warnings",
+    "prepack": "node scripts/distribution/verify.mjs --strict"
   },
   "engines": {
     "node": ">=20"

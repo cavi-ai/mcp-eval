@@ -1,100 +1,69 @@
 name: Release binaries
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to attach assets to, e.g. v0.1.1
+        required: false
+        type: string
   push:
     tags:
-      - "v*.*.*"
-
-# The publish job attaches assets to the release and needs write access;
-# everything else stays read-only.
-permissions:
-  contents: read
+      - "v*"
 
 concurrency:
   group: release-binaries-${{ github.ref }}
   cancel-in-progress: false
 
-env:
-  CARGO_TERM_COLOR: never
+permissions:
+  contents: write
 
 jobs:
-  gate:
-    name: gates (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c
-      - name: Python for fixture servers
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
-        with:
-          python-version: "3.x"
-      - name: rustfmt
-        run: cargo fmt -- --check
-      - name: clippy
-        run: cargo clippy --all-targets -- -D warnings
-      - name: tests
-        run: cargo test --all-targets
-
-  binaries:
-    name: build ${{ matrix.target }}
-    needs: gate
-    runs-on: ${{ matrix.runner }}
+  build:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-gnu
-            runner: ubuntu-latest
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
             archive: tar.gz
-          - target: aarch64-unknown-linux-gnu
-            runner: ubuntu-latest
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
             archive: tar.gz
-          - target: x86_64-apple-darwin
-            runner: macos-latest
+          - os: macos-15
+            target: aarch64-apple-darwin
             archive: tar.gz
-          - target: aarch64-apple-darwin
-            runner: macos-latest
+          # macos-13 was retired in December 2025; macos-15-intel is the
+          # remaining x86_64 macOS image.
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
             archive: tar.gz
-          - target: x86_64-pc-windows-msvc
-            runner: windows-latest
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
             archive: zip
+    runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          persist-credentials: false
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c
-        with:
-          key: ${{ matrix.target }}
 
-      - name: Install cross linker (aarch64 linux)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
-          echo 'CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc' >> "$GITHUB_ENV"
-
-      - name: Build release binary
+      - name: Build release binaries
         run: cargo build --release --locked --bins --target ${{ matrix.target }}
 
       - name: Package (unix)
         if: matrix.archive == 'tar.gz'
         run: |
+          set -euo pipefail
           cd "target/${{ matrix.target }}/release"
+          # Drop debug symbols from released binaries; local cargo builds stay unstripped.
+          strip mcpeval mcpeval-demo
           # Explicit argument order (binaries sorted) rather than GNU's
           # --sort=name, which BSD tar on macOS does not support.
           tar -czf "mcpeval-${{ matrix.target }}.tar.gz" mcpeval mcpeval-demo
           shasum -a 256 "mcpeval-${{ matrix.target }}.tar.gz" \
             > "mcpeval-${{ matrix.target }}.tar.gz.sha256"
+          shasum -a 256 -c "mcpeval-${{ matrix.target }}.tar.gz.sha256"
 
       - name: Package (windows)
         if: matrix.archive == 'zip'
@@ -105,14 +74,20 @@ jobs:
           $hash = (Get-FileHash "$dir/mcpeval-${{ matrix.target }}.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  mcpeval-${{ matrix.target }}.zip" | Out-File -NoNewline -Encoding ascii "$dir/mcpeval-${{ matrix.target }}.zip.sha256"
 
-      - name: Verify checksum file (unix)
-        if: matrix.archive == 'tar.gz'
+      - name: Smoke release binaries --version
+        shell: bash
         run: |
-          cd "target/${{ matrix.target }}/release"
-          shasum -a 256 -c "mcpeval-${{ matrix.target }}.tar.gz.sha256"
+          set -euo pipefail
+          OUT="target/${{ matrix.target }}/release"
+          if [[ "${{ matrix.archive }}" == "zip" ]]; then
+            "$OUT/mcpeval.exe" --version
+            "$OUT/mcpeval-demo.exe" --help >/dev/null || true
+          else
+            "$OUT/mcpeval" --version
+            test -x "$OUT/mcpeval-demo"
+          fi
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@v7
         with:
           name: mcpeval-${{ matrix.target }}
           path: |
@@ -122,34 +97,75 @@ jobs:
             target/${{ matrix.target }}/release/mcpeval-*.zip.sha256
           if-no-files-found: error
 
-  publish:
-    name: publish release assets
-    needs: binaries
+  release:
+    needs: build
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.tag != '' }}
     runs-on: ubuntu-latest
+    # Uploading assets needs write here even though the workflow already
+    # declares it, matching publish-docs.
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/checkout@v7
         with:
-          persist-credentials: false
-
-      - name: Download all archives
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+          # The distribution manifest records the tag's commit.
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.1
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
-      - name: Publish binaries to the GitHub release
+      # Nothing else creates the release. `gh release upload` answers "release
+      # not found" and fails the tag otherwise. `publish-docs` also refuses to
+      # run without a published, non-prerelease release, and `publish` (npm)
+      # waits for the manifest this job attaches, so this step gates the tag.
+      - name: Create the GitHub Release
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
-          # Idempotent: re-running an existing release must not mutate assets.
+          VERSION="${TAG#v}"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+          } >> "$GITHUB_OUTPUT"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "release $TAG already exists; leaving its body untouched"
+            exit 0
+          fi
+          # Fails when the version has no changelog section, so a tag can never
+          # publish a release with an empty body.
+          python3 scripts/changelog-section.py "$VERSION" > notes.md
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$TAG" \
+            --notes-file notes.md \
+            --verify-tag
+
+      # Idempotent, never --clobber: the npm package and the Homebrew formula
+      # pin these archives by SHA-256, so an asset that already exists must be
+      # byte-identical or the run refuses to touch it.
+      - name: Publish GitHub Release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "$(ls -A dist)" ]; then
+            echo "::error::no built assets to upload"
+            exit 1
+          fi
           for file in dist/mcpeval-*; do
             name="$(basename "$file")"
-            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --output "/tmp/existing-$name" 2>/dev/null; then
-              existing="$(sha256sum "/tmp/existing-$name" | cut -d' ' -f1)"
+            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --output "$RUNNER_TEMP/existing-$name" 2>/dev/null; then
+              existing="$(sha256sum "$RUNNER_TEMP/existing-$name" | cut -d' ' -f1)"
               local_hash="$(sha256sum "$file" | cut -d' ' -f1)"
               if [[ "$existing" != "$local_hash" ]]; then
                 echo "::error::Release asset $name already exists with different bytes; refusing overwrite"
@@ -157,24 +173,45 @@ jobs:
               fi
               echo "$name already attached with identical bytes"
             else
-              gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY" --clobber
+              gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"
             fi
           done
 
-      - name: Publish crates.io
+      # distribution/release.json is what the npm package and the Homebrew
+      # formula pin: archive names, sizes, and SHA-256 digests of the assets
+      # attached above, with the tag and its commit. It is generated from the
+      # built bytes here and attached to the release, where `publish` (npm)
+      # collects it and the post-release pull request refreshes the committed
+      # copy from.
+      - name: Publish the distribution manifest and formula
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.release.outputs.tag }}
         run: |
           set -euo pipefail
-          # The downloaded release artifacts make the checkout dirty and
-          # cargo publish refuses dirty trees. Remove them: the package is
-          # built from the committed source, not from dist/.
-          rm -rf dist
-          if cargo search mcpeval --limit 1 2>/dev/null | grep -q '^mcpeval = "'; then
-            published="$(cargo search mcpeval --limit 1 | grep '^mcpeval = "' | cut -d'"' -f2)"
-            if [[ "$published" == "${GITHUB_REF_NAME#v}" ]]; then
-              echo "mcpeval ${GITHUB_REF_NAME#v} already on crates.io"
-              exit 0
+          COMMIT="$(git rev-list -n 1 "$TAG")"
+          node scripts/distribution/release-manifest.mjs --dist dist --tag "$TAG" --commit "$COMMIT" > "$RUNNER_TEMP/release.json"
+          node scripts/distribution/render-formula.mjs --manifest "$RUNNER_TEMP/release.json" > "$RUNNER_TEMP/mcpeval.rb"
+          for name in release.json mcpeval.rb; do
+            file="$RUNNER_TEMP/$name"
+            if gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --output "$RUNNER_TEMP/existing-$name" 2>/dev/null; then
+              if ! cmp --silent "$RUNNER_TEMP/existing-$name" "$file"; then
+                echo "::error::Release asset $name already exists with different bytes; refusing overwrite"
+                exit 1
+              fi
+              echo "$name already attached with identical bytes"
+            else
+              gh release upload "$TAG" "$file" --repo "$GITHUB_REPOSITORY"
             fi
-          fi
-          cargo publish --locked
+          done
+          cat "$RUNNER_TEMP/release.json"
+
+  # A release created with GITHUB_TOKEN does not fire `on: release`, so the
+  # documentation artifact is invoked directly rather than left to the event.
+  docs:
+    needs: release
+    uses: ./.github/workflows/publish-docs.yml
+    with:
+      version: ${{ needs.release.outputs.version }}
+      dry_run: false
+    secrets: inherit

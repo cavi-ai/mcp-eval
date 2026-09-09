@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -7,13 +8,13 @@ import test from "node:test";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 
-const RELEASE_ASSETS = {
-  "darwin-arm64": "d6ab42cd065a536b082730a1054d71fc86f863eab81608c46261f2a9350aa6f2",
-  "darwin-x64": "fe32b9bcb10f54209a3d819614049b2c8bb12ef4182808deb9152e5d6b3769f8",
-  "linux-arm64": "dfa94d7e8c553196d857e017e76b221c8d57d6f5703acc4e781454cbdd68df6f",
-  "linux-x64": "6d2f2c5df822e9be6f786ab41512d869d41fb9170c36f3f6f60f48b02caedb7e",
-  "win32-x64": "c1cf80f4b0a70739de2b44d3322c9888da0ebb91fc05ed2285b0a8ae70340055",
-};
+// The committed manifest records the last published release; the contract
+// tests derive their expectations from it so a refresh never rewrites them.
+const MANIFEST = JSON.parse(await readFile(path.join(ROOT, "distribution/release.json"), "utf8"));
+const PACKAGE = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf8"));
+const RELEASE_ASSETS = Object.fromEntries(
+  Object.entries(MANIFEST.assets).map(([key, asset]) => [key, asset.sha256]),
+);
 
 test("published checksum parser accepts the Unix and Windows line endings", async () => {
   const { verifyChecksumCompanion } = await import("./verify.mjs");
@@ -23,16 +24,97 @@ test("published checksum parser accepts the Unix and Windows line endings", asyn
   assert.doesNotThrow(() => verifyChecksumCompanion(`${sha256}  ${archive}\n`, { archive, sha256 }));
 });
 
-test("distribution contract pins the published v0.1.0 release", async () => {
+test("distribution contract pins the published release", async () => {
   const { verifyDistribution } = await import("./verify.mjs");
+  assert.match(MANIFEST.tag, /^v\d+\.\d+\.\d+$/u);
+  assert.match(MANIFEST.commit, /^[a-f0-9]{40}$/u);
   assert.deepEqual(await verifyDistribution({ root: ROOT }), {
-    version: "0.1.0",
-    tag: "v0.1.0",
-    commit: "ffc0b2d0d0922f3f4daa246effcfa25fe7be349a",
+    version: MANIFEST.version,
+    tag: MANIFEST.tag,
+    commit: MANIFEST.commit,
     npmPackage: "@cavi-ai/mcp-eval",
     assets: RELEASE_ASSETS,
     formulaAssets: 4,
   });
+  assert.deepEqual(await verifyDistribution({ root: ROOT, strict: PACKAGE.version === MANIFEST.version }), {
+    version: MANIFEST.version,
+    tag: MANIFEST.tag,
+    commit: MANIFEST.commit,
+    npmPackage: "@cavi-ai/mcp-eval",
+    assets: RELEASE_ASSETS,
+    formulaAssets: 4,
+  });
+});
+
+async function sourceTreeWithVersion(version) {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "mcpeval-version-lag-"));
+  await mkdir(path.join(temporary, "distribution"), { recursive: true });
+  await mkdir(path.join(temporary, "Formula"), { recursive: true });
+  const cargo = await readFile(path.join(ROOT, "Cargo.toml"), "utf8");
+  await writeFile(path.join(temporary, "Cargo.toml"), cargo.replace(/^version = "[^"]+"$/mu, `version = "${version}"`));
+  await writeFile(path.join(temporary, "package.json"), JSON.stringify({ ...PACKAGE, version }, null, 2));
+  await copyFile(path.join(ROOT, "distribution/release.json"), path.join(temporary, "distribution/release.json"));
+  await copyFile(path.join(ROOT, "Formula/mcpeval.rb"), path.join(temporary, "Formula/mcpeval.rb"));
+  return temporary;
+}
+
+test("a bumped source version is accepted until the post-release refresh, but never for publishing", async (context) => {
+  const { verifyDistribution } = await import("./verify.mjs");
+  const next = MANIFEST.version.replace(/\d+$/u, (patch) => String(Number(patch) + 1));
+  const bumped = await sourceTreeWithVersion(next);
+  context.after(() => rm(bumped, { recursive: true, force: true }));
+  const result = await verifyDistribution({ root: bumped, gitRoot: ROOT });
+  assert.equal(result.version, MANIFEST.version);
+  await assert.rejects(
+    verifyDistribution({ root: bumped, gitRoot: ROOT, strict: true }),
+    /must equal the distribution manifest version/u,
+  );
+
+  const behind = await sourceTreeWithVersion("0.0.1");
+  context.after(() => rm(behind, { recursive: true, force: true }));
+  await assert.rejects(verifyDistribution({ root: behind, gitRoot: ROOT }), /is behind the published distribution/u);
+});
+
+test("release manifest is derived from the built archives and their checksum companions", async (context) => {
+  const { buildReleaseManifest } = await import("./release-manifest.mjs");
+  const { TARGETS } = await import("./verify.mjs");
+  const dist = await mkdtemp(path.join(os.tmpdir(), "mcpeval-release-manifest-"));
+  context.after(() => rm(dist, { recursive: true, force: true }));
+  const expected = {};
+  for (const [key, [target, extension]] of Object.entries(TARGETS)) {
+    const archive = `mcpeval-${target}.${extension}`;
+    const bytes = Buffer.from(`fixture archive for ${target}`);
+    const sha256 = createHash("sha256").update(bytes).digest("hex");
+    await writeFile(path.join(dist, archive), bytes);
+    await writeFile(path.join(dist, `${archive}.sha256`), `${sha256}  ${archive}\n`);
+    expected[key] = { target, archive, size: bytes.length, sha256 };
+  }
+  const commit = "a".repeat(40);
+  const manifest = await buildReleaseManifest({ dist, tag: "v9.9.9", commit, root: ROOT });
+  assert.deepEqual(manifest, {
+    schemaVersion: 1,
+    package: "@cavi-ai/mcp-eval",
+    repository: "cavi-ai/mcp-eval",
+    version: "9.9.9",
+    tag: "v9.9.9",
+    commit,
+    assets: expected,
+  });
+  assert.deepEqual(Object.keys(manifest), ["schemaVersion", "package", "repository", "version", "tag", "commit", "assets"]);
+
+  const { renderFormula } = await import("./verify.mjs");
+  const formula = renderFormula(manifest);
+  assert.match(formula, /releases\/download\/v9\.9\.9\/mcpeval-aarch64-apple-darwin\.tar\.gz/u);
+  assert.match(formula, /assert_match "mcpeval 9\.9\.9"/u);
+
+  await writeFile(path.join(dist, "mcpeval-x86_64-unknown-linux-gnu.tar.gz.sha256"), `${"0".repeat(64)}  mcpeval-x86_64-unknown-linux-gnu.tar.gz\n`);
+  await assert.rejects(buildReleaseManifest({ dist, tag: "v9.9.9", commit, root: ROOT }), /checksum digest mismatch/u);
+  await assert.rejects(buildReleaseManifest({ dist, tag: "9.9.9", commit, root: ROOT }), /release tag must be vX\.Y\.Z/u);
+});
+
+test("render-formula reproduces the committed formula from the committed manifest", async () => {
+  const { renderFormulaFile } = await import("./render-formula.mjs");
+  assert.equal(await renderFormulaFile(), await readFile(path.join(ROOT, "Formula/mcpeval.rb"), "utf8"));
 });
 
 test("npm dry-run contains only the launcher, installer, release contract, and package docs", () => {
@@ -43,7 +125,7 @@ test("npm dry-run contains only the launcher, installer, release contract, and p
   });
   assert.equal(packed.status, 0, packed.stderr);
   const [result] = JSON.parse(packed.stdout);
-  assert.equal(result.filename, "cavi-ai-mcp-eval-0.1.0.tgz");
+  assert.equal(result.filename, `cavi-ai-mcp-eval-${PACKAGE.version}.tgz`);
   assert.deepEqual(
     result.files.map(({ path: file }) => file).sort(),
     [

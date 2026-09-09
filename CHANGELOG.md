@@ -1,11 +1,6 @@
 # Changelog
 
-All notable changes to this project are documented in this file.
-
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
+## Unreleased
 
 ### Added
 
@@ -39,7 +34,7 @@ and the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - npm publication uses trusted publishing (OIDC) with provenance; no npm
   token is stored in the repository.
 
-## [0.1.0] - 2026-08-30
+## 0.1.0 - 2026-08-30
 
 ### Added
 

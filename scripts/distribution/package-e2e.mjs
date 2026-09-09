@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
+// The tarball is named by package.json; the installed binary is whatever
+// release distribution/release.json pins, which may lag a version bump until
+// the post-release refresh.
+const PACKAGE = JSON.parse(await readFile(path.join(ROOT, "package.json"), "utf8"));
+const MANIFEST = JSON.parse(await readFile(path.join(ROOT, "distribution/release.json"), "utf8"));
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -27,12 +32,14 @@ async function main() {
 
   try {
     await mkdir(packageDirectory, { recursive: true });
-    run(npm, ["pack", "--pack-destination", packageDirectory], {
+    // prepack runs verify.mjs --strict, the publish-time gate; this e2e covers
+    // install and launch, so pack without scripts.
+    run(npm, ["pack", "--pack-destination", packageDirectory, "--ignore-scripts"], {
       cwd: ROOT,
       env: environment,
     });
     const packages = (await readdir(packageDirectory)).filter((file) => file.endsWith(".tgz"));
-    assert.deepEqual(packages, ["cavi-ai-mcp-eval-0.1.0.tgz"]);
+    assert.deepEqual(packages, [`cavi-ai-mcp-eval-${PACKAGE.version}.tgz`]);
     const packagePath = path.join(packageDirectory, packages[0]);
 
     run(npm, ["install", "--global", "--prefix", prefix, packagePath], {
@@ -44,7 +51,7 @@ async function main() {
       ? path.join(prefix, "mcpeval.cmd")
       : path.join(prefix, "bin", "mcpeval");
     const result = run(executable, ["--version"], { cwd: temporary });
-    assert.equal(result.stdout.trim(), "mcpeval 0.1.0");
+    assert.equal(result.stdout.trim(), `mcpeval ${MANIFEST.version}`);
     console.log(`verified ${packages[0]} on ${process.platform}-${process.arch}: ${result.stdout.trim()}`);
   } finally {
     await rm(temporary, { recursive: true, force: true });

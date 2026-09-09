@@ -2,19 +2,21 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-// The npm distribution publishes through npm trusted publishing (OIDC), the
-// same strategy as @cavi-ai/api-client and @cavi-ai/bobby-browser. No npm token
-// is stored in this repository: the GitHub OIDC token (id-token: write) is
+// The npm distribution publishes through npm trusted publishing (OIDC). No npm
+// token is stored in this repository: the GitHub OIDC token (id-token: write) is
 // exchanged by the npm CLI for a short-lived publish grant. These assertions
 // keep the workflow from silently regressing to a stored-token publish, which
 // is how the first attempt failed (empty NODE_AUTH_TOKEN).
 const workflow = await readFile(
-  new URL("../../.github/workflows/publish-distributions.yml", import.meta.url),
+  new URL("../../.github/workflows/publish.yml", import.meta.url),
   "utf8",
 );
 
 test("npm publishes via tokenless OIDC trusted publishing", () => {
   assert.match(workflow, /id-token:\s*write/, "the npm job must request the OIDC id-token");
+  // The trusted publisher on npmjs.com names this environment; it is part of
+  // the OIDC subject claim, so dropping or renaming it stops publishing.
+  assert.match(workflow, /^\s*environment:\s*production\s*$/m, "the npm job must run in the production environment");
   assert.match(
     workflow,
     /npm publish[^\n]*--provenance/,

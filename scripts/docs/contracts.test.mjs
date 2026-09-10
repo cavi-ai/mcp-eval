@@ -32,8 +32,8 @@ test("release identity follows the Cargo package and binary contracts", async ()
     resolveReleaseIdentity,
   } = await import("./lib.mjs");
   const release = resolveReleaseIdentity({
-    version: "0.1.0",
-    tag: "v0.1.0",
+    version: DOCUMENTED_VERSION,
+    tag: `v${DOCUMENTED_VERSION}`,
     commit: "0123456789abcdef0123456789abcdef01234567",
     sourceDateEpoch: 1700000000,
   });
@@ -49,8 +49,8 @@ test("release identity follows the Cargo package and binary contracts", async ()
       binary: "mcpeval",
       repository: "cavi-ai/mcp-eval",
       slug: "mcp-eval",
-      tag: "v0.1.0",
-      version: "0.1.0",
+      tag: `v${DOCUMENTED_VERSION}`,
+      version: DOCUMENTED_VERSION,
     },
   );
 });

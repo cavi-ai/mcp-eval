@@ -10,7 +10,8 @@ pub fn opaque_session(value: &str) -> String {
         return value.to_ascii_lowercase();
     }
     let digest = Sha256::digest(value.as_bytes());
-    format!("session:{digest:x}")
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("session:{hex}")
 }
 
 pub fn valid_server(value: &str) -> bool {

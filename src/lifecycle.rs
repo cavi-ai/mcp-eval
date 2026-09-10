@@ -74,7 +74,9 @@ pub fn finding_id(
         hash.update((bytes.len() as u64).to_be_bytes());
         hash.update(bytes);
     }
-    format!("finding-{}", &format!("{:x}", hash.finalize())[..16])
+    let finalized = hash.finalize();
+    let hex: String = finalized.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("finding-{}", &hex[..16])
 }
 
 pub fn prepare(

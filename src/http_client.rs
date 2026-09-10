@@ -193,21 +193,7 @@ impl HttpMcpClient {
 
     pub fn call_tool(&mut self, tool: &str, arguments: &Value) -> anyhow::Result<ToolResponse> {
         let response = self.request("tools/call", json!({"name": tool, "arguments": arguments}))?;
-        if let Some(result) = response.get("result") {
-            return Ok(ToolResponse::Success(result.clone()));
-        }
-        let error = response
-            .get("error")
-            .and_then(Value::as_object)
-            .context("tools/call response has no result or error")?;
-        let code = error
-            .get("code")
-            .and_then(Value::as_i64)
-            .context("tools/call error has no integer code")?;
-        Ok(ToolResponse::Error {
-            code,
-            payload: Value::Object(error.clone()),
-        })
+        crate::mcp_client::classify_tool_response(&response)
     }
 
     /// Raw JSON-RPC request for probes that inspect envelope structure
@@ -291,21 +277,10 @@ impl HttpMcpClient {
             if object.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }
-            if let Some(result) = object.get("result") {
-                return Ok((ToolResponse::Success(result.clone()), server_requests));
-            }
-            if let Some(error) = object.get("error") {
-                let code = error
-                    .get("code")
-                    .and_then(Value::as_i64)
-                    .context("tools/call error has no integer code")?;
-                return Ok((
-                    ToolResponse::Error {
-                        code,
-                        payload: error.clone(),
-                    },
-                    server_requests,
-                ));
+            if object.contains_key("result") || object.contains_key("error") {
+                let response =
+                    crate::mcp_client::classify_tool_response(&Value::Object(object.clone()))?;
+                return Ok((response, server_requests));
             }
         }
         bail!("tools/call stream ended without the tool response")

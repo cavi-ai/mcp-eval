@@ -192,21 +192,7 @@ impl McpClient {
                 if object.get("id").and_then(Value::as_u64) != Some(id) {
                     bail!("MCP response id does not match request");
                 }
-                let response = if let Some(result) = object.get("result") {
-                    ToolResponse::Success(result.clone())
-                } else {
-                    let error = object
-                        .get("error")
-                        .context("response has neither result nor error")?;
-                    let code = error
-                        .get("code")
-                        .and_then(Value::as_i64)
-                        .context("tools/call error has no integer code")?;
-                    ToolResponse::Error {
-                        code,
-                        payload: error.clone(),
-                    }
-                };
+                let response = classify_tool_response(&frame)?;
                 return Ok((response, server_requests));
             }
             // Server→client request: answer it through the observer and
@@ -308,21 +294,7 @@ impl McpClient {
 
     pub fn call_tool(&mut self, tool: &str, arguments: &Value) -> anyhow::Result<ToolResponse> {
         let response = self.request("tools/call", json!({"name": tool, "arguments": arguments}))?;
-        if let Some(result) = response.get("result") {
-            return Ok(ToolResponse::Success(result.clone()));
-        }
-        let error = response
-            .get("error")
-            .and_then(Value::as_object)
-            .context("tools/call response has no result or error")?;
-        let code = error
-            .get("code")
-            .and_then(Value::as_i64)
-            .context("tools/call error has no integer code")?;
-        Ok(ToolResponse::Error {
-            code,
-            payload: Value::Object(error.clone()),
-        })
+        classify_tool_response(&response)
     }
 
     /// Raw JSON-RPC request for probes that inspect envelope structure
@@ -535,4 +507,45 @@ impl Drop for McpClient {
             }
         }
     }
+}
+
+/// Classify a `tools/call` response envelope into a ToolResponse. The
+/// protocol's second error channel — a successful envelope whose
+/// `result.isError` is true — is a tool failure: production servers,
+/// including the official reference server, report missing or invalid
+/// arguments this way, and probes must honor it or a broken tool passes.
+pub fn classify_tool_response(response: &Value) -> anyhow::Result<ToolResponse> {
+    if let Some(result) = response.get("result") {
+        if result.get("isError").and_then(Value::as_bool) == Some(true) {
+            let message = result
+                .get("content")
+                .and_then(Value::as_array)
+                .and_then(|content| content.first())
+                .and_then(|item| item.get("text"))
+                .and_then(Value::as_str)
+                .unwrap_or("tool error")
+                .to_owned();
+            return Ok(ToolResponse::Error {
+                code: -32000,
+                // The shim's journal synthesizes the same constant for
+                // isError results, so promotion groups one defect seen
+                // through the shim with the same defect seen through a
+                // probe (error_info carries scalar or identifier codes).
+                payload: json!({"code": "tool-error", "message": message}),
+            });
+        }
+        return Ok(ToolResponse::Success(result.clone()));
+    }
+    let error = response
+        .get("error")
+        .and_then(Value::as_object)
+        .context("tools/call response has no result or error")?;
+    let code = error
+        .get("code")
+        .and_then(Value::as_i64)
+        .context("tools/call error has no integer code")?;
+    Ok(ToolResponse::Error {
+        code,
+        payload: Value::Object(error.clone()),
+    })
 }

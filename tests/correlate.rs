@@ -313,3 +313,80 @@ fn unmatched_response_does_not_affect_pending_state_or_sequence() {
     assert_eq!(matched.seq, 1);
     assert_eq!(matched.latency_ms, Some(20));
 }
+
+#[test]
+fn a_tool_result_with_is_error_true_is_a_tool_error_not_ok() {
+    // The protocol's second error channel: a successful envelope whose
+    // result carries isError. The official reference server reports
+    // missing arguments this way, so the shim must journal it as an
+    // error — promotion cannot see tool friction otherwise.
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
+    c.on_outbound(
+        &json!({ "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                 "params": { "name": "get-structured-content", "arguments": {} } }),
+        1_000,
+    );
+    let rec = c
+        .on_inbound(
+            &json!({ "jsonrpc": "2.0", "id": 9, "result": {
+                "content": [{"type": "text", "text": "Input validation error: 'location' is required"}],
+                "isError": true
+            } }),
+            1_100,
+        )
+        .expect("a matched response emits a record");
+
+    assert_eq!(rec.outcome, "error");
+    let error = rec.error.expect("a tool error carries error info");
+    // The template is content-free: the message prose never persists.
+    let template = error.template.expect("tool error keeps a template");
+    assert!(!template.contains("location"), "{template}");
+    assert!(error.template_id.is_some());
+}
+
+#[test]
+fn a_tool_result_with_is_error_false_stays_ok() {
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
+    c.on_outbound(
+        &json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+                 "params": { "name": "echo", "arguments": {} } }),
+        1_000,
+    );
+    let rec = c
+        .on_inbound(
+            &json!({ "jsonrpc": "2.0", "id": 3, "result": {
+                "content": [{"type": "text", "text": "echo ok"}], "isError": false } }),
+            1_050,
+        )
+        .expect("a matched response emits a record");
+    assert_eq!(rec.outcome, "ok");
+    assert!(rec.error.is_none());
+}
+
+#[test]
+fn tool_error_classification_matches_the_probe_client_code() {
+    // The shim synthesizes the constant "tool-error" code for isError
+    // results; the probe client's ToolResponse payload carries the same
+    // code, so promotion groups the defect seen through either surface
+    // instead of splitting its evidence across two findings.
+    let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
+    c.on_outbound(
+        &json!({ "jsonrpc": "2.0", "id": 5, "method": "tools/call",
+                 "params": { "name": "t", "arguments": {} } }),
+        1_000,
+    );
+    let rec = c
+        .on_inbound(
+            &json!({ "jsonrpc": "2.0", "id": 5, "result": {
+                "content": [{"type": "text", "text": "MCP error -32602: bad args"}],
+                "isError": true } }),
+            1_050,
+        )
+        .expect("record");
+    let error = rec.error.expect("tool error info");
+    assert_eq!(
+        error.code,
+        Some(json!("tool-error")),
+        "shim-side code must equal the probe client's constant"
+    );
+}

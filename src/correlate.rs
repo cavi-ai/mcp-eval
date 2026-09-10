@@ -110,7 +110,19 @@ impl Correlator {
         match id_key(v) {
             Some(id) if is_response => {
                 let p = self.pending.remove(&format!("{scope}:{id}"))?;
-                let is_error = v.get("error").is_some();
+                // Two error channels exist at the tools/call boundary: a
+                // JSON-RPC `error` envelope, and a successful envelope
+                // whose `result.isError` is true (the protocol's channel
+                // for tool failures — the official reference server uses
+                // it for missing arguments). Both are friction; the
+                // tool-error flavor carries its message inside the
+                // result's content.
+                let envelope_error = v.get("error");
+                let result = v.get("result");
+                let tool_error = result.is_some_and(|result| {
+                    result.get("isError").and_then(Value::as_bool) == Some(true)
+                });
+                let is_error = envelope_error.is_some() || tool_error;
                 self.seq += 1;
                 Some(CallRecord {
                     ts: now_iso(),
@@ -127,7 +139,11 @@ impl Correlator {
                         "ok".into()
                     },
                     error: if is_error {
-                        Some(error_info(v, &self.salt))
+                        Some(match (envelope_error, result) {
+                            (Some(_), _) => error_info(v, &self.salt),
+                            (None, Some(result)) => tool_error_info(result, &self.salt),
+                            (None, None) => error_info(v, &self.salt),
+                        })
                     } else {
                         None
                     },
@@ -200,6 +216,26 @@ fn id_key(v: &Value) -> Option<String> {
         Some(Value::String(s)) => Some(format!("s:{s}")),
         Some(Value::Number(n)) => Some(format!("n:{n}")),
         _ => None,
+    }
+}
+
+/// Error info synthesized from a `tools/call` result with `isError: true`.
+/// The message lives in the result's content array; the fingerprint keeps
+/// only the privacy-safe template.
+fn tool_error_info(result: &Value, salt: &Salt) -> crate::record::ErrorInfo {
+    let message = result
+        .get("content")
+        .and_then(Value::as_array)
+        .and_then(|content| content.first())
+        .and_then(|item| item.get("text"))
+        .and_then(Value::as_str);
+    crate::record::ErrorInfo {
+        code: Some(Value::String("tool-error".into())),
+        layer: None,
+        retryable: None,
+        kind: None,
+        template: message.map(crate::errtemplate::normalize),
+        template_id: message.map(|message| crate::fingerprint::template_id(salt, message)),
     }
 }
 

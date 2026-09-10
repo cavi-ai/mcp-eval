@@ -4,10 +4,11 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { DOCUMENTED_VERSION } from "./lib.mjs";
 
 const IDENTITY = {
-  version: "0.1.0",
-  tag: "v0.1.0",
+  version: DOCUMENTED_VERSION,
+  tag: `v${DOCUMENTED_VERSION}`,
   commit: "0123456789abcdef0123456789abcdef01234567",
   sourceDateEpoch: 1700000000,
 };
@@ -48,11 +49,11 @@ test("build output is complete, stamped, and byte reproducible", async (context)
     schemaVersion: 2,
     package: "mcpeval",
     product: "mcp-eval",
-    version: "0.1.0",
+    version: DOCUMENTED_VERSION,
     contentSha256: await digest(first, true),
-    publicBasePath: "/docs/mcp-eval/v0.1.0",
+    publicBasePath: `/docs/mcp-eval/v${DOCUMENTED_VERSION}`,
     stableAlias: "/docs/mcp-eval",
-    release: { tag: "v0.1.0", commit: IDENTITY.commit },
+    release: { tag: IDENTITY.tag, commit: IDENTITY.commit },
     generatedAt: "2023-11-14T22:13:20.000Z",
   });
   for (const relative of await files(first)) {
@@ -65,8 +66,8 @@ test("build rejects mismatched versions and changed existing output", async (con
   context.after(() => rm(temporary, { recursive: true, force: true }));
   const { buildDocumentation } = await import("./build.mjs");
   await assert.rejects(
-    buildDocumentation({ ...IDENTITY, version: "0.1.1", outputRoot: temporary }),
-    /release version must be 0\.1\.0/u,
+    buildDocumentation({ ...IDENTITY, version: "0.0.900", outputRoot: temporary }),
+    new RegExp(`release version must be ${DOCUMENTED_VERSION.replaceAll(".", "\\.")}`, "u"),
   );
   const output = path.join(temporary, "built");
   await buildDocumentation({ ...IDENTITY, outputRoot: output });

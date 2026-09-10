@@ -5,10 +5,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { gunzipSync } from "node:zlib";
+import { DOCUMENTED_VERSION } from "./lib.mjs";
 
 const IDENTITY = {
-  version: "0.1.0",
-  tag: "v0.1.0",
+  version: DOCUMENTED_VERSION,
+  tag: `v${DOCUMENTED_VERSION}`,
   commit: "0123456789abcdef0123456789abcdef01234567",
   sourceDateEpoch: 1700000000,
 };
@@ -52,23 +53,23 @@ test("release artifact, checksum, and exact envelope are deterministic", async (
     schemaVersion: 1,
     slug: "mcp-eval",
     kind: "product-docs",
-    version: "0.1.0",
-    tag: "v0.1.0",
+    version: DOCUMENTED_VERSION,
+    tag: IDENTITY.tag,
     repository: "cavi-ai/mcp-eval",
     commit: IDENTITY.commit,
     artifact: {
-      url: "https://github.com/cavi-ai/mcp-eval/releases/download/v0.1.0/mcp-eval-docs-v0.1.0.tar.gz",
+      url: `https://github.com/cavi-ai/mcp-eval/releases/download/${IDENTITY.tag}/mcp-eval-docs-${IDENTITY.tag}.tar.gz`,
       sha256,
       format: "tar.gz",
     },
   });
   assert.equal(
     await readFile(results[0].checksumPath, "utf8"),
-    `${sha256}  mcp-eval-docs-v0.1.0.tar.gz\n`,
+    `${sha256}  mcp-eval-docs-${IDENTITY.tag}.tar.gz\n`,
   );
   const names = tarNames(firstBytes);
   assert.ok(names.includes("cavi-release.json"));
-  assert.ok(names.every((name) => name === "cavi-release.json" || name.startsWith("docs/mcp-eval/v0.1.0/")));
+  assert.ok(names.every((name) => name === "cavi-release.json" || name.startsWith(`docs/mcp-eval/v${DOCUMENTED_VERSION}/`)));
 });
 
 test("release artifact rejects documentation built for another commit", async (context) => {

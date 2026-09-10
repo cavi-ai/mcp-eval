@@ -227,8 +227,8 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
             "SELECT COUNT(*) FROM calls
              WHERE method='tools/call' AND server=?1 AND tool IS ?2",
             params![key.server, key.tool],
-            |row| row.get(0),
-        )?;
+            |row| row.get::<_, i64>(0),
+        )? as u64;
         let sessions = failures
             .iter()
             .map(|failure| failure.session.as_str())
@@ -262,8 +262,8 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
                  JOIN calls c ON c.id=w.neighbour_id
                  WHERE w.failure_id=?1 AND c.kind='real'",
                 [failure.id],
-                |row| row.get(0),
-            )?;
+                |row| row.get::<_, i64>(0),
+            )? as u64;
             costs.push(1.0 + real_neighbours as f64);
             let mut tool_statement = transaction.prepare(
                 "SELECT DISTINCT c.tool FROM windows w
@@ -340,12 +340,12 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
                 key.tool,
                 key.err_code,
                 key.err_template_id,
-                failures.len() as u64,
-                calls,
-                sessions,
+                failures.len() as i64,
+                calls as i64,
+                sessions as i64,
                 last_seen,
                 cost,
-                blast,
+                blast as i64,
                 parts.rate,
                 parts.confidence,
                 parts.recency,
@@ -378,8 +378,9 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
             findings += 1;
         }
     }
-    let issues: usize =
-        transaction.query_row("SELECT COUNT(*) FROM issues", [], |row| row.get(0))?;
+    let issues: usize = transaction.query_row("SELECT COUNT(*) FROM issues", [], |row| {
+        row.get::<_, i64>(0)
+    })? as usize;
     transaction.commit()?;
     Ok(PromotionStats { issues, findings })
 }

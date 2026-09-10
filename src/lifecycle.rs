@@ -74,7 +74,9 @@ pub fn finding_id(
         hash.update((bytes.len() as u64).to_be_bytes());
         hash.update(bytes);
     }
-    format!("finding-{}", &format!("{:x}", hash.finalize())[..16])
+    let finalized = hash.finalize();
+    let hex: String = finalized.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("finding-{}", &hex[..16])
 }
 
 pub fn prepare(
@@ -115,7 +117,7 @@ pub fn record(
 ) -> anyhow::Result<Status> {
     let mut db = Connection::open(root.join("index.db"))?;
     let transaction = db.transaction()?;
-    let current: Option<(String, Option<String>, u64)> = transaction
+    let current: Option<(String, Option<String>, i64)> = transaction
         .query_row(
             "SELECT state,probe_id,consecutive_passes FROM finding_lifecycle
              WHERE finding_id=?1",
@@ -128,7 +130,8 @@ pub fn record(
     };
     let state = State::parse(&state)?;
     let same_probe = current_probe.as_deref() == Some(probe_id);
-    let (state, consecutive_passes) = transition(state, same_probe, consecutive, passed);
+    let (state, consecutive_passes) =
+        transition(state, same_probe, consecutive.max(0) as u64, passed);
     let timestamp = now.to_rfc3339_opts(SecondsFormat::Millis, true);
     transaction.execute(
         "UPDATE finding_lifecycle SET probe_id=?2,state=?3,consecutive_passes=?4,updated_at=?5
@@ -137,7 +140,7 @@ pub fn record(
             finding_id,
             probe_id,
             state.as_str(),
-            consecutive_passes,
+            consecutive_passes as i64,
             timestamp
         ],
     )?;

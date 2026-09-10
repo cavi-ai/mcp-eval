@@ -107,11 +107,11 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
             params![
                 record.ts,
                 record.session,
-                record.seq,
+                record.seq as i64,
                 record.server,
                 record.method,
                 record.tool,
-                record.latency_ms,
+                record.latency_ms.map(|value| value as i64),
                 record.outcome,
                 error_code,
                 error.and_then(|value| value.template.as_ref()),
@@ -164,7 +164,7 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
             "INSERT INTO annotations (session, seq, ts, kind, note) VALUES (?1,?2,?3,?4,?5)",
             params![
                 annotation.session,
-                annotation.seq,
+                annotation.seq as i64,
                 annotation.ts,
                 annotation.kind,
                 annotation.note,

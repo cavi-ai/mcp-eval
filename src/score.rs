@@ -53,6 +53,7 @@ const WEIGHTS: &[(&str, f64, &[ProbeKind])] = &[
             ProbeKind::LatencyBudget,
             ProbeKind::PayloadBounds,
             ProbeKind::Cancellation,
+            ProbeKind::ResourceSubscription,
         ],
     ),
     (
@@ -62,6 +63,9 @@ const WEIGHTS: &[(&str, f64, &[ProbeKind])] = &[
             ProbeKind::SchemaGuessability,
             ProbeKind::InstructionFidelity,
             ProbeKind::OutputSchema,
+            ProbeKind::ProtocolNegotiation,
+            ProbeKind::Sampling,
+            ProbeKind::Elicitation,
         ],
     ),
     ("concurrency", 0.10, &[ProbeKind::Contention]),

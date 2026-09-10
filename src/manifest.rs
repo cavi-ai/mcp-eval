@@ -182,6 +182,63 @@ pub enum ProbeCase {
         /// Free-form reason recorded in the notification; identifier-shaped.
         reason: String,
     },
+    #[serde(rename = "protocol-negotiation")]
+    ProtocolNegotiation {
+        id: String,
+        access: Access,
+        /// The version the probe offers when checking echo behavior; the
+        /// server must reject an unknown version instead of parroting it.
+        bogus_version: String,
+    },
+    #[serde(rename = "sampling")]
+    Sampling {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        arguments: Value,
+        /// Upper bound on `sampling/createMessage` requests the server may
+        /// issue during this one tool call. 1..=10.
+        max_requests: u64,
+    },
+    #[serde(rename = "elicitation")]
+    Elicitation {
+        id: String,
+        tool: String,
+        access: Access,
+        sandbox: Option<String>,
+        arguments: Value,
+        /// Upper bound on `elicitation/create` requests during this call.
+        /// 1..=10.
+        max_requests: u64,
+        /// How the probe answers each elicitation request.
+        respond: ElicitationResponse,
+    },
+    #[serde(rename = "resource-subscription")]
+    ResourceSubscription {
+        id: String,
+        access: Access,
+        /// The resource URI to subscribe to; must be listed by
+        /// `resources/list` unless `allow_undeclared` is set.
+        uri: String,
+        /// Tool whose call must trigger the update notification.
+        trigger_tool: Option<String>,
+        trigger_arguments: Option<Value>,
+        /// Bound on how long the probe waits for the update notification.
+        /// 1..=60 seconds.
+        max_wait_seconds: u64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ElicitationResponse {
+    /// Accept the elicitation with an empty action payload.
+    Accept,
+    /// Decline: the user declined the elicitation.
+    Decline,
+    /// Cancel: dismiss the elicitation.
+    Cancel,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -200,6 +257,10 @@ pub enum ProbeKind {
     SurfaceListing,
     OutputSchema,
     Cancellation,
+    ProtocolNegotiation,
+    Sampling,
+    Elicitation,
+    ResourceSubscription,
 }
 
 impl ProbeKind {
@@ -219,6 +280,10 @@ impl ProbeKind {
             Self::SurfaceListing => "surface-listing",
             Self::OutputSchema => "output-schema",
             Self::Cancellation => "cancellation",
+            Self::ProtocolNegotiation => "protocol-negotiation",
+            Self::Sampling => "sampling",
+            Self::Elicitation => "elicitation",
+            Self::ResourceSubscription => "resource-subscription",
         }
     }
 }
@@ -239,7 +304,11 @@ impl ProbeCase {
             | Self::PayloadBounds { id, .. }
             | Self::SurfaceListing { id, .. }
             | Self::OutputSchema { id, .. }
-            | Self::Cancellation { id, .. } => id,
+            | Self::Cancellation { id, .. }
+            | Self::ProtocolNegotiation { id, .. }
+            | Self::Sampling { id, .. }
+            | Self::Elicitation { id, .. }
+            | Self::ResourceSubscription { id, .. } => id,
         }
     }
 
@@ -248,7 +317,9 @@ impl ProbeCase {
             Self::DiscoveryCost { .. }
             | Self::TokenCost { .. }
             | Self::Pagination { .. }
-            | Self::SurfaceListing { .. } => None,
+            | Self::SurfaceListing { .. }
+            | Self::ProtocolNegotiation { .. }
+            | Self::ResourceSubscription { .. } => None,
             Self::Contention { tool, .. } => Some(tool),
             Self::ErrorHonesty { tool, .. } => Some(tool),
             Self::StateRecovery { failure_tool, .. } => Some(failure_tool),
@@ -258,7 +329,9 @@ impl ProbeCase {
             | Self::LatencyBudget { tool, .. }
             | Self::PayloadBounds { tool, .. }
             | Self::OutputSchema { tool, .. }
-            | Self::Cancellation { tool, .. } => Some(tool),
+            | Self::Cancellation { tool, .. }
+            | Self::Sampling { tool, .. }
+            | Self::Elicitation { tool, .. } => Some(tool),
         }
     }
 
@@ -277,7 +350,11 @@ impl ProbeCase {
             | Self::PayloadBounds { access, .. }
             | Self::SurfaceListing { access, .. }
             | Self::OutputSchema { access, .. }
-            | Self::Cancellation { access, .. } => *access,
+            | Self::Cancellation { access, .. }
+            | Self::ProtocolNegotiation { access, .. }
+            | Self::Sampling { access, .. }
+            | Self::Elicitation { access, .. }
+            | Self::ResourceSubscription { access, .. } => *access,
         }
     }
 
@@ -286,7 +363,9 @@ impl ProbeCase {
             Self::DiscoveryCost { .. }
             | Self::TokenCost { .. }
             | Self::Pagination { .. }
-            | Self::SurfaceListing { .. } => None,
+            | Self::SurfaceListing { .. }
+            | Self::ProtocolNegotiation { .. }
+            | Self::ResourceSubscription { .. } => None,
             Self::Contention { sandbox, .. } => sandbox.as_deref(),
             Self::ErrorHonesty { sandbox, .. } | Self::StateRecovery { sandbox, .. } => {
                 sandbox.as_deref()
@@ -297,7 +376,9 @@ impl ProbeCase {
             | Self::LatencyBudget { sandbox, .. }
             | Self::PayloadBounds { sandbox, .. }
             | Self::OutputSchema { sandbox, .. }
-            | Self::Cancellation { sandbox, .. } => sandbox.as_deref(),
+            | Self::Cancellation { sandbox, .. }
+            | Self::Sampling { sandbox, .. }
+            | Self::Elicitation { sandbox, .. } => sandbox.as_deref(),
         }
     }
 
@@ -307,7 +388,9 @@ impl ProbeCase {
             | Self::TokenCost { .. }
             | Self::StateRecovery { .. }
             | Self::Pagination { .. }
-            | Self::SurfaceListing { .. } => None,
+            | Self::SurfaceListing { .. }
+            | Self::ProtocolNegotiation { .. }
+            | Self::ResourceSubscription { .. } => None,
             Self::Contention { arguments, .. } => Some(arguments),
             Self::ErrorHonesty { arguments, .. } => Some(arguments),
             Self::SchemaGuessability { arguments, .. }
@@ -316,7 +399,9 @@ impl ProbeCase {
             | Self::LatencyBudget { arguments, .. }
             | Self::PayloadBounds { arguments, .. }
             | Self::OutputSchema { arguments, .. }
-            | Self::Cancellation { arguments, .. } => Some(arguments),
+            | Self::Cancellation { arguments, .. }
+            | Self::Sampling { arguments, .. }
+            | Self::Elicitation { arguments, .. } => Some(arguments),
         }
     }
 
@@ -336,6 +421,10 @@ impl ProbeCase {
             Self::SurfaceListing { .. } => ProbeKind::SurfaceListing,
             Self::OutputSchema { .. } => ProbeKind::OutputSchema,
             Self::Cancellation { .. } => ProbeKind::Cancellation,
+            Self::ProtocolNegotiation { .. } => ProbeKind::ProtocolNegotiation,
+            Self::Sampling { .. } => ProbeKind::Sampling,
+            Self::Elicitation { .. } => ProbeKind::Elicitation,
+            Self::ResourceSubscription { .. } => ProbeKind::ResourceSubscription,
         }
     }
 
@@ -356,13 +445,18 @@ impl ProbeCase {
             Self::DiscoveryCost { .. }
             | Self::TokenCost { .. }
             | Self::Pagination { .. }
-            | Self::SurfaceListing { .. } => Vec::new(),
+            | Self::SurfaceListing { .. }
+            | Self::ProtocolNegotiation { .. } => Vec::new(),
             Self::StateRecovery {
                 failure_tool,
                 recovery_tool,
                 validation_tool,
                 ..
             } => vec![failure_tool, recovery_tool, validation_tool],
+            Self::ResourceSubscription {
+                trigger_tool: Some(trigger_tool),
+                ..
+            } => vec![trigger_tool],
             _ => vec![self.tool().expect("tool probe has a primary tool")],
         }
     }
@@ -563,6 +657,76 @@ impl Manifest {
                     }
                     if !privacy::valid_identifier(reason) {
                         bail!("cancellation reason is invalid");
+                    }
+                }
+                ProbeCase::ProtocolNegotiation {
+                    access,
+                    bogus_version,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("protocol-negotiation must be read-only");
+                    }
+                    // The offered bogus version must be date-shaped so the
+                    // case asserts version selection, not envelope junk.
+                    if bogus_version.len() != 10
+                        || !bogus_version
+                            .bytes()
+                            .enumerate()
+                            .all(|(index, byte)| match index {
+                                4 | 7 => byte == b'-',
+                                _ => byte.is_ascii_digit(),
+                            })
+                        || bogus_version == crate::http_client::PROTOCOL_VERSION
+                    {
+                        bail!("protocol-negotiation bogus_version must be a date-shaped version other than the supported one");
+                    }
+                }
+                ProbeCase::Sampling {
+                    access,
+                    max_requests,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("sampling must be read-only");
+                    }
+                    if !(1..=10).contains(max_requests) {
+                        bail!("sampling max_requests must be between 1 and 10");
+                    }
+                }
+                ProbeCase::Elicitation {
+                    access,
+                    max_requests,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("elicitation must be read-only");
+                    }
+                    if !(1..=10).contains(max_requests) {
+                        bail!("elicitation max_requests must be between 1 and 10");
+                    }
+                }
+                ProbeCase::ResourceSubscription {
+                    access,
+                    uri,
+                    trigger_arguments,
+                    max_wait_seconds,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("resource-subscription must be read-only");
+                    }
+                    if uri.is_empty() || uri.len() > 512 {
+                        bail!("resource-subscription uri is invalid");
+                    }
+                    if trigger_arguments
+                        .as_ref()
+                        .is_some_and(|arguments| !arguments.is_object())
+                    {
+                        bail!("resource-subscription trigger arguments must be an object");
+                    }
+                    if !(1..=60).contains(max_wait_seconds) {
+                        bail!("resource-subscription max_wait_seconds must be between 1 and 60");
                     }
                 }
                 ProbeCase::InstructionFidelity { expect, .. } => validate_expectation(expect)?,

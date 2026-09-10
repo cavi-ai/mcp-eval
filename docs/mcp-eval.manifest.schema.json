@@ -292,6 +292,92 @@
               "description": "Free-form identifier recorded in the cancellation notification."
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "access", "bogus_version"],
+          "properties": {
+            "probe": { "const": "protocol-negotiation" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "access": { "const": "read_only" },
+            "bogus_version": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+              "description": "Unknown date-shaped protocol version the probe offers; the server must answer with its own supported version instead of echoing this one."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "tool", "access", "arguments", "max_requests"],
+          "properties": {
+            "probe": { "const": "sampling" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "const": "read_only" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" },
+            "max_requests": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "description": "Upper bound on sampling/createMessage requests the server may issue during this one tool call."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id", "probe", "tool", "access", "arguments", "max_requests", "respond"
+          ],
+          "properties": {
+            "probe": { "const": "elicitation" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "tool": { "$ref": "#/$defs/toolName" },
+            "access": { "const": "read_only" },
+            "sandbox": { "$ref": "#/$defs/identifier" },
+            "arguments": { "$ref": "#/$defs/arguments" },
+            "max_requests": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10,
+              "description": "Upper bound on elicitation/create requests the server may issue during this one tool call."
+            },
+            "respond": {
+              "enum": ["accept", "decline", "cancel"],
+              "description": "How the probe answers each elicitation request."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "probe", "access", "uri", "max_wait_seconds"],
+          "properties": {
+            "probe": { "const": "resource-subscription" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "access": { "const": "read_only" },
+            "uri": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "description": "Resource URI to subscribe to; the server must declare resources.subscribe."
+            },
+            "trigger_tool": {
+              "$ref": "#/$defs/toolName",
+              "description": "Tool whose call must trigger the update notification."
+            },
+            "trigger_arguments": { "$ref": "#/$defs/arguments" },
+            "max_wait_seconds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 60,
+              "description": "How long the probe waits for notifications/resources/updated."
+            }
+          }
         }
       ]
     }

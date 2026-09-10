@@ -130,6 +130,56 @@ impl ProbeClient {
             Self::Http(client) => client.cancel_tool_call(tool, arguments, reason, grace),
         }
     }
+
+    fn initialize_raw(&mut self, protocol_version: &str) -> anyhow::Result<serde_json::Value> {
+        match self {
+            Self::Stdio(client) => client.initialize_raw(protocol_version),
+            Self::Http(client) => {
+                // The HTTP transport routes each handshake through a
+                // fresh POST; the server's session state is untouched
+                // because the negotiated reply is returned verbatim.
+                client.initialize_raw(protocol_version)
+            }
+        }
+    }
+
+    fn call_tool_observing(
+        &mut self,
+        tool: &str,
+        arguments: &serde_json::Value,
+        respond: &mut dyn FnMut(&str, &serde_json::Value) -> Option<serde_json::Value>,
+        max_server_requests: u64,
+    ) -> anyhow::Result<(ToolResponse, u64)> {
+        match self {
+            Self::Stdio(client) => {
+                client.call_tool_observing(tool, arguments, respond, max_server_requests)
+            }
+            Self::Http(client) => {
+                client.call_tool_observing(tool, arguments, respond, max_server_requests)
+            }
+        }
+    }
+
+    fn read_resource(&mut self, uri: &str) -> anyhow::Result<serde_json::Value> {
+        match self {
+            Self::Stdio(client) => client.read_resource(uri),
+            Self::Http(client) => client.read_resource(uri),
+        }
+    }
+
+    fn wait_for_resource_update(&mut self, uri: &str, wait: std::time::Duration) -> bool {
+        match self {
+            Self::Stdio(client) => client.wait_for_resource_update(uri, wait),
+            Self::Http(client) => client.wait_for_resource_update(uri, wait),
+        }
+    }
+
+    fn unsubscribe(&mut self, uri: &str) -> anyhow::Result<serde_json::Value> {
+        match self {
+            Self::Stdio(client) => client.unsubscribe(uri),
+            Self::Http(client) => client.unsubscribe(uri),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,6 +211,18 @@ pub enum FailureReason {
     OutputSchemaFieldMissing,
     CancellationIgnored,
     CancellationErrored,
+    NegotiationEchoedUnknown,
+    NegotiationInvalidVersion,
+    NegotiationInconsistentSupport,
+    SamplingInvalidRequest,
+    SamplingRequestFlood,
+    SamplingStalledCall,
+    ElicitationInvalidRequest,
+    ElicitationRequestFlood,
+    ElicitationStalledCall,
+    ResourceUnreadable,
+    SubscriptionRejected,
+    SubscriptionNotificationMissing,
 }
 
 impl ProbeKind {
@@ -179,6 +241,11 @@ impl ProbeKind {
             "payload-bounds" => Self::PayloadBounds,
             "surface-listing" => Self::SurfaceListing,
             "output-schema" => Self::OutputSchema,
+            "cancellation" => Self::Cancellation,
+            "protocol-negotiation" => Self::ProtocolNegotiation,
+            "sampling" => Self::Sampling,
+            "elicitation" => Self::Elicitation,
+            "resource-subscription" => Self::ResourceSubscription,
             _ => return None,
         };
         Some(candidate)
@@ -216,6 +283,18 @@ impl FailureReason {
         Self::OutputSchemaFieldMissing,
         Self::CancellationIgnored,
         Self::CancellationErrored,
+        Self::NegotiationEchoedUnknown,
+        Self::NegotiationInvalidVersion,
+        Self::NegotiationInconsistentSupport,
+        Self::SamplingInvalidRequest,
+        Self::SamplingRequestFlood,
+        Self::SamplingStalledCall,
+        Self::ElicitationInvalidRequest,
+        Self::ElicitationRequestFlood,
+        Self::ElicitationStalledCall,
+        Self::ResourceUnreadable,
+        Self::SubscriptionRejected,
+        Self::SubscriptionNotificationMissing,
     ];
 
     pub fn from_report_label(label: &str) -> Option<Self> {
@@ -247,6 +326,18 @@ impl FailureReason {
             "output-schema-field-missing" => Self::OutputSchemaFieldMissing,
             "cancellation-ignored" => Self::CancellationIgnored,
             "cancellation-errored" => Self::CancellationErrored,
+            "negotiation-echoed-unknown" => Self::NegotiationEchoedUnknown,
+            "negotiation-invalid-version" => Self::NegotiationInvalidVersion,
+            "negotiation-inconsistent-support" => Self::NegotiationInconsistentSupport,
+            "sampling-invalid-request" => Self::SamplingInvalidRequest,
+            "sampling-request-flood" => Self::SamplingRequestFlood,
+            "sampling-stalled-call" => Self::SamplingStalledCall,
+            "elicitation-invalid-request" => Self::ElicitationInvalidRequest,
+            "elicitation-request-flood" => Self::ElicitationRequestFlood,
+            "elicitation-stalled-call" => Self::ElicitationStalledCall,
+            "resource-unreadable" => Self::ResourceUnreadable,
+            "subscription-rejected" => Self::SubscriptionRejected,
+            "subscription-notification-missing" => Self::SubscriptionNotificationMissing,
             _ => return None,
         })
     }
@@ -280,6 +371,18 @@ impl FailureReason {
             Self::OutputSchemaFieldMissing => "output-schema-field-missing",
             Self::CancellationIgnored => "cancellation-ignored",
             Self::CancellationErrored => "cancellation-errored",
+            Self::NegotiationEchoedUnknown => "negotiation-echoed-unknown",
+            Self::NegotiationInvalidVersion => "negotiation-invalid-version",
+            Self::NegotiationInconsistentSupport => "negotiation-inconsistent-support",
+            Self::SamplingInvalidRequest => "sampling-invalid-request",
+            Self::SamplingRequestFlood => "sampling-request-flood",
+            Self::SamplingStalledCall => "sampling-stalled-call",
+            Self::ElicitationInvalidRequest => "elicitation-invalid-request",
+            Self::ElicitationRequestFlood => "elicitation-request-flood",
+            Self::ElicitationStalledCall => "elicitation-stalled-call",
+            Self::ResourceUnreadable => "resource-unreadable",
+            Self::SubscriptionRejected => "subscription-rejected",
+            Self::SubscriptionNotificationMissing => "subscription-notification-missing",
         }
     }
 }
@@ -754,6 +857,10 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
         }
         ProbeCase::OutputSchema { .. } => run_output_schema(case, context),
         ProbeCase::Cancellation { .. } => run_cancellation(case, context),
+        ProbeCase::ProtocolNegotiation { .. } => run_protocol_negotiation(case, context),
+        ProbeCase::Sampling { .. } => run_sampling(case, context),
+        ProbeCase::Elicitation { .. } => run_elicitation(case, context),
+        ProbeCase::ResourceSubscription { .. } => run_resource_subscription(case, context),
     }
 }
 
@@ -1502,4 +1609,355 @@ fn outcome_had_failure(outcome: crate::mcp_client::CancellationOutcome) -> Optio
         crate::mcp_client::CancellationOutcome::Ignored => Some(FailureReason::CancellationIgnored),
         crate::mcp_client::CancellationOutcome::Errored => Some(FailureReason::CancellationErrored),
     }
+}
+
+/// Protocol-negotiation probe: three handshakes assert version selection.
+/// (1) A fresh handshake with the supported version must echo it. (2) A
+/// fresh handshake with an unknown date-shaped version must answer with a
+/// date-shaped, non-echoed version (the spec: respond with the server's
+/// latest supported version, never the requested one). (3) The version
+/// the server claims on the unknown handshake must itself be echoable on
+/// a third handshake — a server that lies about its own support fails.
+fn run_protocol_negotiation(
+    case: &ProbeCase,
+    context: &mut RunContext<'_>,
+) -> anyhow::Result<CaseReport> {
+    let bogus_version = match case {
+        ProbeCase::ProtocolNegotiation { bogus_version, .. } => bogus_version.as_str(),
+        _ => unreachable!("negotiation arm"),
+    };
+    let supported = crate::http_client::PROTOCOL_VERSION;
+    let client = &mut context.client;
+    let attempts = 3;
+    // (1) The supported version must be echoed verbatim.
+    let supported_reply = client.initialize_raw(supported)?;
+    let echoed = supported_reply
+        .get("result")
+        .and_then(|result| result.get("protocolVersion"))
+        .and_then(Value::as_str);
+    if echoed != Some(supported) {
+        return Ok(failed_case(
+            case,
+            1,
+            FailureReason::NegotiationInvalidVersion,
+        ));
+    }
+    // (2) The unknown version must not be echoed back.
+    let unknown_reply = client.initialize_raw(bogus_version)?;
+    let negotiated = unknown_reply
+        .get("result")
+        .and_then(|result| result.get("protocolVersion"))
+        .and_then(Value::as_str);
+    let Some(negotiated) = negotiated else {
+        return Ok(failed_case(
+            case,
+            2,
+            FailureReason::NegotiationInvalidVersion,
+        ));
+    };
+    if negotiated == bogus_version {
+        return Ok(failed_case(
+            case,
+            2,
+            FailureReason::NegotiationEchoedUnknown,
+        ));
+    }
+    if !is_date_shaped(negotiated) {
+        return Ok(failed_case(
+            case,
+            2,
+            FailureReason::NegotiationInvalidVersion,
+        ));
+    }
+    // (3) The claimed version must actually be supported.
+    let claimed_reply = client.initialize_raw(negotiated)?;
+    let claimed_echo = claimed_reply
+        .get("result")
+        .and_then(|result| result.get("protocolVersion"))
+        .and_then(Value::as_str);
+    if claimed_echo != Some(negotiated) {
+        return Ok(failed_case(
+            case,
+            3,
+            FailureReason::NegotiationInconsistentSupport,
+        ));
+    }
+    Ok(passed_case(case, attempts))
+}
+
+/// A protocol version is date-shaped: YYYY-MM-DD.
+fn is_date_shaped(version: &str) -> bool {
+    let bytes = version.as_bytes();
+    if bytes.len() != 10 {
+        return false;
+    }
+    bytes.iter().enumerate().all(|(index, byte)| match index {
+        4 | 7 => *byte == b'-',
+        _ => byte.is_ascii_digit(),
+    })
+}
+
+/// Sampling probe: declare the client `sampling` capability, call the
+/// tool, and answer `sampling/createMessage` requests with a minimal
+/// well-formed sample. The server may ask at most `max_requests` times;
+/// more is a flood. The call must complete with a structured response.
+fn run_sampling(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
+    let (tool, arguments, max_requests) = match case {
+        ProbeCase::Sampling {
+            tool,
+            arguments,
+            max_requests,
+            ..
+        } => (tool.to_owned(), arguments.to_owned(), *max_requests),
+        _ => unreachable!("sampling arm"),
+    };
+    let mut respond = |method: &str, params: &Value| -> Option<Value> {
+        if method != "sampling/createMessage" {
+            return None;
+        }
+        // The sample must echo the request's structure minimally: the
+        // role from the request, one text message, and the declared model
+        // preferences when present.
+        let role = params
+            .get("messages")
+            .and_then(Value::as_array)
+            .and_then(|messages| messages.first())
+            .and_then(|message| message.get("role"))
+            .and_then(Value::as_str)
+            .unwrap_or("user")
+            .to_owned();
+        let mut sample = json!({
+            "role": "assistant",
+            "content": {"type": "text", "text": "mcpeval sample"},
+            "model": "mcpeval-stub",
+        });
+        if role == "assistant" {
+            sample["role"] = json!("user");
+        }
+        Some(sample)
+    };
+    let outcome = context
+        .client
+        .call_tool_observing(&tool, &arguments, &mut respond, max_requests);
+    let (response, server_requests) = match outcome {
+        Ok(outcome) => outcome,
+        // Flood is a distinct defect; other transport failures (including
+        // the flood bound) are declared reasons.
+        Err(error) => {
+            let message = format!("{error:#}");
+            if message.contains("more sub-requests") {
+                return Ok(failed_case(case, 1, FailureReason::SamplingRequestFlood));
+            }
+            if message.contains("timed out") {
+                return Ok(failed_case(case, 1, FailureReason::SamplingStalledCall));
+            }
+            return Err(anyhow::anyhow!("sampling probe failed: {message}"));
+        }
+    };
+    let _ = server_requests;
+    let failure = match &response {
+        ToolResponse::Success(_) => None,
+        ToolResponse::Error { payload, .. } => {
+            // The call completing with a structured error is only a
+            // failure when the server's error shows sampling broke the
+            // call: an unhandled `sampling/createMessage` shape or a
+            // malformed request the server itself produced.
+            payload
+                .get("code")
+                .and_then(Value::as_i64)
+                .map(|_| FailureReason::SamplingInvalidRequest)
+        }
+    };
+    record_response(&tool, &arguments, 0, &response, context)?;
+    Ok(CaseReport {
+        id: case.id().to_owned(),
+        probe: case.kind(),
+        attempts: 1,
+        first_failure: failure.map(|_| 1),
+        reason: failure,
+        tool_count: None,
+        schema_bytes: None,
+        token_usage: None,
+        latency_ms: None,
+        pages: None,
+    })
+}
+
+/// Elicitation probe: declare the client `elicitation` capability, call
+/// the tool, and answer `elicitation/create` requests with the manifest's
+/// declared response action. The server may ask at most `max_requests`
+/// times; more is a flood.
+fn run_elicitation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
+    let (tool, arguments, max_requests, respond_with) = match case {
+        ProbeCase::Elicitation {
+            tool,
+            arguments,
+            max_requests,
+            respond,
+            ..
+        } => (
+            tool.to_owned(),
+            arguments.to_owned(),
+            *max_requests,
+            *respond,
+        ),
+        _ => unreachable!("elicitation arm"),
+    };
+    let mut respond = move |method: &str, params: &Value| -> Option<Value> {
+        if method != "elicitation/create" {
+            return None;
+        }
+        // The request must carry a message and a schema object; a
+        // malformed request is answered with method-unavailable so the
+        // server's handling surfaces in the tool outcome.
+        let well_formed = params.get("message").and_then(Value::as_str).is_some()
+            && params.get("requestedSchema").is_some_and(Value::is_object);
+        if !well_formed {
+            return None;
+        }
+        let action = match respond_with {
+            crate::manifest::ElicitationResponse::Accept => "accept",
+            crate::manifest::ElicitationResponse::Decline => "decline",
+            crate::manifest::ElicitationResponse::Cancel => "cancel",
+        };
+        Some(json!({"action": action}))
+    };
+    let outcome = context
+        .client
+        .call_tool_observing(&tool, &arguments, &mut respond, max_requests);
+    let (response, _server_requests) = match outcome {
+        Ok(outcome) => outcome,
+        Err(error) => {
+            let message = format!("{error:#}");
+            if message.contains("more sub-requests") {
+                return Ok(failed_case(case, 1, FailureReason::ElicitationRequestFlood));
+            }
+            if message.contains("timed out") {
+                return Ok(failed_case(case, 1, FailureReason::ElicitationStalledCall));
+            }
+            return Err(anyhow::anyhow!("elicitation probe failed: {message}"));
+        }
+    };
+    let failure = match &response {
+        ToolResponse::Success(_) => None,
+        ToolResponse::Error { payload, .. } => payload
+            .get("code")
+            .and_then(Value::as_i64)
+            .map(|_| FailureReason::ElicitationInvalidRequest),
+    };
+    record_response(&tool, &arguments, 0, &response, context)?;
+    Ok(CaseReport {
+        id: case.id().to_owned(),
+        probe: case.kind(),
+        attempts: 1,
+        first_failure: failure.map(|_| 1),
+        reason: failure,
+        tool_count: None,
+        schema_bytes: None,
+        token_usage: None,
+        latency_ms: None,
+        pages: None,
+    })
+}
+
+/// Resource-subscription probe: for a server that declares
+/// `resources.subscribe`, read the declared URI, subscribe, fire the
+/// trigger tool, and require `notifications/resources/updated` for the
+/// URI within the wait bound, then unsubscribe cleanly. Servers that do
+/// not declare `subscribe` pass trivially.
+fn run_resource_subscription(
+    case: &ProbeCase,
+    context: &mut RunContext<'_>,
+) -> anyhow::Result<CaseReport> {
+    let (uri, trigger_tool, trigger_arguments, max_wait_seconds) = match case {
+        ProbeCase::ResourceSubscription {
+            uri,
+            trigger_tool,
+            trigger_arguments,
+            max_wait_seconds,
+            ..
+        } => (
+            uri.to_owned(),
+            trigger_tool.clone(),
+            trigger_arguments.clone(),
+            *max_wait_seconds,
+        ),
+        _ => unreachable!("subscription arm"),
+    };
+    let subscribes = context
+        .client
+        .capabilities()
+        .and_then(|value| value.get("resources").cloned())
+        .and_then(|resources| resources.get("subscribe").and_then(Value::as_bool))
+        .unwrap_or(false);
+    if !subscribes {
+        // Undeclared subscription support passes trivially, mirroring
+        // surface-listing's treatment of undeclared surfaces.
+        return Ok(passed_case(case, 0));
+    }
+    // A transport failure or a structured JSON-RPC error both mean the
+    // server cannot serve the URI it claims to expose.
+    let unreadable = match context.client.read_resource(&uri) {
+        Err(_) => true,
+        Ok(response) => response.get("error").is_some(),
+    };
+    if unreadable {
+        return Ok(failed_case(case, 1, FailureReason::ResourceUnreadable));
+    }
+    // Subscribe before firing the trigger so the server's update
+    // notification cannot race ahead of the subscription.
+    let subscribed = context
+        .client
+        .raw_request("resources/subscribe", json!({"uri": uri}))
+        .map(|response| response.get("error").is_none())
+        .unwrap_or(false);
+    if !subscribed {
+        return Ok(failed_case(case, 2, FailureReason::SubscriptionRejected));
+    }
+    let mut trigger_ok = true;
+    if let Some(tool) = &trigger_tool {
+        let arguments = trigger_arguments.clone().unwrap_or_else(|| json!({}));
+        trigger_ok = matches!(
+            call_named_and_record(tool, &arguments, context)?,
+            ToolResponse::Success(_)
+        );
+    }
+    let attempts = 3;
+    if !trigger_ok {
+        return Ok(failed_case(
+            case,
+            attempts,
+            FailureReason::UnexpectedOutcome,
+        ));
+    }
+    let notified = context
+        .client
+        .wait_for_resource_update(&uri, std::time::Duration::from_secs(max_wait_seconds));
+    let unsubscribed = context
+        .client
+        .unsubscribe(&uri)
+        .map(|response| response.get("error").is_none())
+        .unwrap_or(false);
+    if !notified {
+        return Ok(CaseReport {
+            id: case.id().to_owned(),
+            probe: case.kind(),
+            attempts,
+            first_failure: Some(attempts),
+            reason: Some(FailureReason::SubscriptionNotificationMissing),
+            tool_count: None,
+            schema_bytes: None,
+            token_usage: None,
+            latency_ms: None,
+            pages: None,
+        });
+    }
+    if !unsubscribed {
+        return Ok(failed_case(
+            case,
+            attempts,
+            FailureReason::SubscriptionRejected,
+        ));
+    }
+    Ok(passed_case(case, attempts))
 }

@@ -144,16 +144,6 @@ mcpeval explain   # list every fixed reason
 
 `--format json` emits a versioned, deterministic document
 (`mcpeval.probe-report/v1`): server label, per-case verdicts, fixed reason
-labels, and measurement numbers — no timestamps, sessions, or payloads, so it
-is safe to commit as a baseline or attach to CI artifacts.
-
-```sh
-mcpeval probe --server demo --manifest mcp-eval.manifest.json \
-  --format json -- your-mcp-server --flags
-```
-
-`--format json` emits a versioned, deterministic document
-(`mcpeval.probe-report/v1`): server label, per-case verdicts, fixed reason
 labels, measurement numbers, and the readiness score — no timestamps,
 sessions, or payloads, so it is safe to commit as a baseline or attach to CI
 artifacts.

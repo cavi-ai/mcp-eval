@@ -68,6 +68,13 @@ pub struct McpClient {
     next_id: u64,
     /// The server's advertised capabilities from `initialize`.
     capabilities: Option<Value>,
+    /// The protocol version the server answered the handshake with.
+    protocol_version: Option<String>,
+    /// Server notifications observed while waiting for request responses;
+    /// `wait_for_resource_update` drains this buffer first so a
+    /// notification that raced ahead of an interleaved response is never
+    /// lost.
+    notifications: Vec<Value>,
 }
 
 impl McpClient {
@@ -112,7 +119,119 @@ impl McpClient {
             lines,
             next_id: 1,
             capabilities: None,
+            protocol_version: None,
+            notifications: Vec::new(),
         })
+    }
+
+    /// The protocol version the server answered `initialize` with.
+    pub fn protocol_version(&self) -> Option<String> {
+        self.protocol_version.clone()
+    }
+
+    /// Run one full `initialize` handshake with the given protocol version
+    /// and return the server's reply verbatim. Used by the
+    /// protocol-negotiation probe to observe version selection directly;
+    /// unlike `initialize` it neither sends `notifications/initialized`
+    /// nor records capabilities, so it can run repeatedly against a
+    /// server that expects a fresh handshake each time.
+    pub fn initialize_raw(&mut self, protocol_version: &str) -> anyhow::Result<Value> {
+        self.request(
+            "initialize",
+            json!({
+                "protocolVersion": protocol_version,
+                "capabilities": {},
+                "clientInfo": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")}
+            }),
+        )
+    }
+
+    /// Issue a `tools/call` and answer any server→client request (for
+    /// example `sampling/createMessage` or `elicitation/create`) through
+    /// `respond`. Returns the tool outcome and how many server→client
+    /// requests arrived. Unparseable and notification frames are skipped;
+    /// the session is sequential, so a mismatched id fails fast.
+    pub fn call_tool_observing(
+        &mut self,
+        tool: &str,
+        arguments: &Value,
+        respond: &mut dyn FnMut(&str, &Value) -> Option<Value>,
+        max_server_requests: u64,
+    ) -> anyhow::Result<(ToolResponse, u64)> {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.write(&json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments}
+        }))?;
+        let mut server_requests = 0u64;
+        loop {
+            let raw =
+                self.lines
+                    .recv_timeout(RESPONSE_TIMEOUT)
+                    .map_err(|error| match error {
+                        mpsc::RecvTimeoutError::Timeout => {
+                            anyhow::anyhow!("MCP response timed out")
+                        }
+                        mpsc::RecvTimeoutError::Disconnected => {
+                            anyhow::anyhow!("MCP server closed stdout")
+                        }
+                    })??;
+            let frame: Value = match serde_json::from_slice(&raw) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
+            let Some(object) = frame.as_object() else {
+                continue;
+            };
+            let is_response = object.contains_key("id")
+                && (object.contains_key("result") || object.contains_key("error"));
+            if is_response {
+                if object.get("id").and_then(Value::as_u64) != Some(id) {
+                    bail!("MCP response id does not match request");
+                }
+                let response = if let Some(result) = object.get("result") {
+                    ToolResponse::Success(result.clone())
+                } else {
+                    let error = object
+                        .get("error")
+                        .context("response has neither result nor error")?;
+                    let code = error
+                        .get("code")
+                        .and_then(Value::as_i64)
+                        .context("tools/call error has no integer code")?;
+                    ToolResponse::Error {
+                        code,
+                        payload: error.clone(),
+                    }
+                };
+                return Ok((response, server_requests));
+            }
+            // Server→client request: answer it through the observer and
+            // bound the flood.
+            let Some(method) = object.get("method").and_then(Value::as_str) else {
+                continue;
+            };
+            if method.starts_with("notifications/") {
+                continue;
+            }
+            let Some(request_id) = object.get("id") else {
+                continue;
+            };
+            server_requests += 1;
+            if server_requests > max_server_requests {
+                bail!("server issued more sub-requests than the declared bound");
+            }
+            let reply = respond(method, object.get("params").unwrap_or(&Value::Null));
+            let reply = match reply {
+                Some(result) => json!({"jsonrpc": "2.0", "id": request_id, "result": result}),
+                None => json!({"jsonrpc": "2.0", "id": request_id,
+                    "error": {"code": -32601, "message": "method unavailable"}}),
+            };
+            self.write(&reply)?;
+        }
     }
 
     pub fn initialize(&mut self) -> anyhow::Result<()> {
@@ -128,6 +247,11 @@ impl McpClient {
             .get("result")
             .and_then(|result| result.get("capabilities"))
             .cloned();
+        self.protocol_version = response
+            .get("result")
+            .and_then(|result| result.get("protocolVersion"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         self.notify("notifications/initialized", json!({}))
     }
 
@@ -279,6 +403,65 @@ impl McpClient {
         self.write(&json!({"jsonrpc": "2.0", "method": method, "params": params}))
     }
 
+    /// Wait for the server's `notifications/resources/updated` for `uri`
+    /// within `wait`. The subscription itself is issued by the caller (the
+    /// probe subscribes before firing its trigger, so the notification
+    /// cannot race ahead of the subscription). Notifications observed
+    /// while waiting for earlier responses are drained first — a
+    /// notification the server emitted before answering the trigger call
+    /// still counts. Ok(()) when the notification arrived, Err(()) on
+    /// timeout or transport end.
+    pub fn wait_for_resource_update(&mut self, uri: &str, wait: Duration) -> bool {
+        let matches_uri = |frame: &Value| -> bool {
+            frame.get("method").and_then(Value::as_str) == Some("notifications/resources/updated")
+                && frame
+                    .get("params")
+                    .and_then(|params| params.get("uri"))
+                    .and_then(Value::as_str)
+                    == Some(uri)
+        };
+        if let Some(index) = self.notifications.iter().position(matches_uri) {
+            self.notifications.remove(index);
+            return true;
+        }
+        let deadline = Instant::now() + wait;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let raw = match self.lines.recv_timeout(remaining) {
+                Ok(raw) => raw,
+                Err(mpsc::RecvTimeoutError::Timeout)
+                | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return false;
+                }
+            };
+            let raw = match raw {
+                Ok(raw) => raw,
+                Err(_) => return false,
+            };
+            let Ok(frame) = serde_json::from_slice::<Value>(&raw) else {
+                continue;
+            };
+            if matches_uri(&frame) {
+                return true;
+            }
+            if frame.get("method").and_then(Value::as_str).is_some() {
+                self.notifications.push(frame);
+            }
+        }
+    }
+
+    pub fn unsubscribe(&mut self, uri: &str) -> anyhow::Result<Value> {
+        self.raw_request("resources/unsubscribe", json!({"uri": uri}))
+    }
+
+    /// Read a resource by URI.
+    pub fn read_resource(&mut self, uri: &str) -> anyhow::Result<Value> {
+        self.raw_request("resources/read", json!({"uri": uri}))
+    }
+
     fn request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
@@ -299,8 +482,9 @@ impl McpClient {
             }?;
             // Real servers print human-readable banners on stdout and
             // interleave unsolicited notifications. Neither is a response:
-            // skip unparseable lines and id-less frames rather than failing
-            // the session over cosmetics.
+            // unparseable lines are skipped; notifications are buffered
+            // for `wait_for_resource_update`, which drains the buffer
+            // before touching the wire.
             let response: Value = match serde_json::from_slice(&raw) {
                 Ok(value) => value,
                 Err(_) => continue,
@@ -312,6 +496,9 @@ impl McpClient {
                 continue;
             }
             if !object.contains_key("id") {
+                if object.get("method").and_then(Value::as_str).is_some() {
+                    self.notifications.push(response);
+                }
                 continue;
             }
             // The client is strictly sequential, so a frame that carries an

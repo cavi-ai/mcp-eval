@@ -23,7 +23,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | `doctor` | optional `--check-redaction` | Run store-hygiene checks. |
 | `share` | `--dir <DIR>` | Package the share-safe envelope: the store records plus a SHARE.md manifest, after a clean redaction sweep. The salt, index databases, and manifests are never copied. Supports `--include-probe-history` and `--force`. |
 
-The default manifest path for `probe` and `verify` is `mcp-eval.manifest.json`. The five headline evaluation dimension values for `--probe` are `contention`, `error-honesty`, `state-recovery`, `discovery-cost`, and `schema-guessability`. The CLI also accepts the supplemental probes `token-cost`, `degradation-over-n`, `instruction-fidelity`, `latency-budget`, `pagination`, `payload-bounds`, `surface-listing`, and `output-schema`; they are not additional headline dimensions in version {{PRODUCT_VERSION}}.
+The default manifest path for `probe` and `verify` is `mcp-eval.manifest.json`. The five headline evaluation dimension values for `--probe` are `contention`, `error-honesty`, `state-recovery`, `discovery-cost`, and `schema-guessability`. The CLI also accepts the supplemental probes `token-cost`, `degradation-over-n`, `instruction-fidelity`, `latency-budget`, `pagination`, `payload-bounds`, `surface-listing`, `output-schema`, `cancellation`, `protocol-negotiation`, `sampling`, `elicitation`, and `resource-subscription`; they are not additional headline dimensions in version {{PRODUCT_VERSION}}.
 
 `probe --format json` emits the versioned, deterministic
 `mcpeval.probe-report/v1` document. It contains the validated server label,

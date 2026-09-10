@@ -8,7 +8,7 @@
 //! - **`--broken <aspect>`**: reproduces one specific defect so the matching
 //!   probe fails with its fixed reason label. Aspects: `schema`, `fidelity`,
 //!   `unstable-errors`, `bloated`, `duplicate-page`, `stalled-cursor`,
-//!   `slow`.
+//!   `slow`, `negotiation`, `sampling`, `elicitation`, `subscription`.
 //!
 //! The server is a demo fixture, not production code: state lives in a
 //! counter, nothing persists, and stderr is free-form.
@@ -32,7 +32,7 @@ fn main() {
     }
     let broken = match broken {
         Some(aspect) if aspect.is_empty() => {
-            eprintln!("--broken requires an aspect: schema, fidelity, unstable-errors, bloated, duplicate-page, stalled-cursor, slow, cancellation");
+            eprintln!("--broken requires an aspect: schema, fidelity, unstable-errors, bloated, duplicate-page, stalled-cursor, slow, cancellation, negotiation, sampling, elicitation, subscription");
             std::process::exit(2);
         }
         other => other,
@@ -95,7 +95,19 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
             }
         }
     });
+    // Ids of sub-requests (sampling/createMessage, elicitation/create)
+    // this server issued mid-call. The client's reply to one arrives as
+    // the next inbound frame and must be consumed as a reply, not
+    // dispatched as a new request.
+    let mut outstanding_sub_ids: std::collections::HashSet<u64> = Default::default();
     while let Ok(request) = receiver.recv() {
+        let request_id_value = request.get("id").cloned();
+        if let Some(reply_id) = request_id_value.as_ref().and_then(Value::as_u64) {
+            if outstanding_sub_ids.remove(&reply_id) && request.get("method").is_none() {
+                // A reply to a mid-call sub-request: consume it.
+                continue;
+            }
+        }
         let method = request
             .get("method")
             .and_then(Value::as_str)
@@ -108,25 +120,59 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
         let params = request.get("params").cloned().unwrap_or(json!({}));
         let response_id = id.as_u64();
         let response = match method.as_str() {
-            "initialize" => Ok(json!({
-                "protocolVersion": "2025-06-18",
-                "capabilities": {
-                    "tools": {},
-                    "resources": {},
-                    "prompts": {}
-                },
-                "serverInfo": {"name": "mcpeval-demo", "version": env!("CARGO_PKG_VERSION")}
-            })),
+            "initialize" => {
+                let offered = params
+                    .get("protocolVersion")
+                    .and_then(Value::as_str)
+                    .unwrap_or("2025-06-18");
+                let negotiated = if broken == Some("negotiation") {
+                    // The defect under test: echo the offered version even
+                    // when the probe offered one the server never
+                    // supported.
+                    offered.to_owned()
+                } else {
+                    "2025-06-18".to_owned()
+                };
+                Ok(json!({
+                    "protocolVersion": negotiated,
+                    "capabilities": {
+                        "tools": {},
+                        "resources": {
+                            "subscribe": broken == Some("subscription") || broken.is_none()
+                        },
+                        "prompts": {}
+                    },
+                    "serverInfo": {"name": "mcpeval-demo", "version": env!("CARGO_PKG_VERSION")}
+                }))
+            }
             "tools/list" => tools_page(&params, broken, &mut calls),
-            "tools/call" => call_tool(
-                &params,
-                broken,
-                &mut calls,
-                &mut flaky_calls,
-                &mut broken_state,
-                &cancelled_flag,
-                id.as_u64(),
-            ),
+            "tools/call" => {
+                let outcome = call_tool(ToolCall {
+                    params: &params,
+                    broken,
+                    calls: &mut calls,
+                    flaky_calls: &mut flaky_calls,
+                    broken_state: &mut broken_state,
+                    cancelled_flag: &cancelled_flag,
+                    request_id: id.as_u64(),
+                    stdout: &mut stdout,
+                });
+                if let Some(sub_id) = id.as_u64() {
+                    // The handler wrote one mid-call sub-request using
+                    // this id scheme; expect a reply for it next.
+                    let issued = match broken {
+                        Some("sampling") | Some("elicitation") | None => {
+                            tool_written_sub_request(&params)
+                        }
+                        _ => false,
+                    };
+                    if issued {
+                        outstanding_sub_ids.insert(sub_id + 1000);
+                        outstanding_sub_ids.insert(sub_id + 100);
+                    }
+                }
+                outcome
+            }
             "resources/list" => {
                 if broken == Some("surface") {
                     Ok(json!({"unexpected": true}))
@@ -136,6 +182,33 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                     ]}))
                 }
             }
+            "resources/read" => {
+                let uri = params.get("uri").and_then(Value::as_str).unwrap_or("");
+                if uri == "demo://status" {
+                    Ok(json!({"contents": [
+                        {"uri": "demo://status", "text": "ready"}
+                    ]}))
+                } else {
+                    // Honest bounded behavior: an unlisted URI is a
+                    // structured error, not a fabricated read.
+                    Err((-32012, "resource not found".into(), false))
+                }
+            }
+            "resources/subscribe" | "resources/unsubscribe" => {
+                if broken == Some("subscription") {
+                    // Subscribe itself still succeeds; the defect is the
+                    // missing update notification.
+                    Ok(json!({}))
+                } else {
+                    Ok(json!({}))
+                }
+            }
+            "sampling/createMessage" => Ok(json!({
+                "role": "assistant",
+                "content": {"type": "text", "text": "demo sample"},
+                "model": "demo-stub"
+            })),
+            "elicitation/create" => Ok(json!({"action": "accept"})),
             "prompts/list" => {
                 if broken == Some("surface") {
                     // A declared surface that never answers: the probe
@@ -189,6 +262,15 @@ fn write_message(stdout: &mut impl Write, message: Value) -> anyhow::Result<()> 
     stdout.write_all(b"\n")?;
     stdout.flush()?;
     Ok(())
+}
+
+/// Whether the tool named by a `tools/call` params object writes one
+/// mid-call sub-request to stdout.
+fn tool_written_sub_request(params: &Value) -> bool {
+    matches!(
+        params.get("name").and_then(Value::as_str),
+        Some("sampled_read") | Some("elicited_read")
+    )
 }
 
 fn tool_entry(name: &str, description: &str, properties: Value) -> Value {
@@ -248,6 +330,21 @@ fn catalog(broken: Option<&str>) -> Vec<Value> {
             "report_weather",
             "Return a structured weather reading. Read-only.",
             json!({"city": {"type": "string", "description": "City name"}}),
+        ),
+        tool_entry(
+            "sampled_read",
+            "Reads with model sampling: issues one sampling/createMessage. Read-only.",
+            json!({}),
+        ),
+        tool_entry(
+            "elicited_read",
+            "Reads with user elicitation: issues one elicitation/create. Read-only.",
+            json!({}),
+        ),
+        tool_entry(
+            "publish_status",
+            "Republishes demo://status, notifying subscribers. Read-only.",
+            json!({}),
         ),
     ];
     if broken == Some("output-schema") {
@@ -326,14 +423,28 @@ fn tools_page(
     }
 }
 
-fn call_tool(
-    params: &Value,
-    broken: Option<&str>,
-    calls: &mut u64,
-    flaky_calls: &mut u64,
-    broken_state: &mut bool,
-    cancelled_flag: &std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
+struct ToolCall<'a> {
+    params: &'a Value,
+    broken: Option<&'a str>,
+    calls: &'a mut u64,
+    flaky_calls: &'a mut u64,
+    broken_state: &'a mut bool,
+    cancelled_flag: &'a std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
     request_id: Option<u64>,
+    stdout: &'a mut dyn Write,
+}
+
+fn call_tool(
+    ToolCall {
+        params,
+        broken,
+        calls,
+        flaky_calls,
+        broken_state,
+        cancelled_flag,
+        request_id,
+        mut stdout,
+    }: ToolCall<'_>,
 ) -> Result<Value, (i64, String, bool)> {
     let name = params
         .get("name")
@@ -438,6 +549,106 @@ fn call_tool(
                     "structuredContent": {"temperature": 21.0, "conditions": "clear"}
                 }))
             }
+        }
+        "sampled_read" => {
+            // Issue one sampling/createMessage mid-call. The clean
+            // personality's request is well-formed; the sampling defect
+            // sends a request missing the messages array entirely, so the
+            // probe answers "method unavailable" and the call errors —
+            // the server must accept the stub reply shape.
+            let malformed = broken == Some("sampling");
+            if let Some(request_id) = request_id {
+                let sub = if malformed {
+                    json!({
+                        "jsonrpc": "2.0", "id": request_id + 1000,
+                        "method": "sampling/createMessage",
+                        "params": {"model": "demo", "messages": "not-an-array"}
+                    })
+                } else {
+                    json!({
+                        "jsonrpc": "2.0", "id": request_id + 100,
+                        "method": "sampling/createMessage",
+                        "params": {
+                            "messages": [{"role": "user",
+                                "content": {"type": "text", "text": "summarize the status"}}],
+                            "maxTokens": 16
+                        }
+                    })
+                };
+                let _ = write_message(&mut stdout, sub);
+            }
+            let ok = json!({
+                "content": [{"type": "text", "text": "sampled"}],
+                "structuredContent": {"ok": true}
+            });
+            if broken == Some("sampling") {
+                // The defect: the server rejects the stub reply's shape
+                // and fails the call with a structured error.
+                Err((-32010, "sampling reply rejected".into(), false))
+            } else {
+                Ok(ok)
+            }
+        }
+        "elicited_read" => {
+            // One elicitation/create mid-call; the elicitation defect
+            // sends a request missing requestedSchema.
+            if let Some(request_id) = request_id {
+                let sub = if broken == Some("elicitation") {
+                    json!({
+                        "jsonrpc": "2.0", "id": request_id + 100,
+                        "method": "elicitation/create",
+                        "params": {"message": "Proceed without a schema?"}
+                    })
+                } else {
+                    json!({
+                        "jsonrpc": "2.0", "id": request_id + 100,
+                        "method": "elicitation/create",
+                        "params": {
+                            "message": "Continue reading?",
+                            "requestedSchema": {
+                                "type": "object",
+                                "properties": {"confirm": {"type": "boolean"}}
+                            }
+                        }
+                    })
+                };
+                let _ = write_message(&mut stdout, sub);
+            }
+            let ok = json!({
+                "content": [{"type": "text", "text": "elicited"}],
+                "structuredContent": {"ok": true}
+            });
+            if broken == Some("elicitation") {
+                // The defect: the server rejects the action reply to its
+                // own malformed request and fails the call.
+                Err((-32011, "elicitation flow broke".into(), false))
+            } else {
+                Ok(ok)
+            }
+        }
+        "publish_status" => {
+            // Republish the status resource: subscribers get
+            // notifications/resources/updated for demo://status. The
+            // subscription defect claims `subscribe` support but never
+            // emits the notification.
+            if let Some(_request_id) = request_id {
+                // Notifications are session-scoped; the demo has a single
+                // client session.
+                if broken != Some("subscription") {
+                    let _ = write_message(
+                        &mut stdout,
+                        json!({
+                            "jsonrpc": "2.0",
+                            "method": "notifications/resources/updated",
+                            "params": {"uri": "demo://status"}
+                        }),
+                    );
+                }
+            }
+            Ok(json!({
+                "content": [{"type": "text", "text": "published"}],
+                "structuredContent": {"published": true}
+            }))
         }
         _ => Err((-32602, format!("unknown tool {name}"), false)),
     }

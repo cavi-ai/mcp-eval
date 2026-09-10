@@ -4,6 +4,24 @@
 
 ### Added
 
+- Four 2025-06-18 spec-surface probes:
+  `protocol-negotiation` (a fresh handshake with the supported version is
+  echoed, an unknown date-shaped version is answered with a date-shaped
+  non-echoed version, and the claimed version is itself echoable on a
+  third handshake),
+  `sampling` (a tool call under a client `sampling` capability; the server's
+  `sampling/createMessage` sub-requests are answered with a stub sample,
+  bounded by `max_requests`),
+  `elicitation` (same shape for `elicitation/create`, answered with the
+  manifest's `respond` action), and
+  `resource-subscription` (for a server declaring `resources.subscribe`:
+  read, subscribe, trigger, and require `notifications/resources/updated`
+  within `max_wait_seconds`, then unsubscribe cleanly; undeclared support
+  passes trivially). Negotiation, sampling, and elicitation score under the
+  contract category; resource-subscription under reliability. The demo
+  server gained `--broken negotiation`, `--broken sampling`,
+  `--broken elicitation`, and `--broken subscription` personalities and
+  `sampled_read`, `elicited_read`, and `publish_status` tools.
 - `cancellation` probe: issues a read-only call, cancels it with
   `notifications/cancelled`, and requires the server to acknowledge the
   cancellation — silence for the cancelled request id within `grace_seconds`

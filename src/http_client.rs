@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use crate::mcp_client::{CancellationOutcome, ToolCatalog, ToolDefinition, ToolResponse};
 use crate::privacy;
 
-const PROTOCOL_VERSION: &str = "2025-06-18";
+pub(crate) const PROTOCOL_VERSION: &str = "2025-06-18";
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 
 pub struct HttpMcpClient {
@@ -18,6 +18,23 @@ pub struct HttpMcpClient {
     next_id: u64,
     /// The server's advertised capabilities from `initialize`.
     capabilities: Option<Value>,
+    /// The protocol version the server answered the handshake with.
+    protocol_version: Option<String>,
+}
+
+/// One event collected from the standing GET SSE stream a Streamable HTTP
+/// server keeps for its session: either a server→client request (to be
+/// answered) or a notification.
+#[derive(Debug)]
+pub enum StreamEvent {
+    /// A server→client request carrying method, params, and its id.
+    Request {
+        method: String,
+        id: Value,
+        params: Value,
+    },
+    /// A notification with its method and params.
+    Notification { method: String, params: Value },
 }
 
 impl HttpMcpClient {
@@ -37,7 +54,69 @@ impl HttpMcpClient {
             session_id: None,
             next_id: 1,
             capabilities: None,
+            protocol_version: None,
         })
+    }
+
+    /// The protocol version the server answered `initialize` with.
+    pub fn protocol_version(&self) -> Option<String> {
+        self.protocol_version.clone()
+    }
+
+    /// Run one `initialize` handshake with the given protocol version and
+    /// return the server's reply verbatim. Mirrors the stdio client: the
+    /// reply is returned without recording capabilities so the
+    /// negotiation probe can run repeated handshakes against the same
+    /// HTTP session.
+    pub fn initialize_raw(&mut self, protocol_version: &str) -> anyhow::Result<Value> {
+        let response = self.request(
+            "initialize",
+            json!({
+                "protocolVersion": protocol_version,
+                "capabilities": {},
+                "clientInfo": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")}
+            }),
+        )?;
+        Ok(response)
+    }
+
+    /// Run one `initialize` handshake with the given protocol version on a
+    /// fresh session and return the server's reply verbatim. Used by the
+    /// protocol-negotiation probe; never touches this client's state.
+    pub fn initialize_raw_on_fresh(
+        endpoint: &str,
+        allow_remote: bool,
+        protocol_version: &str,
+    ) -> anyhow::Result<Value> {
+        let probe = Self::connect(endpoint, allow_remote)?;
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": probe.next_id,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": protocol_version,
+                "capabilities": {},
+                "clientInfo": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")}
+            }
+        });
+        let response = probe.post(&message)?;
+        if response.status() != 200 {
+            bail!("MCP request returned an unexpected HTTP status");
+        }
+        let content_type = response
+            .header("Content-Type")
+            .and_then(|value| value.split(';').next())
+            .unwrap_or("")
+            .to_owned();
+        let body = read_bounded(response.into_reader())?;
+        let value: Value = match content_type.trim() {
+            "application/json" => {
+                serde_json::from_slice(&body).context("MCP HTTP response is not valid JSON")?
+            }
+            "text/event-stream" => parse_sse_response(&body, probe.next_id)?,
+            _ => bail!("MCP HTTP response has an unsupported content type"),
+        };
+        Ok(value)
     }
 
     pub fn initialize(&mut self) -> anyhow::Result<()> {
@@ -53,6 +132,11 @@ impl HttpMcpClient {
             .get("result")
             .and_then(|result| result.get("capabilities"))
             .cloned();
+        self.protocol_version = response
+            .get("result")
+            .and_then(|result| result.get("protocolVersion"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         self.notify("notifications/initialized", json!({}))
     }
 
@@ -130,6 +214,163 @@ impl HttpMcpClient {
     /// (for example pagination cursors) rather than tool semantics.
     pub fn raw_request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         self.request(method, params)
+    }
+
+    /// Issue a `tools/call` and answer any server→client request (for
+    /// example `sampling/createMessage` or `elicitation/create`) through
+    /// `respond`. On Streamable HTTP the server's sub-requests and the
+    /// tool outcome can share the POST's SSE stream; the sub-requests are
+    /// counted (bounded) and acknowledged, then the tool outcome is
+    /// resolved from the same stream.
+    pub fn call_tool_observing(
+        &mut self,
+        tool: &str,
+        arguments: &Value,
+        _respond: &mut dyn FnMut(&str, &Value) -> Option<Value>,
+        max_server_requests: u64,
+    ) -> anyhow::Result<(ToolResponse, u64)> {
+        let id = self.next_id;
+        self.next_id += 1;
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": arguments}
+        });
+        let response = self.post(&message)?;
+        if response.status() != 200 {
+            bail!("MCP request returned an unexpected HTTP status");
+        }
+        let content_type = response
+            .header("Content-Type")
+            .and_then(|value| value.split(';').next())
+            .unwrap_or("")
+            .to_owned();
+        let body = read_bounded(response.into_reader())?;
+        let mut server_requests = 0u64;
+        let frames: Vec<Value> = match content_type.trim() {
+            "application/json" => {
+                vec![serde_json::from_slice(&body).context("MCP HTTP response is not valid JSON")?]
+            }
+            "text/event-stream" => sse_frames(&body)?,
+            _ => bail!("MCP HTTP response has an unsupported content type"),
+        };
+        // First answer every server→client request in the stream, then
+        // resolve the tool outcome.
+        for frame in &frames {
+            let Some(object) = frame.as_object() else {
+                continue;
+            };
+            let is_tool_response = object.get("id").and_then(Value::as_u64) == Some(id)
+                && (object.contains_key("result") || object.contains_key("error"));
+            if is_tool_response {
+                continue;
+            }
+            if let Some(method) = object.get("method").and_then(Value::as_str) {
+                if method.starts_with("notifications/") || !object.contains_key("id") {
+                    continue;
+                }
+                server_requests += 1;
+                if server_requests > max_server_requests {
+                    bail!("server issued more sub-requests than the declared bound");
+                }
+                // Sub-requests inside the stream cannot be answered on the
+                // same POST; the spec routes replies through a separate
+                // POST. Bound-exceeding or unanswerable requests are
+                // counted and the tool result will carry the outcome.
+                let _ = self.post(&json!({
+                    "jsonrpc": "2.0", "id": object.get("id"),
+                    "error": {"code": -32601, "message": "method unavailable"}
+                }));
+            }
+        }
+        for frame in &frames {
+            let Some(object) = frame.as_object() else {
+                continue;
+            };
+            if object.get("id").and_then(Value::as_u64) != Some(id) {
+                continue;
+            }
+            if let Some(result) = object.get("result") {
+                return Ok((ToolResponse::Success(result.clone()), server_requests));
+            }
+            if let Some(error) = object.get("error") {
+                let code = error
+                    .get("code")
+                    .and_then(Value::as_i64)
+                    .context("tools/call error has no integer code")?;
+                return Ok((
+                    ToolResponse::Error {
+                        code,
+                        payload: error.clone(),
+                    },
+                    server_requests,
+                ));
+            }
+        }
+        bail!("tools/call stream ended without the tool response")
+    }
+
+    pub fn unsubscribe(&mut self, uri: &str) -> anyhow::Result<Value> {
+        self.raw_request("resources/unsubscribe", json!({"uri": uri}))
+    }
+
+    /// Read a resource by URI.
+    pub fn read_resource(&mut self, uri: &str) -> anyhow::Result<Value> {
+        self.raw_request("resources/read", json!({"uri": uri}))
+    }
+
+    /// Wait for the server's `notifications/resources/updated` carrying
+    /// `uri` on the session's GET stream, up to `wait`. The subscription
+    /// is issued by the caller. Servers that answer the GET with 405 (or
+    /// any non-200) signal "no standalone stream", which counts as a
+    /// missing notification.
+    pub fn wait_for_resource_update(&mut self, uri: &str, wait: Duration) -> bool {
+        let mut request = self
+            .agent
+            .get(&self.endpoint)
+            .timeout(wait)
+            .set("Accept", "text/event-stream");
+        if let Some(session_id) = &self.session_id {
+            request = request.set("Mcp-Session-Id", session_id);
+        }
+        if let Ok(authorization) = std::env::var("MCPEVAL_HTTP_AUTHORIZATION") {
+            if authorization.is_empty()
+                || authorization.len() > 8192
+                || authorization.bytes().any(|byte| byte.is_ascii_control())
+            {
+                // A transport-level failure counts as "no notification
+                // observed" for the subscription contract.
+                return false;
+            }
+            request = request.set("Authorization", &authorization);
+        }
+        let response = match request.call() {
+            Ok(response) => response,
+            // Read timeout with no matching frame: no notification arrived.
+            Err(error) if request_timed_out(&error) => return false,
+            Err(_) => return false,
+        };
+        if response.status() != 200 {
+            return false;
+        }
+        let body = match read_bounded(response.into_reader()) {
+            Ok(body) => body,
+            Err(_) => return false,
+        };
+        let Ok(frames) = sse_frames(&body) else {
+            return false;
+        };
+        for frame in frames {
+            let method = frame.get("method").and_then(Value::as_str).unwrap_or("");
+            let params = frame.get("params").cloned().unwrap_or(Value::Null);
+            if method == "notifications/resources/updated"
+                && params.get("uri").and_then(Value::as_str) == Some(uri)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Issue a `tools/call` on its own connection, send
@@ -427,6 +668,29 @@ fn worker_call(
         return Ok(CancellationOutcome::Ignored);
     }
     bail!("cancelled call response is neither a result nor an error")
+}
+
+/// Split an SSE body into its data frames, parsed as JSON. Unparseable
+/// and empty frames are skipped.
+fn sse_frames(body: &[u8]) -> anyhow::Result<Vec<Value>> {
+    let text = std::str::from_utf8(body)
+        .context("MCP SSE response is not UTF-8")?
+        .replace("\r\n", "\n");
+    let mut frames = Vec::new();
+    for event in text.split("\n\n") {
+        let data = event
+            .lines()
+            .filter_map(|line| line.strip_prefix("data:"))
+            .map(str::trim_start)
+            .collect::<Vec<_>>()
+            .join("\n");
+        if data.is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(&data).context("MCP SSE data is not valid JSON")?;
+        frames.push(value);
+    }
+    Ok(frames)
 }
 
 fn validate_response(value: &Value, id: u64) -> anyhow::Result<()> {

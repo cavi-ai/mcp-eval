@@ -92,4 +92,39 @@ honoring server cannot pass by accident. A full result delivered after the
 cancellation, or an unrelated error code, fails the case on both stdio and
 Streamable HTTP transports.
 
+### `protocol-negotiation`
+
+Runs three fresh `initialize` handshakes. The handshake with the supported
+date-shaped version must echo it; the handshake with an unknown date-shaped
+version (`bogus_version` from the manifest) must be answered with a
+date-shaped version the server actually supports — never the echoed
+request; and the version the server claims must itself be echoable on a
+third handshake. A server that parrots the unknown version, replies with a
+non-date-shaped value, or advertises support it does not have fails.
+
+### `sampling`
+
+Declares the client `sampling` capability and calls the tool. Any
+`sampling/createMessage` sub-request the server issues mid-call is answered
+with a deterministic stub sample; the server may ask at most `max_requests`
+times per call, must send well-formed requests, and must complete the call
+once its sampling request is answered.
+
+### `elicitation`
+
+Same shape as sampling for `elicitation/create`: sub-requests must carry a
+`message` and a `requestedSchema` object, are answered with the manifest's
+declared `respond` action (`accept`, `decline`, or `cancel`), and stay
+within `max_requests`.
+
+### `resource-subscription`
+
+For a server that declares `resources.subscribe`: the declared URI must be
+readable, `resources/subscribe` must succeed, the manifest's trigger tool
+must fire, and `notifications/resources/updated` for the URI must arrive
+within `max_wait_seconds` (on stdio through the shared session stream, on
+Streamable HTTP through the session's standing GET stream). A clean
+`resources/unsubscribe` closes the case; undeclared subscription support
+passes trivially.
+
 All tool calls pass through the normal sanitized synthetic-record boundary.

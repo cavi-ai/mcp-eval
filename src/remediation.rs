@@ -139,5 +139,65 @@ pub fn hint(reason: FailureReason) -> &'static str {
              cancellation awareness; observe notifications/cancelled for in-flight \
              requests and stop the work instead of replying with an unrelated error"
         }
+        FailureReason::NegotiationEchoedUnknown => {
+            "the server echoed a protocol version it was never asked to support; \
+             per the spec an initialize with an unknown version must be answered \
+             with the server's own latest supported version, never the requested one"
+        }
+        FailureReason::NegotiationInvalidVersion => {
+            "the server replied to initialize with a protocol version that is not \
+             a date-shaped version (YYYY-MM-DD), or failed to echo the supported \
+             version on the plain handshake; return one concrete date-versioned value"
+        }
+        FailureReason::NegotiationInconsistentSupport => {
+            "the server advertised a protocol version it then refused on a second \
+             handshake; keep the negotiated-version table in sync with what \
+             initialize actually accepts"
+        }
+        FailureReason::SamplingInvalidRequest => {
+            "the tool call failed after the client answered sampling/createMessage; \
+             the server's sampling client must send a well-formed createMessage \
+             request (messages array, systemPrompt optional) and accept the reply shape"
+        }
+        FailureReason::SamplingRequestFlood => {
+            "the server issued more sampling/createMessage requests during one tool \
+             call than the declared bound; batch sampling work, cache repeated \
+             prompts, or renegotiate the budget"
+        }
+        FailureReason::SamplingStalledCall => {
+            "the tool call never completed while a sampling request was outstanding; \
+             the server must proceed when the client answers sampling/createMessage \
+             instead of waiting forever"
+        }
+        FailureReason::ElicitationInvalidRequest => {
+            "the tool call failed after the client answered elicitation/create; the \
+             server's elicitation request must carry a message and a requestedSchema \
+             object, and must accept the declared action reply shape"
+        }
+        FailureReason::ElicitationRequestFlood => {
+            "the server issued more elicitation/create requests during one tool call \
+             than the declared bound; ask once per decision point instead of \
+             re-eliciting in a loop"
+        }
+        FailureReason::ElicitationStalledCall => {
+            "the tool call never completed while an elicitation request was \
+             outstanding; the server must proceed on the client's action reply \
+             (accept/decline/cancel) instead of waiting forever"
+        }
+        FailureReason::ResourceUnreadable => {
+            "the declared resource URI could not be read; list the URI in \
+             resources/list and answer resources/read for every URI the server \
+             claims to expose"
+        }
+        FailureReason::SubscriptionRejected => {
+            "the server rejected resources/unsubscribe after a successful subscribe; \
+             keep the subscription lifecycle symmetric — every accepted subscribe \
+             must accept a matching unsubscribe"
+        }
+        FailureReason::SubscriptionNotificationMissing => {
+            "no notifications/resources/updated arrived for the subscribed URI after \
+             the trigger tool ran; emit the update notification on state change for \
+             every subscribed URI, or do not declare resources.subscribe"
+        }
     }
 }

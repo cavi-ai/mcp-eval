@@ -44,7 +44,9 @@ through a bootstrap that pins its size and SHA-256. The Homebrew formula
 No server of your own yet? `mcpeval-demo` is a bundled MCP server with a
 clean personality and a set of `--broken <aspect>` personalities that
 reproduce specific defects (incoherent schema, unfaithful results, unstable
-error codes, bloated catalogs, broken pagination, slow calls):
+error codes, bloated catalogs, broken pagination, slow calls, dropped
+cancellations, echoed protocol versions, malformed sampling and elicitation
+requests, missing subscription notifications):
 
 ```sh
 cargo build --release
@@ -212,6 +214,10 @@ The deterministic battery:
 | `surface-listing` | Declared `resources`/`prompts` surfaces return well-formed, cursor-bounded listings; undeclared surfaces pass trivially |
 | `output-schema` | A tool that declares `outputSchema` returns `structuredContent` covering the schema's required fields |
 | `cancellation` | A cancelled read-only call is acknowledged: silence or a structured "Request cancelled" error for the request id — a full result or unrelated error fails the case |
+| `protocol-negotiation` | Three fresh handshakes: the supported version is echoed, an unknown date-shaped version is answered with a date-shaped non-echoed version, and the version the server claims is itself echoable |
+| `sampling` | A tool call under a client `sampling` capability: `sampling/createMessage` sub-requests are answered with a stub sample; more than `max_requests` per call, a malformed request, or a never-completing call fails the case |
+| `elicitation` | A tool call under a client `elicitation` capability: `elicitation/create` sub-requests must carry a message and `requestedSchema`, are answered with the declared action, and stay within `max_requests` |
+| `resource-subscription` | For a server declaring `resources.subscribe`: the declared URI is readable, subscribe succeeds, the trigger tool's call yields `notifications/resources/updated` within `max_wait_seconds`, and unsubscribe succeeds; undeclared support passes trivially |
 
 ## Comparing servers
 

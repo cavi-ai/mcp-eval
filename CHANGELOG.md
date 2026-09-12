@@ -36,7 +36,7 @@
   comparison column labeled `stdio`, alongside `--endpoint` HTTP targets;
   two or more targets are required.
 - State of MCP servers guide: the readiness corpus
-  (`data/readiness-corpus.json`) holds 16 public servers collected with
+  (`data/readiness-corpus.json`) holds 19 public servers collected with
   `scripts/corpus/collect.sh`, and the distribution is published with its
   method notes.
 - npm package `@cavi-ai/mcp-eval` and Homebrew formula `Formula/mcpeval.rb`,

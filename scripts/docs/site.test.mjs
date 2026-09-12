@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,12 +10,43 @@ import { slug } from "./render-site.mjs";
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const DOCS = path.join(ROOT, "docs/mcp-eval");
 
+function git(...args) {
+  return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
+}
+
+/// Materialize a released version's documentation from its own tag, the
+/// same way the publish workflow does. The build outputs are gitignored,
+/// so tests cannot read them from the working tree; a throwaway worktree
+/// at the tagged commit reproduces them deterministically with the
+/// release's own build script, without disturbing the working tree.
+async function materializeVersion(version, destination) {
+  const tag = `v${version}`;
+  const commit = git("rev-list", "-n", "1", tag);
+  const epoch = git("show", "-s", "--format=%ct", commit);
+  const worktree = path.join(os.tmpdir(), `mcpeval-site-wt-${version}-${Date.now()}`);
+  execFileSync("git", ["worktree", "add", "--detach", "-q", worktree, commit], { cwd: ROOT });
+  try {
+    execFileSync("node", [
+      "scripts/docs/build.mjs",
+      "--version",
+      version,
+      "--tag",
+      tag,
+      "--commit",
+      commit,
+      "--source-date-epoch",
+      epoch,
+    ], { cwd: worktree, stdio: "pipe" });
+    await cp(path.join(worktree, "docs", "mcp-eval", tag), destination, { recursive: true });
+  } finally {
+    execFileSync("git", ["worktree", "remove", "--force", worktree], { cwd: ROOT });
+  }
+}
+
 async function renderInto(temporary, versions) {
   const docsRoot = path.join(temporary, "docs/mcp-eval");
   for (const version of versions) {
-    await cp(path.join(DOCS, `v${version}`), path.join(docsRoot, `v${version}`), {
-      recursive: true,
-    });
+    await materializeVersion(version, path.join(docsRoot, `v${version}`));
   }
   const output = path.join(temporary, "site");
   const { renderSite } = await import(`./render-site.mjs?case=${versions.join("-")}`);

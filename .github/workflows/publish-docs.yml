@@ -156,3 +156,70 @@ jobs:
             exit 1
           fi
           jq -n --argjson payload "$(cat "$ENVELOPE")" '{event_type:"cavi-oss-release",client_payload:$payload}' | gh api --method POST /repos/cavi-ai/cavi-home/dispatches --input -
+
+  site:
+    name: publish · pages · site
+    if: ${{ inputs.dry_run != true && !github.event.repository.private }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: docs
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.1
+
+      # Every previously released version lives in the checkout history
+      # under docs/mcp-eval/v*/; re-materialize each one so the site can
+      # serve all versions with the current one highlighted.
+      - name: Materialize versioned documentation
+        run: |
+          VERSIONS="$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$')"
+          if [ -z "$VERSIONS" ]; then
+            echo "::error::no version tags found; nothing to publish"
+            exit 1
+          fi
+          BASE="$(git rev-parse HEAD)"
+          # A released version's docs must build from that release's own
+          # commit, reproducing the deterministic archive byte-for-byte
+          # before the site renders it.
+          for TAG in $VERSIONS; do
+            COMMIT="$(git rev-list -n 1 "$TAG")"
+            VERSION="${TAG#v}"
+            git checkout -q "$COMMIT"
+            node scripts/docs/build.mjs --version "$VERSION" --tag "$TAG" --commit "$COMMIT" \
+              --source-date-epoch "$(git show -s --format=%ct "$COMMIT")"
+            node scripts/docs/verify.mjs --version "$VERSION" --tag "$TAG" --commit "$COMMIT" \
+              --source-date-epoch "$(git show -s --format=%ct "$COMMIT")"
+            git checkout -q "$BASE"
+            echo "materialized v$VERSION from $COMMIT"
+          done
+
+      - name: Render the static site
+        run: node scripts/docs/render-site.mjs --output site
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

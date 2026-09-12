@@ -111,7 +111,7 @@ test("docs probe tables cover every probe kind the CLI accepts", async () => {
   const impl = source.slice(source.indexOf("impl ProbeKind"), source.indexOf("impl ProbeKind") + 2000);
   const body = impl.slice(impl.indexOf("pub fn as_str"));
   const labels = [...body.matchAll(/Self::[A-Za-z]+ => "([a-z0-9-]+)",/gmu)].map((match) => match[1]);
-  assert.equal(labels.length, 18, `unexpected probe-kind count in src/manifest.rs: ${labels.length}`);
+  assert.equal(labels.length, 19, `unexpected probe-kind count in src/manifest.rs: ${labels.length}`);
 
   const readme = await readFile(path.join(ROOT, "README.md"), "utf8");
   for (const label of labels) {

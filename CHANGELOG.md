@@ -4,6 +4,21 @@
 
 ### Added
 
+- `completion` probe: for a server declaring the `completions` capability,
+  one `completion/complete` request for the manifest's reference
+  (`ref_type`/`ref_uri`) and argument must answer a well-formed completion
+  — `completion.values`, an array of strings — within `max_values`
+  (1..=100). A structured error naming the argument is
+  `completion-argument-unknown` (the completion surface out of sync with
+  the prompt's own declarations); a malformed envelope is
+  `completion-invalid-request`; more than `max_values` is
+  `completion-value-flood`; a transport failure is
+  `completion-stalled-request`. Undeclared support passes trivially.
+  Scores under the contract category. The demo server gained a
+  `--broken completion` personality (non-string completion values) and
+  its `welcome` prompt now declares a `language` argument served by
+  `completion/complete`. Manifest JSON schema, remediation hints, and
+  official docs cover the probe.
 - Corpus drift check: `node scripts/corpus/verify.mjs` re-probes every
   observation in `data/readiness-corpus.json` with the current binary and
   exits non-zero on any score that moved; a `corpus-drift` workflow runs it

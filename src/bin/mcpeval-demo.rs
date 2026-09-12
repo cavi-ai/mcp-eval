@@ -32,7 +32,7 @@ fn main() {
     }
     let broken = match broken {
         Some(aspect) if aspect.is_empty() => {
-            eprintln!("--broken requires an aspect: schema, fidelity, unstable-errors, bloated, duplicate-page, stalled-cursor, slow, cancellation, negotiation, sampling, elicitation, subscription");
+            eprintln!("--broken requires an aspect: schema, fidelity, unstable-errors, bloated, duplicate-page, stalled-cursor, slow, cancellation, negotiation, sampling, elicitation, subscription, completion");
             std::process::exit(2);
         }
         other => other,
@@ -140,7 +140,8 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                         "resources": {
                             "subscribe": broken == Some("subscription") || broken.is_none()
                         },
-                        "prompts": {}
+                        "prompts": {},
+                        "completions": {}
                     },
                     "serverInfo": {"name": "mcpeval-demo", "version": env!("CARGO_PKG_VERSION")}
                 }))
@@ -216,8 +217,39 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                     Err((-32005, "prompts listing unavailable".into(), false))
                 } else {
                     Ok(json!({"prompts": [
-                        {"name": "welcome", "description": "Greeting prompt"}
+                        {"name": "welcome", "description": "Greeting prompt",
+                         "arguments": [{"name": "language", "description": "Greeting language",
+                                        "required": false}]}
                     ]}))
+                }
+            }
+            "completion/complete" => {
+                let reference = params.get("ref").cloned().unwrap_or(json!({}));
+                let argument = params.get("argument").cloned().unwrap_or(json!({}));
+                let name = argument.get("name").and_then(Value::as_str).unwrap_or("");
+                let prefix = argument.get("value").and_then(Value::as_str).unwrap_or("");
+                let prompt_name = reference.get("name").and_then(Value::as_str).unwrap_or("");
+                if reference.get("type").and_then(Value::as_str) == Some("ref/prompt")
+                    && prompt_name == "welcome"
+                    && name == "language"
+                {
+                    if broken == Some("completion") {
+                        // The defect under test: completion values that are
+                        // not strings — a malformed envelope from a server
+                        // that declares the capability.
+                        Ok(json!({"completion": {"values": [1, 2, 3]}}))
+                    } else {
+                        let matched: Vec<Value> = ["en", "es", "fr"]
+                            .iter()
+                            .filter(|value| value.starts_with(prefix))
+                            .map(|value| json!(value))
+                            .collect();
+                        Ok(json!({"completion": {"values": matched}}))
+                    }
+                } else {
+                    // An argument the prompt does not declare: a structured
+                    // error naming the argument, per the completion contract.
+                    Err((-32602, format!("unknown argument {name:?}"), false))
                 }
             }
             _ => Ok(json!({})),

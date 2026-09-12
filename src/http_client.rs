@@ -295,6 +295,28 @@ impl HttpMcpClient {
         self.raw_request("resources/read", json!({"uri": uri}))
     }
 
+    /// Issue one `completion/complete` request for the completion probe.
+    pub fn complete(
+        &mut self,
+        ref_type: &str,
+        ref_uri: &str,
+        argument_name: &str,
+        argument_value: &str,
+    ) -> anyhow::Result<Value> {
+        let reference = if ref_type == "ref/resource" {
+            json!({"type": ref_type, "uri": ref_uri})
+        } else {
+            json!({"type": ref_type, "name": ref_uri})
+        };
+        self.raw_request(
+            "completion/complete",
+            json!({
+                "ref": reference,
+                "argument": {"name": argument_name, "value": argument_value}
+            }),
+        )
+    }
+
     /// Wait for the server's `notifications/resources/updated` carrying
     /// `uri` on the session's GET stream, up to `wait`. The subscription
     /// is issued by the caller. Servers that answer the GET with 405 (or

@@ -23,6 +23,7 @@ pub enum ProbeSelection {
     SurfaceListing,
     OutputSchema,
     Cancellation,
+    Completion,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]

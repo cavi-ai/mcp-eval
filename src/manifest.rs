@@ -228,6 +228,25 @@ pub enum ProbeCase {
         /// 1..=60 seconds.
         max_wait_seconds: u64,
     },
+    #[serde(rename = "completion")]
+    Completion {
+        id: String,
+        access: Access,
+        /// The prompt or resource reference the completion is requested
+        /// for: `{"type": "ref/prompt", "name": "..."}` or
+        /// `{"type": "ref/resource", "uri": "..."}`.
+        ref_uri: String,
+        /// `ref/prompt` or `ref/resource`.
+        ref_type: String,
+        /// The argument whose completion is requested; must be declared
+        /// by the referenced prompt.
+        argument_name: String,
+        /// Prefix text the probe offers. Identifier-shaped.
+        argument_value: String,
+        /// Upper bound on completion values the probe accepts per
+        /// request. 1..=100.
+        max_values: u64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -261,6 +280,7 @@ pub enum ProbeKind {
     Sampling,
     Elicitation,
     ResourceSubscription,
+    Completion,
 }
 
 impl ProbeKind {
@@ -284,6 +304,7 @@ impl ProbeKind {
             Self::Sampling => "sampling",
             Self::Elicitation => "elicitation",
             Self::ResourceSubscription => "resource-subscription",
+            Self::Completion => "completion",
         }
     }
 }
@@ -308,7 +329,8 @@ impl ProbeCase {
             | Self::ProtocolNegotiation { id, .. }
             | Self::Sampling { id, .. }
             | Self::Elicitation { id, .. }
-            | Self::ResourceSubscription { id, .. } => id,
+            | Self::ResourceSubscription { id, .. }
+            | Self::Completion { id, .. } => id,
         }
     }
 
@@ -319,7 +341,8 @@ impl ProbeCase {
             | Self::Pagination { .. }
             | Self::SurfaceListing { .. }
             | Self::ProtocolNegotiation { .. }
-            | Self::ResourceSubscription { .. } => None,
+            | Self::ResourceSubscription { .. }
+            | Self::Completion { .. } => None,
             Self::Contention { tool, .. } => Some(tool),
             Self::ErrorHonesty { tool, .. } => Some(tool),
             Self::StateRecovery { failure_tool, .. } => Some(failure_tool),
@@ -354,7 +377,8 @@ impl ProbeCase {
             | Self::ProtocolNegotiation { access, .. }
             | Self::Sampling { access, .. }
             | Self::Elicitation { access, .. }
-            | Self::ResourceSubscription { access, .. } => *access,
+            | Self::ResourceSubscription { access, .. }
+            | Self::Completion { access, .. } => *access,
         }
     }
 
@@ -365,7 +389,8 @@ impl ProbeCase {
             | Self::Pagination { .. }
             | Self::SurfaceListing { .. }
             | Self::ProtocolNegotiation { .. }
-            | Self::ResourceSubscription { .. } => None,
+            | Self::ResourceSubscription { .. }
+            | Self::Completion { .. } => None,
             Self::Contention { sandbox, .. } => sandbox.as_deref(),
             Self::ErrorHonesty { sandbox, .. } | Self::StateRecovery { sandbox, .. } => {
                 sandbox.as_deref()
@@ -390,7 +415,8 @@ impl ProbeCase {
             | Self::Pagination { .. }
             | Self::SurfaceListing { .. }
             | Self::ProtocolNegotiation { .. }
-            | Self::ResourceSubscription { .. } => None,
+            | Self::ResourceSubscription { .. }
+            | Self::Completion { .. } => None,
             Self::Contention { arguments, .. } => Some(arguments),
             Self::ErrorHonesty { arguments, .. } => Some(arguments),
             Self::SchemaGuessability { arguments, .. }
@@ -425,6 +451,7 @@ impl ProbeCase {
             Self::Sampling { .. } => ProbeKind::Sampling,
             Self::Elicitation { .. } => ProbeKind::Elicitation,
             Self::ResourceSubscription { .. } => ProbeKind::ResourceSubscription,
+            Self::Completion { .. } => ProbeKind::Completion,
         }
     }
 
@@ -447,6 +474,10 @@ impl ProbeCase {
             | Self::Pagination { .. }
             | Self::SurfaceListing { .. }
             | Self::ProtocolNegotiation { .. } => Vec::new(),
+            Self::Completion { .. } => Vec::new(),
+            Self::ResourceSubscription {
+                trigger_tool: None, ..
+            } => Vec::new(),
             Self::StateRecovery {
                 failure_tool,
                 recovery_tool,
@@ -727,6 +758,34 @@ impl Manifest {
                     }
                     if !(1..=60).contains(max_wait_seconds) {
                         bail!("resource-subscription max_wait_seconds must be between 1 and 60");
+                    }
+                }
+                ProbeCase::Completion {
+                    access,
+                    ref_uri,
+                    ref_type,
+                    argument_name,
+                    argument_value,
+                    max_values,
+                    ..
+                } => {
+                    if *access != Access::ReadOnly {
+                        bail!("completion must be read-only");
+                    }
+                    if ref_type != "ref/prompt" && ref_type != "ref/resource" {
+                        bail!("completion ref_type must be ref/prompt or ref/resource");
+                    }
+                    if ref_uri.is_empty() || ref_uri.len() > 512 {
+                        bail!("completion ref_uri is invalid");
+                    }
+                    if ref_type == "ref/prompt" && !privacy::valid_identifier(argument_name) {
+                        bail!("completion argument_name is invalid");
+                    }
+                    if !privacy::valid_identifier(argument_value) {
+                        bail!("completion argument_value is invalid");
+                    }
+                    if !(1..=100).contains(max_values) {
+                        bail!("completion max_values must be between 1 and 100");
                     }
                 }
                 ProbeCase::InstructionFidelity { expect, .. } => validate_expectation(expect)?,

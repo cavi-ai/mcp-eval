@@ -1,0 +1,69 @@
+name: Corpus drift check
+
+# The corpus's only claim is "deterministic verdict, reproducible by
+# anyone" — this workflow re-probes every observation in
+# data/readiness-corpus.json with the current binary and fails on any
+# score that moved, so drift is never silent. Scheduled weekly, plus on
+# pull requests that touch the corpus or the probe battery.
+
+on:
+  pull_request:
+    paths:
+      - "data/readiness-corpus.json"
+      - "scripts/corpus/**"
+      - "src/probe.rs"
+      - "src/score.rs"
+      - "src/corpus.rs"
+      - "src/manifest.rs"
+      - "Cargo.lock"
+  schedule:
+    # Weekly, Mondays 06:23 UTC.
+    - cron: "23 6 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: corpus-drift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: corpus · re-probe · verify
+    if: ${{ !github.event.repository.private }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.1
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+
+      - name: Install Rust toolchain
+        run: rustup show
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-corpus-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build
+        run: cargo build --release --locked
+
+      - name: Collector agreement tests
+        run: node --test scripts/corpus/verify.test.mjs
+
+      - name: Re-probe every observation
+        run: node scripts/corpus/verify.mjs

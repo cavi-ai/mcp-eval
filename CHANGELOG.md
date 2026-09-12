@@ -4,6 +4,13 @@
 
 ### Added
 
+- Corpus drift check: `node scripts/corpus/verify.mjs` re-probes every
+  observation in `data/readiness-corpus.json` with the current binary and
+  exits non-zero on any score that moved; a `corpus-drift` workflow runs it
+  weekly and on pull requests touching the corpus or the probe battery, so
+  "reproducible by anyone" stays an enforced property rather than a claim.
+  Agreement tests pin the drift check's launch commands to the collector's
+  arrays.
 - Corpus grew from 19 to 34 observations: `data/readiness-corpus.json` now
   holds 34 public servers collected with `scripts/corpus/collect.sh` —
   fifteen additional credential-free servers across the npm and uvx

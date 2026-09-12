@@ -79,6 +79,25 @@ brew install cavi-ai/tap/mcpeval
 brew test cavi-ai/tap/mcpeval
 ```
 
+## Corpus drift check
+
+The corpus claims every observation reproduces; the `corpus-drift` workflow
+keeps that claim honest. It re-probes every server in
+`data/readiness-corpus.json` with the current binary and fails on any score
+that moved — weekly on a schedule, and on pull requests touching the corpus
+or the probe battery. Locally, the same check:
+
+```sh
+cargo build --release
+node scripts/corpus/verify.mjs          # prose summary, exits non-zero on drift
+node scripts/corpus/verify.mjs --json   # machine-readable per-server results
+```
+
+A moved score is a legitimate outcome: the server changed. Refresh the
+corpus deliberately with `scripts/corpus/collect.sh`, commit the new
+`data/readiness-corpus.json`, and explain the movement in the pull request.
+Drift must be explained, never silent.
+
 ## Pre-1.0 policy
 
 Before 1.0 the CLI, on-disk schema, and manifest format may change between

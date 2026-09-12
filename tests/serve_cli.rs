@@ -157,7 +157,8 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
             "get_finding",
             "get_readiness_trends",
             "run_probe",
-            "scaffold"
+            "scaffold",
+            "record_annotation"
         ]
     );
 
@@ -184,6 +185,102 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
         .unwrap()
         .contains("unknown method"));
 
+    // The write-side tool records an annotation through the same path the
+    // CLI command uses: the session is hashed before persistence.
+    let (_, recorded) = call(
+        &http,
+        "record_annotation",
+        json!({
+            "session": "agent-session-1",
+            "seq": 11,
+            "kind": "workaround",
+            "note": "used list_resource_fallback after list_resources failed"
+        }),
+    );
+    let recorded_text = recorded["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        recorded_text.contains("recorded workaround"),
+        "{recorded_text}"
+    );
+    let stored = read_annotations(&dir);
+    assert_eq!(stored.len(), 1, "exactly one annotation line");
+    assert!(stored[0]["session"]
+        .as_str()
+        .unwrap()
+        .starts_with("session:"));
+    assert!(stored[0]["session"].as_str().unwrap().len() == 72);
+    assert_eq!(stored[0]["seq"], 11);
+    assert_eq!(stored[0]["kind"], "workaround");
+    assert_eq!(
+        stored[0]["note"],
+        "used list_resource_fallback after list_resources failed"
+    );
+
+    // An unknown kind is rejected with the same message the CLI prints.
+    let (_, bad_kind) = call(
+        &http,
+        "record_annotation",
+        json!({
+            "session": "s",
+            "seq": 1,
+            "kind": "made-up-kind",
+            "note": "fine"
+        }),
+    );
+    assert!(bad_kind["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("unknown annotation kind"));
+
+    // Control characters and overlong notes are rejected.
+    let (_, control) = call(
+        &http,
+        "record_annotation",
+        json!({
+            "session": "s",
+            "seq": 2,
+            "kind": "workaround",
+            "note": "line one\nline two"
+        }),
+    );
+    assert!(control["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("control characters"));
+    let long = "x".repeat(241);
+    let (_, overlong) = call(
+        &http,
+        "record_annotation",
+        json!({
+            "session": "s",
+            "seq": 3,
+            "kind": "workaround",
+            "note": long
+        }),
+    );
+    assert!(overlong["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("240 characters"));
+
+    // The store still holds only the one accepted record.
+    assert_eq!(read_annotations(&dir).len(), 1);
+
     server.kill().ok();
     let _ = server.wait();
+}
+
+fn read_annotations(dir: &std::path::Path) -> Vec<Value> {
+    let mut records = Vec::new();
+    for entry in std::fs::read_dir(dir.join("store")).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        if !name.starts_with("annotations-") || !name.ends_with(".jsonl") {
+            continue;
+        }
+        for line in std::fs::read_to_string(&path).unwrap().lines() {
+            records.push(serde_json::from_str(line).unwrap());
+        }
+    }
+    records
 }

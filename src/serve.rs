@@ -1,11 +1,13 @@
 //! Serve findings and trends to agents over Streamable HTTP MCP.
 //!
 //! A minimal loopback-only MCP server exposing sanitized, share-safe data:
-//! `list_findings`, `get_finding`, and `get_readiness_trends`. It never
-//! persists anything and serves only what `mcpeval findings --format json`
-//! and `mcpeval trends` would print. Single-shot JSON responses (no SSE),
-//! one request per connection, the same bounded-IO posture as the capture
-//! proxy.
+//! `list_findings`, `get_finding`, and `get_readiness_trends`, plus the
+//! agent-loop tools `run_probe` and `scaffold` and the write-side
+//! `record_annotation`. It serves only what `mcpeval findings --format
+//! json` and `mcpeval trends` would print, and writes only what
+//! `mcpeval annotate` would write — the same validated, hashed, bounded
+//! record. Single-shot JSON responses (no SSE), one request per
+//! connection, the same bounded-IO posture as the capture proxy.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -72,6 +74,7 @@ fn handle_connection(stream: &mut TcpStream, root: &std::path::Path) -> anyhow::
                 readiness_trends_tool(),
                 run_probe_tool(),
                 scaffold_tool(),
+                record_annotation_tool(),
             ];
             json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools}})
         }
@@ -212,6 +215,42 @@ fn tool(name: &str, description: &str, input_schema: Option<Value>) -> Value {
     entry
 }
 
+fn record_annotation_tool() -> Value {
+    tool(
+        "record_annotation",
+        "Record an agent-authored observation about one captured call, \
+         identified by (session, seq) from the shim's sanitized journal. \
+         Kind is one of a fixed set; the note is free text bounded to 240 \
+         characters with no control characters. This is the one deliberate \
+         prose channel in the store; every other field is structured \
+         metadata. Sessions are hashed before persistence, exactly as the \
+         `mcpeval annotate` command does.",
+        Some(json!({
+            "type": "object",
+            "properties": {
+                "session": {
+                    "type": "string",
+                    "description": "The session identifier the annotated call belongs to. Stored as a stable session:<sha256> token; the raw value is never persisted."
+                },
+                "seq": {
+                    "type": "integer",
+                    "description": "The seq of the call within that session."
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": crate::record::ANNOTATION_KINDS,
+                    "description": "What the observation is: a documented path was blocked, a call reported success but changed nothing, and so on."
+                },
+                "note": {
+                    "type": "string",
+                    "description": "Free-text note, at most 240 characters, no control characters or newlines."
+                }
+            },
+            "required": ["session", "seq", "kind", "note"]
+        })),
+    )
+}
+
 fn handle_call(message: &Value, root: &std::path::Path) -> anyhow::Result<Value> {
     let name = message
         .get("params")
@@ -267,6 +306,7 @@ fn handle_call(message: &Value, root: &std::path::Path) -> anyhow::Result<Value>
         }
         "run_probe" => run_probe_tool_call(&arguments),
         "scaffold" => scaffold_tool_call(&arguments),
+        "record_annotation" => record_annotation_tool_call(&arguments),
         other => bail!("unknown tool {other}"),
     }
 }
@@ -388,6 +428,50 @@ fn scaffold_tool_call(arguments: &Value) -> anyhow::Result<Value> {
         allow_remote_http: false,
     })?;
     Ok(text_result(&serde_json::to_string_pretty(&manifest)?))
+}
+
+/// The write-side agent tool. Builds the same `AnnotationRecord` the
+/// `mcpeval annotate` command builds, validates it with the same
+/// `validate()` (kind against the fixed set, note length and control
+/// characters), and hands it to the same `append_annotation` (which
+/// hashes the session and re-validates the kind). Nothing about the
+/// record path is weaker than the CLI's.
+fn record_annotation_tool_call(arguments: &Value) -> anyhow::Result<Value> {
+    let session = arguments
+        .get("session")
+        .and_then(Value::as_str)
+        .context("record_annotation requires session")?;
+    let seq = arguments
+        .get("seq")
+        .and_then(Value::as_u64)
+        .context("record_annotation requires seq")?;
+    let kind = arguments
+        .get("kind")
+        .and_then(Value::as_str)
+        .context("record_annotation requires kind")?;
+    let note = arguments
+        .get("note")
+        .and_then(Value::as_str)
+        .context("record_annotation requires note")?;
+    if note.chars().any(char::is_control) {
+        bail!("note must not contain control characters or newlines");
+    }
+    let record = crate::record::AnnotationRecord {
+        ts: chrono::Utc::now()
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string(),
+        session: session.to_owned(),
+        seq,
+        kind: kind.to_owned(),
+        note: note.to_owned(),
+    };
+    record.validate()?;
+    let mut store = crate::store::Store::open(None)?;
+    store.append_annotation(&record)?;
+    Ok(text_result(&format!(
+        "recorded {} annotation for session:<hashed> seq {seq}",
+        record.kind
+    )))
 }
 
 fn finding_state(finding: &Value) -> &str {

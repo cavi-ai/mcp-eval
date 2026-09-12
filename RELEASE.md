@@ -12,7 +12,7 @@ tap update.
 | --- | --- | --- |
 | [ci.yml](.github/workflows/ci.yml) | push to `main`, pull requests, manual | fmt, clippy, build, tests on Linux/macOS/Windows, version agreement, docs artifact, distribution contract, npm install and Homebrew install end-to-end |
 | [release-binaries.yml](.github/workflows/release-binaries.yml) | `push: tags v*`; manual with `tag` to backfill | `mcpeval` + `mcpeval-demo` for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, each with a `.sha256` companion; the GitHub Release itself, with notes from the CHANGELOG section; `release.json` and `mcpeval.rb` generated from the built bytes; then calls `publish-docs` |
-| [publish-docs.yml](.github/workflows/publish-docs.yml) | called by `release-binaries`; `release: published`; manual (`dry_run` default `true`) | `mcp-eval-docs-vX.Y.Z.tar.gz` + `.sha256` on the release, and the release envelope dispatched to cavi-home |
+| [publish-docs.yml](.github/workflows/publish-docs.yml) | called by `release-binaries`; `release: published`; manual (`dry_run` default `true`) | `mcp-eval-docs-vX.Y.Z.tar.gz` + `.sha256` on the release, the release envelope dispatched to cavi-home, and the static documentation site redeployed to GitHub Pages — every released version re-materialized from its own tag, verified, and rendered |
 | [publish-crates.yml](.github/workflows/publish-crates.yml) | `push: tags v*`; manual stops at `--dry-run` | `mcpeval` on crates.io |
 | [publish.yml](.github/workflows/publish.yml) | `push: tags v*`; manual publishes the `package.json` version if it is not on npm yet | `@cavi-ai/mcp-eval` on npm through trusted publishing (OIDC) with provenance; waits for `release.json` on the release, verifies every pinned archive byte-for-byte, then publishes |
 
@@ -54,6 +54,10 @@ formula pin the archives by size and SHA-256 through `distribution/release.json`
   `cavi-ai/cavi-home`).
 - Environment `production`: no secrets. It is named in the npm trusted
   publisher and is part of the OIDC subject claim.
+- Environment `github-pages`: created by enabling Pages once —
+  Settings → Pages → Build and deployment → Source: **GitHub Actions**.
+  The `site` job needs no further configuration; `deploy-pages` provisions
+  the OIDC token through the environment.
 - npm trusted publisher for `@cavi-ai/mcp-eval` on npmjs.com: organization
   `cavi-ai`, repository `mcp-eval`, workflow filename `publish.yml`,
   environment `production`, with `npm publish` allowed (configurations created

@@ -210,3 +210,25 @@ test("documentation publishes from the release chain and is gated in CI", async 
     assert.ok(ci.includes(phrase), phrase);
   }
 });
+
+test("the documentation site renders every released version and deploys via Pages", async () => {
+  const workflow = await readFile(path.join(ROOT, ".github/workflows/publish-docs.yml"), "utf8");
+  for (const phrase of [
+    "actions/deploy-pages@v4",
+    "actions/upload-pages-artifact@v3",
+    "actions/configure-pages@v5",
+    "node scripts/docs/render-site.mjs",
+    "needs: docs",
+    "id-token: write",
+    "pages: write",
+  ]) {
+    assert.ok(workflow.includes(phrase), phrase);
+  }
+  // Every version materializes from its own tag and verifies before the
+  // site renders it.
+  assert.ok(workflow.indexOf("git rev-list -n 1") < workflow.indexOf("node scripts/docs/build.mjs"));
+  assert.ok(
+    workflow.indexOf("node scripts/docs/verify.mjs") < workflow.indexOf("node scripts/docs/render-site.mjs"),
+    "the site must render only after verification",
+  );
+});

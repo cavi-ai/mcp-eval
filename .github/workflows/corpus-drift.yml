@@ -46,6 +46,11 @@ jobs:
         with:
           python-version: "3.x"
 
+      # The corpus re-run launches uvx-based servers; the runner has
+      # python but not uv.
+      - name: Install uv
+        run: pipx install uv
+
       - name: Install Rust toolchain
         run: rustup show
 

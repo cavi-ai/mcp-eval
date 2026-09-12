@@ -79,6 +79,8 @@ The token-cost probe's measurement is model-independent; interpreting it is the 
 
 Reports traveled as JSON stay useful offline: `mcpeval report <baseline.json> --format markdown` re-renders any committed `mcpeval.probe-report/v1` document without re-running a server, so the probe run and the report rendering can live in different jobs — or on different days. Re-rendering a failing document exits non-zero, so a rendered report can gate in its own right.
 
+Two committed reports can also be compared directly: `mcpeval diff baseline.json current.json` classifies each case as regressed, fixed, or unchanged and prints the readiness movement. With `--fail-on-regression` it exits non-zero only for regressions, which makes the committed baseline a first-class CI gate. See the continuous-integration guide for the recipe.
+
 ## Trends
 
 Every full-battery run appends a content-free score record — server label, verdict counts, score, timestamp — to `<MCPEVAL_HOME>/store/probes/history.jsonl`. `mcpeval trends` renders the per-server history with score deltas between consecutive runs:

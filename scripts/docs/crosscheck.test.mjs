@@ -81,17 +81,26 @@ test("state-of-mcp-servers page matches the checked-in readiness corpus", async 
   }
 });
 
-test("CHANGELOG release sections do not contradict the current corpus", async () => {
+test("CHANGELOG corpus claims do not contradict the current corpus", async () => {
   const changelog = await readFile(path.join(ROOT, "CHANGELOG.md"), "utf8");
   const { total } = headlineCounts((await corpus()).observations);
-  // The newest release section is the one whose corpus claim must match the
-  // checked-in corpus; older sections may describe historical counts.
-  const sections = [...changelog.matchAll(/^## (\d+\.\d+\.\d+) - \d{4}-\d{2}-\d{2}$/gmu)];
-  assert.ok(sections.length >= 1, "changelog has no release section");
-  const latest = changelog.slice(sections[0].index, sections[1]?.index);
-  const claims = [...latest.matchAll(/holds (\d+) public servers/gmu)].map((match) => Number(match[1]));
+  // A claim in an unreleased section describes the checked-in corpus and
+  // must match it. Once released, a section becomes historical: the
+  // corpus it names is the one that shipped, so release sections are
+  // exempt even when the corpus has since grown.
+  const sections = [
+    ...changelog.matchAll(/^## (Unreleased|\d+\.\d+\.\d+)(?: - \d{4}-\d{2}-\d{2})?$/gmu),
+  ];
+  assert.ok(sections.length >= 2, "changelog has no release section");
+  const unreleased = changelog.slice(
+    sections[0].index,
+    sections[0][1] === "Unreleased" ? sections[1]?.index : sections[0].index,
+  );
+  const claims = [...unreleased.matchAll(/holds (\d+) public servers/gmu)].map(
+    (match) => Number(match[1]),
+  );
   for (const claim of claims) {
-    assert.equal(claim, total, `latest changelog corpus claim ${claim} != ${CORPUS_REL} count ${total}`);
+    assert.equal(claim, total, `changelog corpus claim ${claim} != ${CORPUS_REL} count ${total}`);
   }
 });
 

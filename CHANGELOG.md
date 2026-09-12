@@ -4,6 +4,16 @@
 
 ### Added
 
+- Corpus grew from 19 to 34 observations: `data/readiness-corpus.json` now
+  holds 34 public servers collected with `scripts/corpus/collect.sh` —
+  fifteen additional credential-free servers across the npm and uvx
+  ecosystems (airbnb, sqlite, docker, mermaid, terraform, tavily, ollama,
+  calculator, wikipedia, searxng, git, arxiv). Every prior observation
+  reproduced byte-identically on re-run. With 34 observations the
+  readiness percentile resolves on ~3% steps instead of ~5%.
+
+### Changed
+
 - `record_annotation` MCP tool on `mcpeval serve`: the write-side agent
   tool. Records an agent-authored observation about a captured call,
   identified by `(session, seq)`, through the identical build → validate →

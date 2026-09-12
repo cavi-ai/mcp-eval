@@ -61,6 +61,18 @@ NPM_SERVERS=(
   "kubernetes|mcp-server-kubernetes|"
   "playwright|@executeautomation/playwright-mcp-server|"
   "postgres|@modelcontextprotocol/server-postgres|postgresql://localhost/invalid"
+  "airbnb|@openbnb/mcp-server-airbnb|"
+  "sqlite|mcp-server-sqlite|"
+  "sqlite-npx|mcp-sqlite|"
+  "docker|mcp-server-docker|"
+  "docker-mcp|mcp-docker-server|"
+  "mermaid|mermaid-mcp-server|"
+  "terraform|mcp-server-terraform|"
+  "tavily|tavily-mcp|"
+  "ollama|ollama-mcp-server|"
+  "calculator|calculator-mcp|"
+  "wikipedia-npm|wikipedia-mcp|"
+  "searxng|mcp-searxng|"
 )
 
 for entry in "${NPM_SERVERS[@]}"; do
@@ -82,6 +94,9 @@ UVX_SERVERS=(
   "markitdown|markitdown-mcp|"
   "mcp-atlassian|mcp-atlassian|"
   "pandoc|mcp-pandoc|"
+  "git|mcp-server-git|"
+  "arxiv|arxiv-mcp-server|"
+  "wikipedia-uvx|mcp-server-wikipedia|"
 )
 
 for entry in "${UVX_SERVERS[@]}"; do

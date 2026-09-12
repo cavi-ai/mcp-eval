@@ -368,10 +368,12 @@ mcpeval serve --listen 127.0.0.1:8091
 | `get_readiness_trends` | Readiness-score history per server, oldest first |
 | `run_probe` | Execute the read-only battery against any server with an inline manifest and get the full `mcpeval.probe-report/v1` document plus remediation hints — mutation is never authorized through this surface |
 | `scaffold` | Introspect a live server's catalog and return a starter manifest JSON, without writing files |
+| `record_annotation` | Record the agent's own observation about a captured call (same fixed kinds and 240-character bounded note as `mcpeval annotate`); the session is hashed before persistence |
 
-With `run_probe` and `scaffold`, the whole loop is native MCP: the agent
-scaffolds a manifest, probes the server it is editing, reads structured
-verdicts and fixes, and re-runs — without leaving its tool protocol.
+With `run_probe`, `scaffold`, and `record_annotation`, the whole loop is
+native MCP: the agent scaffolds a manifest, probes the server it is
+editing, reads structured verdicts and fixes, re-runs, and records what it
+observed along the way — without leaving its tool protocol.
 
 ## What is recorded
 

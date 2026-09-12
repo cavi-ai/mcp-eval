@@ -4,6 +4,13 @@
 
 ### Added
 
+- `record_annotation` MCP tool on `mcpeval serve`: the write-side agent
+  tool. Records an agent-authored observation about a captured call,
+  identified by `(session, seq)`, through the identical build → validate →
+  `append_annotation` path the `mcpeval annotate` command uses — fixed
+  kind set, 240-character bounded control-character-free note, session
+  hashed before persistence. The agent loop is now fully native: scaffold,
+  probe, read verdicts, record observations, re-run.
 - `mcpeval diff <BASELINE> <CURRENT>`: native baseline gating. Compares two
   committed `mcpeval.probe-report/v1` documents, matches cases by id and
   probe kind, and classifies every case as regressed, fixed, or unchanged.

@@ -115,7 +115,8 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
             "get_finding",
             "get_readiness_trends",
             "run_probe",
-            "scaffold"
+            "scaffold",
+            "record_annotation"
         ]
     );
 
@@ -177,6 +178,41 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
         .unwrap()
         .contains("command array or a url"));
 
+    // Step 4: the agent records what it observed, still over MCP. The
+    // session is hashed before persistence, exactly like the CLI.
+    let recorded = call(
+        &http,
+        "record_annotation",
+        json!({
+            "session": "the-agent-session",
+            "seq": 42,
+            "kind": "instruction-divergence",
+            "note": "instructions promised a paginated catalog; one page only"
+        }),
+    );
+    let recorded_text = recorded["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(
+        recorded_text.contains("recorded instruction-divergence"),
+        "{recorded_text}"
+    );
+
     server.kill().ok();
     let _ = server.wait();
+    let mut stored = Vec::new();
+    for entry in std::fs::read_dir(dir.join("store")).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        if name.starts_with("annotations-") && name.ends_with(".jsonl") {
+            for line in std::fs::read_to_string(&path).unwrap().lines() {
+                stored.push(serde_json::from_str::<Value>(line).unwrap());
+            }
+        }
+    }
+    assert_eq!(stored.len(), 1);
+    assert!(stored[0]["session"]
+        .as_str()
+        .unwrap()
+        .starts_with("session:"));
+    assert_eq!(stored[0]["kind"], "instruction-divergence");
+    assert_eq!(stored[0]["seq"], 42);
 }

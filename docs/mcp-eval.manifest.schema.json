@@ -378,6 +378,49 @@
               "description": "How long the probe waits for notifications/resources/updated."
             }
           }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "id",
+            "probe",
+            "access",
+            "ref_type",
+            "ref_uri",
+            "argument_name",
+            "argument_value",
+            "max_values"
+          ],
+          "properties": {
+            "probe": { "const": "completion" },
+            "id": { "$ref": "#/$defs/identifier" },
+            "access": { "const": "read_only" },
+            "ref_type": {
+              "enum": ["ref/prompt", "ref/resource"],
+              "description": "The reference type the completion is requested for."
+            },
+            "ref_uri": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "description": "Prompt name (ref/prompt) or resource URI (ref/resource) the completion is requested for."
+            },
+            "argument_name": {
+              "$ref": "#/$defs/identifier",
+              "description": "The argument whose completion is requested; the prompt must declare it."
+            },
+            "argument_value": {
+              "$ref": "#/$defs/identifier",
+              "description": "Prefix text the probe offers; identifier-shaped."
+            },
+            "max_values": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "description": "Upper bound on completion values the probe accepts per request."
+            }
+          }
         }
       ]
     }

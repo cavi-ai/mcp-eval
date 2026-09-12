@@ -66,6 +66,7 @@ const WEIGHTS: &[(&str, f64, &[ProbeKind])] = &[
             ProbeKind::ProtocolNegotiation,
             ProbeKind::Sampling,
             ProbeKind::Elicitation,
+            ProbeKind::Completion,
         ],
     ),
     ("concurrency", 0.10, &[ProbeKind::Contention]),

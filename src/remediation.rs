@@ -199,5 +199,26 @@ pub fn hint(reason: FailureReason) -> &'static str {
              the trigger tool ran; emit the update notification on state change for \
              every subscribed URI, or do not declare resources.subscribe"
         }
+        FailureReason::CompletionInvalidRequest => {
+            "the server declared the completions capability but answered \
+             completion/complete without a well-formed completion; return a result \
+             with completion.values — an array of strings — for every declared \
+             argument, or stop advertising completions"
+        }
+        FailureReason::CompletionValueFlood => {
+            "the completion returned more values than the declared bound; cap the \
+             completion list, keep values relevant to the offered prefix, and set \
+             hasMore when the full set cannot fit"
+        }
+        FailureReason::CompletionArgumentUnknown => {
+            "the server rejected the completion request naming an argument the \
+             referenced prompt does not declare; keep completion/complete's supported \
+             argument names in sync with the prompt's declared argument list"
+        }
+        FailureReason::CompletionStalledRequest => {
+            "the completion/complete request never completed; the server must answer \
+             every request for a capability it declares — return an empty values \
+             array rather than hanging when nothing matches"
+        }
     }
 }

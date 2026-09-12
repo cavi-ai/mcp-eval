@@ -434,6 +434,29 @@ impl McpClient {
         self.raw_request("resources/read", json!({"uri": uri}))
     }
 
+    /// Issue one `completion/complete` request and return the response
+    /// envelope verbatim for the completion probe to classify.
+    pub fn complete(
+        &mut self,
+        ref_type: &str,
+        ref_uri: &str,
+        argument_name: &str,
+        argument_value: &str,
+    ) -> anyhow::Result<Value> {
+        let reference = if ref_type == "ref/resource" {
+            json!({"type": ref_type, "uri": ref_uri})
+        } else {
+            json!({"type": ref_type, "name": ref_uri})
+        };
+        self.raw_request(
+            "completion/complete",
+            json!({
+                "ref": reference,
+                "argument": {"name": argument_name, "value": argument_value}
+            }),
+        )
+    }
+
     fn request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         let id = self.next_id;
         self.next_id += 1;

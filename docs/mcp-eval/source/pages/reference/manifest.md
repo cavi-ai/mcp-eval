@@ -54,5 +54,6 @@ Supplemental probe fields:
 - `sampling`: read-only only, with `tool`, object `arguments`, and `max_requests` from 1 through 10.
 - `elicitation`: read-only only, with `tool`, object `arguments`, `max_requests` from 1 through 10, and `respond` set to `accept`, `decline`, or `cancel`.
 - `resource-subscription`: read-only only, with `uri` (1–512 characters), optional `trigger_tool` and object `trigger_arguments`, and `max_wait_seconds` from 1 through 60.
+- `completion`: read-only only, with `ref_type` (`ref/prompt` or `ref/resource`), `ref_uri` (1–512 characters), `argument_name`, identifier-shaped `argument_value`, and `max_values` from 1 through 100.
 
 An `expect` object declares `outcome` as `ok` or `error`. Successful expectations may include unique `required_result_fields` and scalar `equals` values. Error expectations may include a numeric `error_code`, but cannot declare result fields. This probe checks declared machine-readable result fields, values, outcomes, and error codes; it does not send descriptions or results to an external LLM.

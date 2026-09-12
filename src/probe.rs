@@ -167,6 +167,21 @@ impl ProbeClient {
         }
     }
 
+    fn complete(
+        &mut self,
+        ref_type: &str,
+        ref_uri: &str,
+        argument_name: &str,
+        argument_value: &str,
+    ) -> anyhow::Result<serde_json::Value> {
+        match self {
+            Self::Stdio(client) => {
+                client.complete(ref_type, ref_uri, argument_name, argument_value)
+            }
+            Self::Http(client) => client.complete(ref_type, ref_uri, argument_name, argument_value),
+        }
+    }
+
     fn wait_for_resource_update(&mut self, uri: &str, wait: std::time::Duration) -> bool {
         match self {
             Self::Stdio(client) => client.wait_for_resource_update(uri, wait),
@@ -223,6 +238,10 @@ pub enum FailureReason {
     ResourceUnreadable,
     SubscriptionRejected,
     SubscriptionNotificationMissing,
+    CompletionInvalidRequest,
+    CompletionValueFlood,
+    CompletionArgumentUnknown,
+    CompletionStalledRequest,
 }
 
 impl ProbeKind {
@@ -246,6 +265,7 @@ impl ProbeKind {
             "sampling" => Self::Sampling,
             "elicitation" => Self::Elicitation,
             "resource-subscription" => Self::ResourceSubscription,
+            "completion" => Self::Completion,
             _ => return None,
         };
         Some(candidate)
@@ -338,6 +358,10 @@ impl FailureReason {
             "resource-unreadable" => Self::ResourceUnreadable,
             "subscription-rejected" => Self::SubscriptionRejected,
             "subscription-notification-missing" => Self::SubscriptionNotificationMissing,
+            "completion-invalid-request" => Self::CompletionInvalidRequest,
+            "completion-value-flood" => Self::CompletionValueFlood,
+            "completion-argument-unknown" => Self::CompletionArgumentUnknown,
+            "completion-stalled-request" => Self::CompletionStalledRequest,
             _ => return None,
         })
     }
@@ -383,6 +407,10 @@ impl FailureReason {
             Self::ResourceUnreadable => "resource-unreadable",
             Self::SubscriptionRejected => "subscription-rejected",
             Self::SubscriptionNotificationMissing => "subscription-notification-missing",
+            Self::CompletionInvalidRequest => "completion-invalid-request",
+            Self::CompletionValueFlood => "completion-value-flood",
+            Self::CompletionArgumentUnknown => "completion-argument-unknown",
+            Self::CompletionStalledRequest => "completion-stalled-request",
         }
     }
 }
@@ -861,6 +889,7 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
         ProbeCase::Sampling { .. } => run_sampling(case, context),
         ProbeCase::Elicitation { .. } => run_elicitation(case, context),
         ProbeCase::ResourceSubscription { .. } => run_resource_subscription(case, context),
+        ProbeCase::Completion { .. } => run_completion(case, context),
     }
 }
 
@@ -1960,4 +1989,96 @@ fn run_resource_subscription(
         ));
     }
     Ok(passed_case(case, attempts))
+}
+
+/// Completion probe: for a server that declares the `completions`
+/// capability, issue one `completion/complete` request for the declared
+/// reference and argument. The server must answer with a well-formed
+/// completion — `completion.values` (an array of strings) with optional
+/// `hasMore`/`total` — and stay within `max_values`. A structured error
+/// naming an unknown argument is the argument-unknown defect; a transport
+/// failure or malformed envelope is the invalid-request defect. Servers
+/// that do not declare `completions` pass trivially.
+fn run_completion(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
+    let (ref_uri, ref_type, argument_name, argument_value, max_values) = match case {
+        ProbeCase::Completion {
+            ref_uri,
+            ref_type,
+            argument_name,
+            argument_value,
+            max_values,
+            ..
+        } => (
+            ref_uri.to_owned(),
+            ref_type.to_owned(),
+            argument_name.to_owned(),
+            argument_value.to_owned(),
+            *max_values,
+        ),
+        _ => unreachable!("completion arm"),
+    };
+    let declares_completions = context
+        .client
+        .capabilities()
+        .is_some_and(|value| value.get("completions").is_some());
+    if !declares_completions {
+        // Undeclared completion support passes trivially, mirroring
+        // surface-listing's treatment of undeclared surfaces.
+        return Ok(passed_case(case, 0));
+    }
+    let response =
+        match context
+            .client
+            .complete(&ref_type, &ref_uri, &argument_name, &argument_value)
+        {
+            Ok(response) => response,
+            // The transport-level request itself failed: the server cannot
+            // answer the capability it declared.
+            Err(_) => {
+                return Ok(failed_case(
+                    case,
+                    1,
+                    FailureReason::CompletionStalledRequest,
+                ))
+            }
+        };
+    let completion = response
+        .get("result")
+        .and_then(|result| result.get("completion"))
+        .cloned();
+    let Some(completion) = completion else {
+        // A structured JSON-RPC error is either the argument-unknown
+        // defect (the server names the argument anywhere in its error
+        // message or data) or a plain capability-vs-implementation break.
+        let unknown_argument = response
+            .get("error")
+            .map(|error| error.to_string().contains(&argument_name))
+            .unwrap_or(false);
+        return Ok(failed_case(
+            case,
+            1,
+            if unknown_argument {
+                FailureReason::CompletionArgumentUnknown
+            } else {
+                FailureReason::CompletionInvalidRequest
+            },
+        ));
+    };
+    let values = completion
+        .get("values")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    let well_formed = values.iter().all(Value::is_string);
+    if !well_formed {
+        return Ok(failed_case(
+            case,
+            1,
+            FailureReason::CompletionInvalidRequest,
+        ));
+    }
+    if values.len() > max_values as usize {
+        return Ok(failed_case(case, 1, FailureReason::CompletionValueFlood));
+    }
+    Ok(passed_case(case, 1))
 }

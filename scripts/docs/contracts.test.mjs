@@ -88,6 +88,7 @@ test("official docs publish exactly five headline dimensions and label supplemen
     "sampling",
     "elicitation",
     "resource-subscription",
+    "completion",
   ];
   const overview = await readFile(path.join(SOURCE, "pages/introduction/overview.md"), "utf8");
   const reference = await readFile(path.join(SOURCE, "pages/reference/evaluation-dimensions.md"), "utf8");

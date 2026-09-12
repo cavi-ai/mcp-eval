@@ -126,6 +126,7 @@ fn main() -> anyhow::Result<()> {
                 cli::ProbeSelection::SurfaceListing => mcpeval::manifest::ProbeKind::SurfaceListing,
                 cli::ProbeSelection::OutputSchema => mcpeval::manifest::ProbeKind::OutputSchema,
                 cli::ProbeSelection::Cancellation => mcpeval::manifest::ProbeKind::Cancellation,
+                cli::ProbeSelection::Completion => mcpeval::manifest::ProbeKind::Completion,
             });
             let full_battery = selected_probe.is_none();
             let mut store = mcpeval::store::Store::open(None)?;

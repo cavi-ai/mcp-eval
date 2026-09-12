@@ -46,7 +46,7 @@ clean personality and a set of `--broken <aspect>` personalities that
 reproduce specific defects (incoherent schema, unfaithful results, unstable
 error codes, bloated catalogs, broken pagination, slow calls, dropped
 cancellations, echoed protocol versions, malformed sampling and elicitation
-requests, missing subscription notifications):
+requests, missing subscription notifications, malformed completions):
 
 ```sh
 cargo build --release
@@ -218,6 +218,7 @@ The deterministic battery:
 | `sampling` | A tool call under a client `sampling` capability: `sampling/createMessage` sub-requests are answered with a stub sample; more than `max_requests` per call, a malformed request, or a never-completing call fails the case |
 | `elicitation` | A tool call under a client `elicitation` capability: `elicitation/create` sub-requests must carry a message and `requestedSchema`, are answered with the declared action, and stay within `max_requests` |
 | `resource-subscription` | For a server declaring `resources.subscribe`: the declared URI is readable, subscribe succeeds, the trigger tool's call yields `notifications/resources/updated` within `max_wait_seconds`, and unsubscribe succeeds; undeclared support passes trivially |
+| `completion` | For a server declaring the `completions` capability: one `completion/complete` request must answer `completion.values` (an array of strings) within `max_values`; a structured error naming the argument, a malformed envelope, or a flood of values fails; undeclared support passes trivially |
 
 ## Comparing servers
 

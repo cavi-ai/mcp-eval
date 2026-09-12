@@ -127,4 +127,16 @@ Streamable HTTP through the session's standing GET stream). A clean
 `resources/unsubscribe` closes the case; undeclared subscription support
 passes trivially.
 
+### `completion`
+
+For a server that declares the `completions` capability: one
+`completion/complete` request for the manifest's reference
+(`ref_type`/`ref_uri`) and argument must answer with a well-formed
+completion — `completion.values`, an array of strings, optionally with
+`hasMore`/`total` — and stay within `max_values`. A structured error naming
+the argument is the argument-unknown defect: the server's completion
+surface is out of sync with its own prompt declarations. A malformed
+envelope, a transport failure, or a flood of values fails the case;
+undeclared completion support passes trivially.
+
 All tool calls pass through the normal sanitized synthetic-record boundary.

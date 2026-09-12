@@ -7,7 +7,19 @@
       "score": 75
     },
     {
+      "server": "airbnb",
+      "score": 100
+    },
+    {
+      "server": "arxiv",
+      "score": 100
+    },
+    {
       "server": "browserbase",
+      "score": 100
+    },
+    {
+      "server": "calculator",
       "score": 100
     },
     {
@@ -16,6 +28,14 @@
     },
     {
       "server": "desktop-commander",
+      "score": 100
+    },
+    {
+      "server": "docker",
+      "score": 100
+    },
+    {
+      "server": "docker-mcp",
       "score": 100
     },
     {
@@ -28,6 +48,10 @@
     },
     {
       "server": "filesystem",
+      "score": 100
+    },
+    {
+      "server": "git",
       "score": 100
     },
     {
@@ -51,7 +75,15 @@
       "score": 100
     },
     {
+      "server": "mermaid",
+      "score": 100
+    },
+    {
       "server": "notion",
+      "score": 100
+    },
+    {
+      "server": "ollama",
       "score": 100
     },
     {
@@ -67,7 +99,27 @@
       "score": 100
     },
     {
+      "server": "searxng",
+      "score": 100
+    },
+    {
       "server": "sequential-thinking",
+      "score": 100
+    },
+    {
+      "server": "sqlite",
+      "score": 100
+    },
+    {
+      "server": "sqlite-npx",
+      "score": 100
+    },
+    {
+      "server": "tavily",
+      "score": 100
+    },
+    {
+      "server": "terraform",
       "score": 100
     },
     {
@@ -76,6 +128,14 @@
     },
     {
       "server": "todoist",
+      "score": 100
+    },
+    {
+      "server": "wikipedia-npm",
+      "score": 100
+    },
+    {
+      "server": "wikipedia-uvx",
       "score": 100
     }
   ]

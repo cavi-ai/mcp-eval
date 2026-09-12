@@ -188,7 +188,7 @@ The shipped corpus overrides cleanly: point a personal one at
 
 **[State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md)** —
 the corpus is also published: how healthy are the MCP servers agents actually
-use? 16 popular public servers, probed with the same battery, distribution
+use? 19 popular public servers, probed with the same battery, distribution
 published with full method notes. Reproduce it locally with one script; add
 your server by PR.
 

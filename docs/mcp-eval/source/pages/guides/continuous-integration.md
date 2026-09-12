@@ -32,6 +32,18 @@ The JSON report is deterministic, so it can be committed and diffed:
 mcpeval probe --server demo --format json > mcp-eval.baseline.json
 ```
 
+Gate the current run against the baseline with `mcpeval diff`:
+
+```yaml
+      - name: Probe battery
+        run: mcpeval probe --server demo --format json > current.json
+
+      - name: Baseline diff
+        run: mcpeval diff mcp-eval.baseline.json current.json --fail-on-regression
+```
+
+The diff classifies every case as regressed, fixed, or unchanged (matched by case id and probe kind), prints the readiness movement, and exits non-zero only for regressions — fixes and added cases are informational, since manifest growth is deliberate. `--format json` emits a deterministic `mcpeval.probe-diff/v1` document; `--format markdown` renders a pull-request-ready table. Without `--fail-on-regression` the diff is informational and always exits zero.
+
 Regenerate the baseline deliberately and review the diff in a pull request — never regenerate it inside CI, or the gate gates nothing.
 
 ## Verifying findings in CI

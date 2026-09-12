@@ -60,6 +60,17 @@ pub enum CompareFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum DiffFormat {
+    /// Aligned per-case verdict movement.
+    #[default]
+    Text,
+    /// Markdown movement table for issues and pull requests.
+    Markdown,
+    /// Deterministic JSON diff document (mcpeval.probe-diff/v1).
+    Json,
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "mcpeval",
@@ -190,6 +201,23 @@ pub enum Command {
         /// Allow explicitly selected remote HTTPS endpoints.
         #[arg(long)]
         allow_remote_http: bool,
+    },
+    /// Compare a committed baseline report against a current report and
+    /// classify every case as regressed, fixed, or unchanged. Both
+    /// documents are mcpeval.probe-report/v1; pass `-` for stdin.
+    Diff {
+        /// Baseline report document (the committed gate).
+        #[arg()]
+        baseline: std::path::PathBuf,
+        /// Current report document to gate.
+        #[arg()]
+        current: std::path::PathBuf,
+        /// Exit non-zero when any case regressed.
+        #[arg(long)]
+        fail_on_regression: bool,
+        /// Output format for the diff.
+        #[arg(long, value_enum, default_value_t = DiffFormat::Text)]
+        format: DiffFormat,
     },
     /// Write one GitHub-issue markdown file per open finding into a directory.
     ExportIssues {

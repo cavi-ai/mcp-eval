@@ -10,6 +10,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | `init` | `--server <SERVER>` plus a target | Scaffold a discovery/token-cost manifest from `tools/list`. `--confirm-read-only` additionally permits empty-argument schema checks. |
 | `schema` | no options | Print the strict manifest JSON Schema for editor validation. |
 | `compare` | `--server <SERVER>` plus two or more targets: `--endpoint <LABEL=URL>` per Streamable HTTP endpoint and optionally one stdio command after `--` | Compare one manifest across servers side by side; the stdio column is labeled `stdio`. Supports text, Markdown, and JSON output. |
+| `diff` | `<BASELINE> <CURRENT>` (either may be `-` for stdin) | Compare two committed `mcpeval.probe-report/v1` documents and classify each case as regressed, fixed, or unchanged. `--fail-on-regression` exits non-zero for regressions only; fixes and manifest growth are informational. Supports `--format text\|markdown\|json` (`mcpeval.probe-diff/v1`). |
 | `export-issues` | `--dir <DIR>` | Write content-free markdown issue drafts for open promoted findings. |
 | `trends` | optional `--last <COUNT>` | Show privacy-safe readiness history from full probe runs. |
 | `report` | `<DOCUMENT>` (or `-` for stdin) | Re-render a committed `mcpeval.probe-report/v1` document as text, markdown, or SARIF without re-running any server. Supports `--brief` and `--price-per-mtok`. |

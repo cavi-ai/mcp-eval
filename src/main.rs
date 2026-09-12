@@ -287,6 +287,36 @@ fn main() -> anyhow::Result<()> {
             print!("{output}");
             Ok(())
         }
+        cli::Command::Diff {
+            baseline,
+            current,
+            fail_on_regression,
+            format,
+        } => {
+            let baseline_report = mcpeval::diff::load_document(&baseline)
+                .with_context(|| format!("loading baseline {}", baseline.display()))?;
+            let current_report = mcpeval::diff::load_document(&current)
+                .with_context(|| format!("loading current {}", current.display()))?;
+            let outcome = mcpeval::diff::diff(&baseline_report, &current_report);
+            match format {
+                cli::DiffFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&mcpeval::diff::to_json(&outcome))?
+                    );
+                }
+                cli::DiffFormat::Markdown => {
+                    print!("{}", mcpeval::diff::render_markdown(&outcome));
+                }
+                cli::DiffFormat::Text => {
+                    print!("{}", mcpeval::diff::render(&outcome));
+                }
+            }
+            if fail_on_regression && outcome.gated() {
+                std::process::exit(1);
+            }
+            Ok(())
+        }
         cli::Command::ExportIssues {
             dir,
             include_closed,

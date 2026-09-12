@@ -1,6 +1,7 @@
 pub mod compare;
 pub mod corpus;
 pub mod correlate;
+pub mod diff;
 pub mod doctor;
 pub mod errtemplate;
 pub mod fingerprint;

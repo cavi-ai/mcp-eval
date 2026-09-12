@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `mcpeval diff <BASELINE> <CURRENT>`: native baseline gating. Compares two
+  committed `mcpeval.probe-report/v1` documents, matches cases by id and
+  probe kind, and classifies every case as regressed, fixed, or unchanged.
+  `--fail-on-regression` exits non-zero only for regressions — fixes and
+  manifest growth (removed/added cases) are informational. Readiness
+  movement is printed alongside per-case measurement movement (catalog
+  tokens, slowest latency). `--format json` emits a deterministic,
+  versioned `mcpeval.probe-diff/v1` document; `--format markdown` renders a
+  pull-request-ready movement table; either path accepts `-` for stdin.
+
 ## 0.2.0 - 2026-09-10
 
 ### Added

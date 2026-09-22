@@ -255,12 +255,18 @@ pub enum Command {
         #[arg(long, value_name = "USD")]
         price_per_mtok: Option<f64>,
     },
-    /// Serve findings and trends to agents over a loopback Streamable HTTP
-    /// MCP endpoint (tools: list_findings, get_finding, get_readiness_trends).
+    /// Serve findings, trends, and the agent-loop tools over a loopback
+    /// Streamable HTTP MCP endpoint (tools: list_findings, get_finding,
+    /// get_readiness_trends, record_annotation, and with --allow-spawn
+    /// run_probe and scaffold).
     Serve {
         /// Loopback socket address to accept MCP requests on.
         #[arg(long)]
         listen: String,
+        /// Enable run_probe and scaffold, which launch the server process an
+        /// agent names. Off by default.
+        #[arg(long)]
+        allow_spawn: bool,
         /// Print an MCP client config JSON snippet for this endpoint and
         /// exit without serving.
         #[arg(long)]

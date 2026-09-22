@@ -158,6 +158,7 @@ test("official docs cover recovery and authorization contracts", async () => {
     "--format sarif",
     "mcpeval report",
     "--print-config",
+    "--allow-spawn",
     "State of MCP servers",
     "corpus",
     "notifications/cancelled",

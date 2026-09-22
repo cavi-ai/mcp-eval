@@ -37,12 +37,13 @@ The first green result moves an open finding to `verifying`; the third consecuti
 
 ```sh
 mcpeval serve --listen 127.0.0.1:8091
+mcpeval serve --listen 127.0.0.1:8091 --allow-spawn
 ```
 
-The surface offers three read-only data tools — `list_findings`, `get_finding`, and `get_readiness_trends` — plus two agent-loop tools and one write-side tool:
+The surface offers three read-only data tools — `list_findings`, `get_finding`, and `get_readiness_trends` — plus one write-side tool and, with `--allow-spawn`, two agent-loop tools that launch the server process the agent names:
 
 - `run_probe` executes the deterministic battery against any server using an inline manifest and returns the full `mcpeval.probe-report/v1` document with per-case verdicts, measurements, and remediation hints. Mutation is never authorized through this tool: no argument combination can enable sandboxed or mutating cases.
 - `scaffold` introspects a live server's catalog and returns a starter manifest JSON without writing files; `confirm_read_only` attests the candidate tools are read-only, exactly as with `mcpeval init`.
 - `record_annotation` records an agent-authored observation about a captured call, identified by `(session, seq)`: the same fixed kind set and 240-character bounded, control-character-free note as `mcpeval annotate`, with the session hashed before persistence. This is the one deliberate prose channel in the store — the tool builds, validates, and stores the identical record the CLI command does, and the annotation notes still require a human pass before a store is shared.
 
-Together they close the loop inside the agent's own protocol: scaffold a manifest, probe the server under development, read structured verdicts and fixes, record what the agent observed, and re-run until green. The endpoint is loopback-only and serves only share-safe content.
+Together they close the loop inside the agent's own protocol: scaffold a manifest, probe the server under development, read structured verdicts and fixes, record what the agent observed, and re-run until green. The endpoint is loopback-only and serves only share-safe content. It refuses any request whose `Host` is not loopback (403, or 400 when missing), whose `Origin` is present and not loopback (403), or whose `Content-Type` is not `application/json` (415), so a web page cannot reach it through the browser, directly or through DNS rebinding.

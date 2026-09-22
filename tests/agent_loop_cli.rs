@@ -80,7 +80,12 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
         .unwrap()
         .port();
     let mut server = Command::new(bin())
-        .args(["serve", "--listen", &format!("127.0.0.1:{port}")])
+        .args([
+            "serve",
+            "--listen",
+            &format!("127.0.0.1:{port}"),
+            "--allow-spawn",
+        ])
         .env("MCPEVAL_HOME", &dir)
         .stdout(Stdio::null())
         .stderr(Stdio::null())

@@ -8,6 +8,14 @@
 //! `mcpeval annotate` would write — the same validated, hashed, bounded
 //! record. Single-shot JSON responses (no SSE), one request per
 //! connection, the same bounded-IO posture as the capture proxy.
+//!
+//! Binding to loopback does not keep a browser out: a web page can POST to
+//! 127.0.0.1 directly or through a rebound DNS name. Every request must
+//! therefore carry a loopback `Host`, a loopback `Origin` when it carries
+//! one at all, and `Content-Type: application/json`, which a cross-origin
+//! page cannot send without a CORS preflight this server never grants.
+//! `run_probe` and `scaffold` launch the process an agent names, so they
+//! are listed and callable only when the operator passes `--allow-spawn`.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
@@ -20,7 +28,9 @@ const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 
-pub fn run(listen: String) -> anyhow::Result<()> {
+const SPAWN_DISABLED: &str = "launches server processes and is disabled; restart `mcpeval serve` with --allow-spawn to enable it";
+
+pub fn run(listen: String, allow_spawn: bool) -> anyhow::Result<()> {
     let address: SocketAddr = listen.parse().context("listen address is invalid")?;
     if !address.ip().is_loopback() {
         bail!("findings servers must use a loopback address");
@@ -31,22 +41,41 @@ pub fn run(listen: String) -> anyhow::Result<()> {
         "mcpeval serve: serving findings from {} at http://{address}/mcp",
         root.display()
     );
+    if !allow_spawn {
+        eprintln!(
+            "mcpeval serve: run_probe and scaffold are disabled; pass --allow-spawn to let agents launch server processes"
+        );
+    }
     for connection in listener.incoming() {
         let mut stream = connection.context("accepting connection failed")?;
         stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
         stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
-        let _ = handle_connection(&mut stream, &root);
+        let _ = handle_connection(&mut stream, &root, allow_spawn);
     }
     Ok(())
 }
 
-fn handle_connection(stream: &mut TcpStream, root: &std::path::Path) -> anyhow::Result<()> {
+fn handle_connection(
+    stream: &mut TcpStream,
+    root: &std::path::Path,
+    allow_spawn: bool,
+) -> anyhow::Result<()> {
     let request = match read_request(stream) {
         Ok(request) => request,
         Err(_) => return write_http(stream, 400, &json!({"error": "invalid request"})),
     };
+    if let Some((status, error)) = untrusted_request(&request) {
+        return write_http(stream, status, &json!({"error": error}));
+    }
     if request.method != "POST" {
         return write_http(stream, 405, &json!({"error": "POST only"}));
+    }
+    if !is_json_media_type(request.content_type.as_deref()) {
+        return write_http(
+            stream,
+            415,
+            &json!({"error": "Content-Type must be application/json"}),
+        );
     }
     let message: Value = match serde_json::from_slice(&request.body) {
         Ok(value) => value,
@@ -68,17 +97,19 @@ fn handle_connection(stream: &mut TcpStream, root: &std::path::Path) -> anyhow::
         }),
         Some("tools/list") => {
             let id = message["id"].clone();
-            let tools = vec![
+            let mut tools = vec![
                 list_findings_tool(),
                 get_finding_tool(),
                 readiness_trends_tool(),
-                run_probe_tool(),
-                scaffold_tool(),
-                record_annotation_tool(),
             ];
+            if allow_spawn {
+                tools.push(run_probe_tool());
+                tools.push(scaffold_tool());
+            }
+            tools.push(record_annotation_tool());
             json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools}})
         }
-        Some("tools/call") => match handle_call(&message, root) {
+        Some("tools/call") => match handle_call(&message, root, allow_spawn) {
             Ok(result) => json!({"jsonrpc": "2.0", "id": message["id"], "result": result}),
             Err(error) => json!({
                 "jsonrpc": "2.0",
@@ -251,7 +282,11 @@ fn record_annotation_tool() -> Value {
     )
 }
 
-fn handle_call(message: &Value, root: &std::path::Path) -> anyhow::Result<Value> {
+fn handle_call(
+    message: &Value,
+    root: &std::path::Path,
+    allow_spawn: bool,
+) -> anyhow::Result<Value> {
     let name = message
         .get("params")
         .and_then(|params| params.get("name"))
@@ -304,6 +339,7 @@ fn handle_call(message: &Value, root: &std::path::Path) -> anyhow::Result<Value>
             let points = crate::trends::load(root, 10)?;
             Ok(text_result(&format_trends(&points)))
         }
+        "run_probe" | "scaffold" if !allow_spawn => bail!("{name} {SPAWN_DISABLED}"),
         "run_probe" => run_probe_tool_call(&arguments),
         "scaffold" => scaffold_tool_call(&arguments),
         "record_annotation" => record_annotation_tool_call(&arguments),
@@ -557,7 +593,73 @@ fn format_trends(points: &[crate::trends::TrendPoint]) -> String {
 
 struct ServeRequest {
     method: String,
+    host: Option<String>,
+    origin: Option<String>,
+    content_type: Option<String>,
     body: Vec<u8>,
+}
+
+/// The status and error for a request that did not come from this machine,
+/// or `None` when its `Host` and any `Origin` both name loopback.
+fn untrusted_request(request: &ServeRequest) -> Option<(u16, &'static str)> {
+    if request
+        .origin
+        .as_deref()
+        .is_some_and(|origin| !is_loopback_origin(origin))
+    {
+        return Some((403, "Origin is not a loopback origin"));
+    }
+    match request.host.as_deref() {
+        None => Some((400, "Host header is required")),
+        Some(host) if !is_loopback_authority(host) => Some((403, "Host is not a loopback host")),
+        Some(_) => None,
+    }
+}
+
+/// `localhost`, or an IPv4 or IPv6 loopback literal.
+fn is_loopback_host(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
+        url::Host::Ipv4(address) => address.is_loopback(),
+        url::Host::Ipv6(address) => address.is_loopback(),
+    }
+}
+
+/// An `Origin` value such as `http://localhost:6274`. The opaque `null`
+/// origin of sandboxed frames and local files is not loopback.
+fn is_loopback_origin(origin: &str) -> bool {
+    url::Url::parse(origin).is_ok_and(|parsed| {
+        matches!(parsed.scheme(), "http" | "https")
+            && parsed.host().is_some_and(|host| is_loopback_host(&host))
+    })
+}
+
+/// A `Host` value: host and optional port, nothing else.
+fn is_loopback_authority(authority: &str) -> bool {
+    !authority.contains(['/', '@', '?', '#', '\\'])
+        && url::Url::parse(&format!("http://{authority}/"))
+            .is_ok_and(|parsed| parsed.host().is_some_and(|host| is_loopback_host(&host)))
+}
+
+fn is_json_media_type(content_type: Option<&str>) -> bool {
+    content_type.is_some_and(|value| {
+        value
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .eq_ignore_ascii_case("application/json")
+    })
+}
+
+/// Store a header that must appear at most once; a repeat makes the
+/// request ambiguous and is rejected.
+fn set_once(slot: &mut Option<String>, value: &str) -> anyhow::Result<()> {
+    if slot.is_some() {
+        bail!("duplicate HTTP header");
+    }
+    *slot = Some(value.trim().to_owned());
+    Ok(())
 }
 
 fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
@@ -571,6 +673,9 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
         bail!("unsupported HTTP request line");
     }
     let mut content_length = 0usize;
+    let mut host = None;
+    let mut origin = None;
+    let mut content_type = None;
     loop {
         let line = read_line_bounded(
             &mut reader,
@@ -583,6 +688,12 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
         if let Some((name, value)) = line.trim_end_matches(['\r', '\n']).split_once(':') {
             if name.eq_ignore_ascii_case("content-length") {
                 content_length = value.trim().parse().unwrap_or(0);
+            } else if name.eq_ignore_ascii_case("host") {
+                set_once(&mut host, value)?;
+            } else if name.eq_ignore_ascii_case("origin") {
+                set_once(&mut origin, value)?;
+            } else if name.eq_ignore_ascii_case("content-type") {
+                set_once(&mut content_type, value)?;
             }
         }
     }
@@ -591,7 +702,13 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
     }
     let mut body = vec![0; content_length];
     reader.read_exact(&mut body)?;
-    Ok(ServeRequest { method, body })
+    Ok(ServeRequest {
+        method,
+        host,
+        origin,
+        content_type,
+        body,
+    })
 }
 
 fn read_line_bounded(
@@ -634,8 +751,10 @@ fn write_http(stream: &mut TcpStream, status: u16, payload: &Value) -> anyhow::R
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
+        403 => "Forbidden",
         404 => "Not Found",
         405 => "Method Not Allowed",
+        415 => "Unsupported Media Type",
         _ => "Response",
     };
     write!(

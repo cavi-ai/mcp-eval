@@ -2,39 +2,39 @@
   "schemaVersion": 1,
   "package": "@cavi-ai/mcp-eval",
   "repository": "cavi-ai/mcp-eval",
-  "version": "0.2.0",
-  "tag": "v0.2.0",
-  "commit": "8b028d00631d28c878586982061594df0b5ec785",
+  "version": "0.3.0",
+  "tag": "v0.3.0",
+  "commit": "806c22fadaf00fc23a1e58284e260620374282b0",
   "assets": {
     "darwin-arm64": {
       "target": "aarch64-apple-darwin",
       "archive": "mcpeval-aarch64-apple-darwin.tar.gz",
-      "size": 3671814,
-      "sha256": "9b93c8bb30e918af5dc15a3d2c0b78b9c5110b3fe697e2237329ff15045186c3"
+      "size": 3762229,
+      "sha256": "cd59df8f1a14b21c53205eb8d5ea85bdb630b8befdf1fdaf3ec990f0226ec2e4"
     },
     "darwin-x64": {
       "target": "x86_64-apple-darwin",
       "archive": "mcpeval-x86_64-apple-darwin.tar.gz",
-      "size": 3902448,
-      "sha256": "cfa9bea0fdef41ed9c66215002bbaaacbc60c135b0cf3aa531585b3c6f9b90f3"
+      "size": 3997676,
+      "sha256": "70413e056bf7688fcdd4acea0527bbc8ed8927643ad6c0e437a2a5680120b239"
     },
     "linux-arm64": {
       "target": "aarch64-unknown-linux-gnu",
       "archive": "mcpeval-aarch64-unknown-linux-gnu.tar.gz",
-      "size": 3899039,
-      "sha256": "c6cc1504a4348b9a467fcd939a05678054f12d58fe7ffdbfd23c7efee6395a9e"
+      "size": 3988129,
+      "sha256": "9c3d671fd3a03cb84fca458325085fc43907e28468dda327e3bdc0f172fe4561"
     },
     "linux-x64": {
       "target": "x86_64-unknown-linux-gnu",
       "archive": "mcpeval-x86_64-unknown-linux-gnu.tar.gz",
-      "size": 4123825,
-      "sha256": "5f9277761a46e95d22f014eb454bbf1ef9d26011ab2c0f38a8c7dd492f1aafb6"
+      "size": 4218902,
+      "sha256": "b3370f265acebec40a4390c6010819a65b768da4e761b07fb8285cbd4fdf4a17"
     },
     "win32-x64": {
       "target": "x86_64-pc-windows-msvc",
       "archive": "mcpeval-x86_64-pc-windows-msvc.zip",
-      "size": 3937677,
-      "sha256": "d6877d4a8c984c63a765fa3cca3ce26d946067e94cfba429c737e690d33a0503"
+      "size": 4030832,
+      "sha256": "cae93f354ae72134c445d7a0fd94ab67f08088b5717a6a8aa62dce601e185433"
     }
   }
 }

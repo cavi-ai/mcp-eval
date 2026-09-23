@@ -210,6 +210,12 @@ jobs:
   # documentation artifact is invoked directly rather than left to the event.
   docs:
     needs: release
+    # A called workflow can only use permissions the caller grants: its
+    # `release` job writes release assets, its `site` job deploys Pages.
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
     uses: ./.github/workflows/publish-docs.yml
     with:
       version: ${{ needs.release.outputs.version }}

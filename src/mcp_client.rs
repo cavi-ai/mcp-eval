@@ -138,7 +138,7 @@ impl McpClient {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .context("spawning MCP server")?;
+            .with_context(|| format!("spawning MCP server {program}"))?;
         let stdin = child.stdin.take().context("opening MCP server stdin")?;
         let stdout = child.stdout.take().context("opening MCP server stdout")?;
         let (sender, lines) = mpsc::channel();

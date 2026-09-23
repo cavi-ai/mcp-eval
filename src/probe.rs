@@ -484,14 +484,48 @@ pub struct TokenUsage {
     pub per_tool: Vec<ToolTokenUsage>,
 }
 
+impl TokenUsage {
+    /// The three heaviest tools as `tool tokens` pairs, heaviest first.
+    pub fn heaviest(&self) -> String {
+        self.per_tool
+            .iter()
+            .take(3)
+            .map(|tool| format!("{} {}", tool.tool, tool.tokens))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
 /// The manifest bound a failing case exceeded, beside the observed value:
 /// share-safe numbers only.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BoundDetail {
-    /// The manifest field that set the limit, such as `max_tools`.
+    /// The manifest field that set the limit, one of [`BoundDetail::BOUNDS`].
     pub bound: &'static str,
     pub limit: u64,
     pub observed: u64,
+}
+
+impl BoundDetail {
+    /// Every manifest field a bound-based failure can name.
+    pub const BOUNDS: [&'static str; 6] = [
+        "max_tools",
+        "max_schema_bytes",
+        "max_total_tokens",
+        "max_tool_tokens",
+        "max_latency_ms",
+        "max_pages",
+    ];
+
+    /// The detail a report document carries, when it names a known bound.
+    fn from_json(detail: &serde_json::Value) -> Option<Self> {
+        let label = detail.get("bound")?.as_str()?;
+        Some(Self {
+            bound: Self::BOUNDS.into_iter().find(|bound| *bound == label)?,
+            limit: detail.get("limit")?.as_u64()?,
+            observed: detail.get("observed")?.as_u64()?,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -627,7 +661,7 @@ impl ProbeReport {
                     .get("first_failure")
                     .and_then(serde_json::Value::as_u64),
                 reason,
-                detail: None,
+                detail: case.get("detail").and_then(BoundDetail::from_json),
                 tool_count: measurements
                     .get("tool_count")
                     .and_then(serde_json::Value::as_u64),
@@ -826,7 +860,7 @@ fn load_manifest(options: &ProbeOptions) -> anyhow::Result<(Manifest, String)> {
             Ok((manifest, sha256_hex(body.as_bytes())))
         }
         None => {
-            let body = std::fs::read(&options.manifest_path).context("reading manifest")?;
+            let body = Manifest::read(&options.manifest_path)?;
             Ok((Manifest::parse(&body)?, sha256_hex(&body)))
         }
     }

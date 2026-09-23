@@ -6,9 +6,8 @@
 //! - **clean** (default): every probe passes; use it with `mcpeval init` to
 //!   see a green battery in under a minute.
 //! - **`--broken <aspect>`**: reproduces one specific defect so the matching
-//!   probe fails with its fixed reason label. Aspects: `schema`, `fidelity`,
-//!   `unstable-errors`, `bloated`, `duplicate-page`, `stalled-cursor`,
-//!   `slow`, `negotiation`, `sampling`, `elicitation`, `subscription`.
+//!   probe fails with its fixed reason label. `mcpeval-demo --help` lists the
+//!   aspects.
 //!
 //! The server is a demo fixture, not production code: state lives in a
 //! counter, nothing persists, and stderr is free-form.
@@ -18,32 +17,112 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+/// A defect `--broken` reproduces; `ALL` is the list the argument parser
+/// accepts and `--help` prints.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Aspect {
+    Schema,
+    Fidelity,
+    UnstableErrors,
+    Bloated,
+    DuplicatePage,
+    StalledCursor,
+    Slow,
+    Cancellation,
+    Negotiation,
+    Sampling,
+    Elicitation,
+    Subscription,
+    Completion,
+    Surface,
+    OutputSchema,
+}
+
+impl Aspect {
+    const ALL: [Aspect; 15] = [
+        Aspect::Schema,
+        Aspect::Fidelity,
+        Aspect::UnstableErrors,
+        Aspect::Bloated,
+        Aspect::DuplicatePage,
+        Aspect::StalledCursor,
+        Aspect::Slow,
+        Aspect::Cancellation,
+        Aspect::Negotiation,
+        Aspect::Sampling,
+        Aspect::Elicitation,
+        Aspect::Subscription,
+        Aspect::Completion,
+        Aspect::Surface,
+        Aspect::OutputSchema,
+    ];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Aspect::Schema => "schema",
+            Aspect::Fidelity => "fidelity",
+            Aspect::UnstableErrors => "unstable-errors",
+            Aspect::Bloated => "bloated",
+            Aspect::DuplicatePage => "duplicate-page",
+            Aspect::StalledCursor => "stalled-cursor",
+            Aspect::Slow => "slow",
+            Aspect::Cancellation => "cancellation",
+            Aspect::Negotiation => "negotiation",
+            Aspect::Sampling => "sampling",
+            Aspect::Elicitation => "elicitation",
+            Aspect::Subscription => "subscription",
+            Aspect::Completion => "completion",
+            Aspect::Surface => "surface",
+            Aspect::OutputSchema => "output-schema",
+        }
+    }
+
+    fn list() -> String {
+        Self::ALL.map(Self::as_str).join(", ")
+    }
+}
+
+const USAGE: &str = "usage: mcpeval-demo [--broken <aspect>]";
+
 fn main() {
-    let mut broken: Option<String> = None;
-    for argument in std::env::args().skip(1) {
+    let mut broken: Option<Aspect> = None;
+    let mut arguments = std::env::args().skip(1);
+    while let Some(argument) = arguments.next() {
         match argument.as_str() {
-            "--broken" => broken = Some(String::new()),
-            value if broken.as_deref() == Some("") => broken = Some(value.to_owned()),
+            "--help" | "-h" => {
+                println!("{USAGE}\naspects: {}", Aspect::list());
+                return;
+            }
+            "--broken" => {
+                let Some(value) = arguments.next() else {
+                    eprintln!("--broken requires an aspect: {}", Aspect::list());
+                    std::process::exit(2);
+                };
+                let Some(aspect) = Aspect::ALL
+                    .into_iter()
+                    .find(|aspect| aspect.as_str() == value)
+                else {
+                    eprintln!(
+                        "unknown aspect {value}; expected one of: {}",
+                        Aspect::list()
+                    );
+                    std::process::exit(2);
+                };
+                broken = Some(aspect);
+            }
             other => {
-                eprintln!("unknown argument {other}; usage: mcpeval-demo [--broken <aspect>]");
+                eprintln!("unknown argument {other}; {USAGE}");
                 std::process::exit(2);
             }
         }
     }
-    let broken = match broken {
-        Some(aspect) if aspect.is_empty() => {
-            eprintln!("--broken requires an aspect: schema, fidelity, unstable-errors, bloated, duplicate-page, stalled-cursor, slow, cancellation, negotiation, sampling, elicitation, subscription, completion");
-            std::process::exit(2);
-        }
-        other => other,
-    };
-    if let Err(error) = serve(broken.as_deref()) {
+    if let Err(error) = serve(broken) {
         eprintln!("mcpeval-demo: {error}");
         std::process::exit(1);
     }
 }
 
-fn serve(broken: Option<&str>) -> anyhow::Result<()> {
+fn serve(broken: Option<Aspect>) -> anyhow::Result<()> {
     let mut stdout = std::io::stdout().lock();
     let mut calls = 0u64;
     let mut flaky_calls = 0u64;
@@ -57,7 +136,7 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
     let cancelled_flag: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>> =
         Default::default();
     let (sender, receiver) = std::sync::mpsc::channel::<Value>();
-    let reader_broken = broken.is_some_and(|aspect| aspect == "cancellation");
+    let reader_broken = broken == Some(Aspect::Cancellation);
     let reader_flag = std::sync::Arc::clone(&cancelled_flag);
     std::thread::spawn(move || {
         let stdin = std::io::stdin();
@@ -125,7 +204,7 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                     .get("protocolVersion")
                     .and_then(Value::as_str)
                     .unwrap_or("2025-06-18");
-                let negotiated = if broken == Some("negotiation") {
+                let negotiated = if broken == Some(Aspect::Negotiation) {
                     // The defect under test: echo the offered version even
                     // when the probe offered one the server never
                     // supported.
@@ -138,7 +217,7 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                     "capabilities": {
                         "tools": {},
                         "resources": {
-                            "subscribe": broken == Some("subscription") || broken.is_none()
+                            "subscribe": broken == Some(Aspect::Subscription) || broken.is_none()
                         },
                         "prompts": {},
                         "completions": {}
@@ -162,7 +241,7 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                     // The handler wrote one mid-call sub-request using
                     // this id scheme; expect a reply for it next.
                     let issued = match broken {
-                        Some("sampling") | Some("elicitation") | None => {
+                        Some(Aspect::Sampling) | Some(Aspect::Elicitation) | None => {
                             tool_written_sub_request(&params)
                         }
                         _ => false,
@@ -175,7 +254,7 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                 outcome
             }
             "resources/list" => {
-                if broken == Some("surface") {
+                if broken == Some(Aspect::Surface) {
                     Ok(json!({"unexpected": true}))
                 } else {
                     Ok(json!({"resources": [
@@ -196,7 +275,7 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                 }
             }
             "resources/subscribe" | "resources/unsubscribe" => {
-                if broken == Some("subscription") {
+                if broken == Some(Aspect::Subscription) {
                     // Subscribe itself still succeeds; the defect is the
                     // missing update notification.
                     Ok(json!({}))
@@ -211,7 +290,7 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
             })),
             "elicitation/create" => Ok(json!({"action": "accept"})),
             "prompts/list" => {
-                if broken == Some("surface") {
+                if broken == Some(Aspect::Surface) {
                     // A declared surface that never answers: the probe
                     // treats a transport failure as an invalid envelope.
                     Err((-32005, "prompts listing unavailable".into(), false))
@@ -233,7 +312,7 @@ fn serve(broken: Option<&str>) -> anyhow::Result<()> {
                     && prompt_name == "welcome"
                     && name == "language"
                 {
-                    if broken == Some("completion") {
+                    if broken == Some(Aspect::Completion) {
                         // The defect under test: completion values that are
                         // not strings — a malformed envelope from a server
                         // that declares the capability.
@@ -329,7 +408,7 @@ fn annotated(mut entry: Value, annotations: Value) -> Value {
     entry
 }
 
-fn catalog(broken: Option<&str>) -> Vec<Value> {
+fn catalog(broken: Option<Aspect>) -> Vec<Value> {
     let mut entries = vec![
         read_only_entry(
             "describe_status",
@@ -398,7 +477,7 @@ fn catalog(broken: Option<&str>) -> Vec<Value> {
             json!({}),
         ),
     ];
-    if broken == Some("output-schema") {
+    if broken == Some(Aspect::OutputSchema) {
         // report_weather declares an outputSchema but responds without
         // structuredContent: exactly the contract break the probe checks.
         if let Some(entry) = entries
@@ -415,7 +494,7 @@ fn catalog(broken: Option<&str>) -> Vec<Value> {
             });
         }
     }
-    if broken == Some("schema") {
+    if broken == Some(Aspect::Schema) {
         // Declares a required field the naive {} call cannot supply, and
         // never lists the property: incoherent schema.
         entries[0]["inputSchema"] = json!({
@@ -424,7 +503,7 @@ fn catalog(broken: Option<&str>) -> Vec<Value> {
             "required": ["missing"]
         });
     }
-    if broken == Some("bloated") {
+    if broken == Some(Aspect::Bloated) {
         for entry in &mut entries {
             let long = "context padding ".repeat(120);
             entry["description"] = json!(format!(
@@ -443,16 +522,16 @@ fn catalog(broken: Option<&str>) -> Vec<Value> {
 
 fn tools_page(
     params: &Value,
-    broken: Option<&str>,
+    broken: Option<Aspect>,
     calls: &mut u64,
 ) -> Result<Value, (i64, String, bool)> {
     *calls += 1;
     match broken {
-        Some("duplicate-page") | Some("stalled-cursor") => {
+        Some(Aspect::DuplicatePage) | Some(Aspect::StalledCursor) => {
             // Page the catalog with cursor "next"; duplicate-page repeats
             // the first tool on the second page, stalled-cursor never ends.
             let cursor = params.get("cursor").and_then(Value::as_str);
-            let repeat = broken == Some("duplicate-page") && cursor == Some("next");
+            let repeat = broken == Some(Aspect::DuplicatePage) && cursor == Some("next");
             let tools = if cursor.is_none() {
                 catalog(None)
             } else if repeat {
@@ -461,7 +540,7 @@ fn tools_page(
                 Vec::new()
             };
             let mut result = json!({"tools": tools});
-            if broken == Some("stalled-cursor") || cursor.is_none() {
+            if broken == Some(Aspect::StalledCursor) || cursor.is_none() {
                 result["nextCursor"] = json!("next");
             }
             Ok(result)
@@ -472,7 +551,7 @@ fn tools_page(
 
 struct ToolCall<'a> {
     params: &'a Value,
-    broken: Option<&'a str>,
+    broken: Option<Aspect>,
     calls: &'a mut u64,
     flaky_calls: &'a mut u64,
     broken_state: &'a mut bool,
@@ -505,7 +584,11 @@ fn call_tool(
         // polling the cancellation flag that the reader loop updates from
         // notifications/cancelled. A cancelled request is never answered:
         // the caller signals suppression via the marker error.
-        let delay_ms = if broken == Some("slow") { 2000 } else { 400 };
+        let delay_ms = if broken == Some(Aspect::Slow) {
+            2000
+        } else {
+            400
+        };
         let deadline = Instant::now() + Duration::from_millis(delay_ms);
         while Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
@@ -523,7 +606,7 @@ fn call_tool(
     match name.as_str() {
         "describe_status" => {
             let status = match broken {
-                Some("fidelity") => "degraded",
+                Some(Aspect::Fidelity) => "degraded",
                 _ => "ready",
             };
             Ok(json!({
@@ -548,7 +631,7 @@ fn call_tool(
             *flaky_calls += 1;
             if *flaky_calls <= 2 {
                 let code = match broken {
-                    Some("unstable-errors") => -32000 - *flaky_calls as i64,
+                    Some(Aspect::UnstableErrors) => -32000 - *flaky_calls as i64,
                     _ => -32001,
                 };
                 // Retryable truthfully: it does succeed on the third call.
@@ -586,7 +669,7 @@ fn call_tool(
                 .get("city")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
-            if broken == Some("output-schema") {
+            if broken == Some(Aspect::OutputSchema) {
                 // Declares outputSchema but omits structuredContent.
                 Ok(json!({
                     "content": [{"type": "text", "text": format!("weather for {city}")}]
@@ -604,7 +687,7 @@ fn call_tool(
             // sends a request missing the messages array entirely, so the
             // probe answers "method unavailable" and the call errors —
             // the server must accept the stub reply shape.
-            let malformed = broken == Some("sampling");
+            let malformed = broken == Some(Aspect::Sampling);
             if let Some(request_id) = request_id {
                 let sub = if malformed {
                     json!({
@@ -629,7 +712,7 @@ fn call_tool(
                 "content": [{"type": "text", "text": "sampled"}],
                 "structuredContent": {"ok": true}
             });
-            if broken == Some("sampling") {
+            if broken == Some(Aspect::Sampling) {
                 // The defect: the server rejects the stub reply's shape
                 // and fails the call with a structured error.
                 Err((-32010, "sampling reply rejected".into(), false))
@@ -641,7 +724,7 @@ fn call_tool(
             // One elicitation/create mid-call; the elicitation defect
             // sends a request missing requestedSchema.
             if let Some(request_id) = request_id {
-                let sub = if broken == Some("elicitation") {
+                let sub = if broken == Some(Aspect::Elicitation) {
                     json!({
                         "jsonrpc": "2.0", "id": request_id + 100,
                         "method": "elicitation/create",
@@ -666,7 +749,7 @@ fn call_tool(
                 "content": [{"type": "text", "text": "elicited"}],
                 "structuredContent": {"ok": true}
             });
-            if broken == Some("elicitation") {
+            if broken == Some(Aspect::Elicitation) {
                 // The defect: the server rejects the action reply to its
                 // own malformed request and fails the call.
                 Err((-32011, "elicitation flow broke".into(), false))
@@ -682,7 +765,7 @@ fn call_tool(
             if let Some(_request_id) = request_id {
                 // Notifications are session-scoped; the demo has a single
                 // client session.
-                if broken != Some("subscription") {
+                if broken != Some(Aspect::Subscription) {
                     let _ = write_message(
                         &mut stdout,
                         json!({

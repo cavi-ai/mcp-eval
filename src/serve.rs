@@ -135,7 +135,9 @@ fn readiness_trends_tool() -> Value {
     tool(
         "get_readiness_trends",
         "Readiness-score history per server recorded by full-battery \
-         `mcpeval probe` runs, oldest first with the newest last.",
+         `mcpeval probe` runs, oldest first with the newest last. Each point \
+         carries the SHA-256 of the manifest it ran; a score delta is shown \
+         only against the previous run of the same manifest.",
         None,
     )
 }
@@ -343,7 +345,10 @@ fn handle_call(
         }
         "get_readiness_trends" => {
             let points = crate::trends::load(root, 10)?;
-            Ok(text_result(&format_trends(&points)))
+            Ok(json!({
+                "content": [{"type": "text", "text": format_trends(&points)}],
+                "structuredContent": {"points": points},
+            }))
         }
         "run_probe" | "scaffold" if !allow_spawn => bail!("{name} {SPAWN_DISABLED}"),
         "run_probe" => run_probe_tool_call(&arguments),
@@ -588,16 +593,13 @@ fn format_trends(points: &[crate::trends::TrendPoint]) -> String {
     }
     points
         .iter()
-        .map(|point| {
-            format!(
-                "{} {} score={}/100 cases={}/{}{}",
-                point.server,
-                point.ts,
-                point.score,
-                point.cases_passed,
-                point.cases_total,
-                if point.passed { "" } else { " FAILING" }
-            )
+        .enumerate()
+        .map(|(index, point)| {
+            let previous = index
+                .checked_sub(1)
+                .map(|previous| &points[previous])
+                .filter(|previous| previous.server == point.server);
+            format!("{} {} {}", point.server, point.ts, point.summary(previous))
         })
         .collect::<Vec<_>>()
         .join("\n")

@@ -506,8 +506,22 @@ impl ProbeCase {
 
 impl Manifest {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let body = std::fs::read(path).context("reading manifest")?;
-        Self::parse(&body)
+        Self::parse(&Self::read(path)?)
+    }
+
+    /// The manifest bytes at `path`; a missing file names the path and the
+    /// command that scaffolds one.
+    pub fn read(path: &Path) -> anyhow::Result<Vec<u8>> {
+        std::fs::read(path).map_err(|error| {
+            if error.kind() == std::io::ErrorKind::NotFound {
+                anyhow::anyhow!(
+                    "manifest {} not found; run mcpeval init to scaffold one",
+                    path.display()
+                )
+            } else {
+                anyhow::Error::new(error).context(format!("reading manifest {}", path.display()))
+            }
+        })
     }
 
     /// Parse and validate manifest bytes.
@@ -542,269 +556,279 @@ impl Manifest {
         }
         let mut ids = HashSet::new();
         for case in &self.probes {
+            // An invalid id is not share-safe, so it cannot name its case.
             if !privacy::valid_identifier(case.id()) {
                 bail!("probe id is invalid");
             }
-            if !ids.insert(case.id()) {
-                bail!("probe ids must be unique");
+            self.validate_case(case, &mut ids)
+                .map_err(|error| anyhow::anyhow!("probe case {}: {error:#}", case.id()))?;
+        }
+        Ok(())
+    }
+
+    fn validate_case<'m>(
+        &'m self,
+        case: &'m ProbeCase,
+        ids: &mut HashSet<&'m str>,
+    ) -> anyhow::Result<()> {
+        if !ids.insert(case.id()) {
+            bail!("probe ids must be unique");
+        }
+        if case
+            .required_tools()
+            .iter()
+            .any(|tool| !privacy::valid_tool(tool))
+        {
+            bail!("probe tool is invalid");
+        }
+        if case
+            .arguments()
+            .is_some_and(|arguments| !arguments.is_object())
+        {
+            bail!("probe arguments must be an object");
+        }
+        match (case.access(), case.sandbox()) {
+            (Access::ReadOnly, None) => {}
+            (Access::ReadOnly, Some(_)) => bail!("read-only probe must not name a sandbox"),
+            (Access::Mutating, None) => bail!("mutating probe must name a sandbox"),
+            (Access::Mutating, Some(name)) if !self.sandboxes.contains_key(name) => {
+                bail!("mutating probe sandbox is not declared")
             }
-            if case
-                .required_tools()
-                .iter()
-                .any(|tool| !privacy::valid_tool(tool))
-            {
-                bail!("probe tool is invalid");
+            (Access::Mutating, Some(_)) => {}
+        }
+        match case {
+            ProbeCase::Contention { .. } => {}
+            ProbeCase::ErrorHonesty { max_attempts, .. } => {
+                if !(2..=20).contains(max_attempts) {
+                    bail!("error-honesty max_attempts must be between 2 and 20");
+                }
             }
-            if case
-                .arguments()
-                .is_some_and(|arguments| !arguments.is_object())
-            {
-                bail!("probe arguments must be an object");
+            ProbeCase::StateRecovery {
+                failure_arguments,
+                recovery_arguments,
+                validation_arguments,
+                ..
+            } => {
+                if !failure_arguments.is_object()
+                    || !recovery_arguments.is_object()
+                    || !validation_arguments.is_object()
+                {
+                    bail!("state-recovery arguments must be objects");
+                }
             }
-            match (case.access(), case.sandbox()) {
-                (Access::ReadOnly, None) => {}
-                (Access::ReadOnly, Some(_)) => bail!("read-only probe must not name a sandbox"),
-                (Access::Mutating, None) => bail!("mutating probe must name a sandbox"),
-                (Access::Mutating, Some(name)) if !self.sandboxes.contains_key(name) => {
-                    bail!("mutating probe sandbox is not declared")
+            ProbeCase::DiscoveryCost {
+                access,
+                max_tools,
+                max_schema_bytes,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("discovery-cost must be read-only");
                 }
-                (Access::Mutating, Some(_)) => {}
+                if !(1..=10_000).contains(max_tools) || !(1..=10_000_000).contains(max_schema_bytes)
+                {
+                    bail!("discovery limits are out of range");
+                }
             }
-            match case {
-                ProbeCase::Contention { .. } => {}
-                ProbeCase::ErrorHonesty { max_attempts, .. } => {
-                    if !(2..=20).contains(max_attempts) {
-                        bail!("error-honesty max_attempts must be between 2 and 20");
+            ProbeCase::TokenCost {
+                access,
+                max_total_tokens,
+                max_tool_tokens,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("token-cost must be read-only");
+                }
+                if !(1..=1_000_000).contains(max_total_tokens) {
+                    bail!("token budget is out of range");
+                }
+                if let Some(max_tool_tokens) = max_tool_tokens {
+                    if !(1..=100_000).contains(max_tool_tokens) {
+                        bail!("per-tool token budget is out of range");
+                    }
+                    if max_tool_tokens > max_total_tokens {
+                        bail!("per-tool token budget exceeds the total budget");
                     }
                 }
-                ProbeCase::StateRecovery {
-                    failure_arguments,
-                    recovery_arguments,
-                    validation_arguments,
-                    ..
-                } => {
-                    if !failure_arguments.is_object()
-                        || !recovery_arguments.is_object()
-                        || !validation_arguments.is_object()
-                    {
-                        bail!("state-recovery arguments must be objects");
-                    }
-                }
-                ProbeCase::DiscoveryCost {
-                    access,
-                    max_tools,
-                    max_schema_bytes,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("discovery-cost must be read-only");
-                    }
-                    if !(1..=10_000).contains(max_tools)
-                        || !(1..=10_000_000).contains(max_schema_bytes)
-                    {
-                        bail!("discovery limits are out of range");
-                    }
-                }
-                ProbeCase::TokenCost {
-                    access,
-                    max_total_tokens,
-                    max_tool_tokens,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("token-cost must be read-only");
-                    }
-                    if !(1..=1_000_000).contains(max_total_tokens) {
-                        bail!("token budget is out of range");
-                    }
-                    if let Some(max_tool_tokens) = max_tool_tokens {
-                        if !(1..=100_000).contains(max_tool_tokens) {
-                            bail!("per-tool token budget is out of range");
-                        }
-                        if max_tool_tokens > max_total_tokens {
-                            bail!("per-tool token budget exceeds the total budget");
-                        }
-                    }
-                }
-                ProbeCase::SchemaGuessability { .. } => {}
-                ProbeCase::DegradationOverN { max_attempts, .. } => {
-                    if !(2..=100).contains(max_attempts) {
-                        bail!("max_attempts must be between 2 and 100");
-                    }
-                }
-                ProbeCase::LatencyBudget {
-                    access,
-                    attempts,
-                    max_latency_ms,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("latency-budget must be read-only");
-                    }
-                    if !(2..=20).contains(attempts) {
-                        bail!("latency-budget attempts must be between 2 and 20");
-                    }
-                    if !(1..=600_000).contains(max_latency_ms) {
-                        bail!("latency budget is out of range");
-                    }
-                }
-                ProbeCase::Pagination {
-                    access, max_pages, ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("pagination must be read-only");
-                    }
-                    if !(1..=1000).contains(max_pages) {
-                        bail!("pagination max_pages must be between 1 and 1000");
-                    }
-                }
-                ProbeCase::PayloadBounds {
-                    access,
-                    field,
-                    size_bytes,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("payload-bounds must be read-only");
-                    }
-                    if !privacy::valid_identifier(field) {
-                        bail!("payload field is invalid");
-                    }
-                    if !(1..=16_000_000).contains(size_bytes) {
-                        bail!("payload size is out of range");
-                    }
-                }
-                ProbeCase::SurfaceListing {
-                    access, max_pages, ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("surface-listing must be read-only");
-                    }
-                    if !(1..=1000).contains(max_pages) {
-                        bail!("surface-listing max_pages must be between 1 and 1000");
-                    }
-                }
-                ProbeCase::OutputSchema { access, .. } => {
-                    if *access != Access::ReadOnly {
-                        bail!("output-schema must be read-only");
-                    }
-                }
-                ProbeCase::Cancellation {
-                    access,
-                    grace_seconds,
-                    reason,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("cancellation must be read-only");
-                    }
-                    if !(1..=60).contains(grace_seconds) {
-                        bail!("cancellation grace_seconds must be between 1 and 60");
-                    }
-                    if !privacy::valid_identifier(reason) {
-                        bail!("cancellation reason is invalid");
-                    }
-                }
-                ProbeCase::ProtocolNegotiation {
-                    access,
-                    bogus_version,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("protocol-negotiation must be read-only");
-                    }
-                    // The offered bogus version must be date-shaped so the
-                    // case asserts version selection, not envelope junk.
-                    if bogus_version.len() != 10
-                        || !bogus_version
-                            .bytes()
-                            .enumerate()
-                            .all(|(index, byte)| match index {
-                                4 | 7 => byte == b'-',
-                                _ => byte.is_ascii_digit(),
-                            })
-                        || bogus_version == crate::http_client::PROTOCOL_VERSION
-                    {
-                        bail!("protocol-negotiation bogus_version must be a date-shaped version other than the supported one");
-                    }
-                }
-                ProbeCase::Sampling {
-                    access,
-                    max_requests,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("sampling must be read-only");
-                    }
-                    if !(1..=10).contains(max_requests) {
-                        bail!("sampling max_requests must be between 1 and 10");
-                    }
-                }
-                ProbeCase::Elicitation {
-                    access,
-                    max_requests,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("elicitation must be read-only");
-                    }
-                    if !(1..=10).contains(max_requests) {
-                        bail!("elicitation max_requests must be between 1 and 10");
-                    }
-                }
-                ProbeCase::ResourceSubscription {
-                    access,
-                    uri,
-                    trigger_arguments,
-                    max_wait_seconds,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("resource-subscription must be read-only");
-                    }
-                    if uri.is_empty() || uri.len() > 512 {
-                        bail!("resource-subscription uri is invalid");
-                    }
-                    if trigger_arguments
-                        .as_ref()
-                        .is_some_and(|arguments| !arguments.is_object())
-                    {
-                        bail!("resource-subscription trigger arguments must be an object");
-                    }
-                    if !(1..=60).contains(max_wait_seconds) {
-                        bail!("resource-subscription max_wait_seconds must be between 1 and 60");
-                    }
-                }
-                ProbeCase::Completion {
-                    access,
-                    ref_uri,
-                    ref_type,
-                    argument_name,
-                    argument_value,
-                    max_values,
-                    ..
-                } => {
-                    if *access != Access::ReadOnly {
-                        bail!("completion must be read-only");
-                    }
-                    if ref_type != "ref/prompt" && ref_type != "ref/resource" {
-                        bail!("completion ref_type must be ref/prompt or ref/resource");
-                    }
-                    if ref_uri.is_empty() || ref_uri.len() > 512 {
-                        bail!("completion ref_uri is invalid");
-                    }
-                    if ref_type == "ref/prompt" && !privacy::valid_identifier(argument_name) {
-                        bail!("completion argument_name is invalid");
-                    }
-                    if !privacy::valid_identifier(argument_value) {
-                        bail!("completion argument_value is invalid");
-                    }
-                    if !(1..=100).contains(max_values) {
-                        bail!("completion max_values must be between 1 and 100");
-                    }
-                }
-                ProbeCase::InstructionFidelity { expect, .. } => validate_expectation(expect)?,
             }
+            ProbeCase::SchemaGuessability { .. } => {}
+            ProbeCase::DegradationOverN { max_attempts, .. } => {
+                if !(2..=100).contains(max_attempts) {
+                    bail!("max_attempts must be between 2 and 100");
+                }
+            }
+            ProbeCase::LatencyBudget {
+                access,
+                attempts,
+                max_latency_ms,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("latency-budget must be read-only");
+                }
+                if !(2..=20).contains(attempts) {
+                    bail!("latency-budget attempts must be between 2 and 20");
+                }
+                if !(1..=600_000).contains(max_latency_ms) {
+                    bail!("latency budget is out of range");
+                }
+            }
+            ProbeCase::Pagination {
+                access, max_pages, ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("pagination must be read-only");
+                }
+                if !(1..=1000).contains(max_pages) {
+                    bail!("pagination max_pages must be between 1 and 1000");
+                }
+            }
+            ProbeCase::PayloadBounds {
+                access,
+                field,
+                size_bytes,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("payload-bounds must be read-only");
+                }
+                if !privacy::valid_identifier(field) {
+                    bail!("payload field is invalid");
+                }
+                if !(1..=16_000_000).contains(size_bytes) {
+                    bail!("payload size is out of range");
+                }
+            }
+            ProbeCase::SurfaceListing {
+                access, max_pages, ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("surface-listing must be read-only");
+                }
+                if !(1..=1000).contains(max_pages) {
+                    bail!("surface-listing max_pages must be between 1 and 1000");
+                }
+            }
+            ProbeCase::OutputSchema { access, .. } => {
+                if *access != Access::ReadOnly {
+                    bail!("output-schema must be read-only");
+                }
+            }
+            ProbeCase::Cancellation {
+                access,
+                grace_seconds,
+                reason,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("cancellation must be read-only");
+                }
+                if !(1..=60).contains(grace_seconds) {
+                    bail!("cancellation grace_seconds must be between 1 and 60");
+                }
+                if !privacy::valid_identifier(reason) {
+                    bail!("cancellation reason is invalid");
+                }
+            }
+            ProbeCase::ProtocolNegotiation {
+                access,
+                bogus_version,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("protocol-negotiation must be read-only");
+                }
+                // The offered bogus version must be date-shaped so the
+                // case asserts version selection, not envelope junk.
+                if bogus_version.len() != 10
+                    || !bogus_version
+                        .bytes()
+                        .enumerate()
+                        .all(|(index, byte)| match index {
+                            4 | 7 => byte == b'-',
+                            _ => byte.is_ascii_digit(),
+                        })
+                    || bogus_version == crate::http_client::PROTOCOL_VERSION
+                {
+                    bail!("protocol-negotiation bogus_version must be a date-shaped version other than the supported one");
+                }
+            }
+            ProbeCase::Sampling {
+                access,
+                max_requests,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("sampling must be read-only");
+                }
+                if !(1..=10).contains(max_requests) {
+                    bail!("sampling max_requests must be between 1 and 10");
+                }
+            }
+            ProbeCase::Elicitation {
+                access,
+                max_requests,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("elicitation must be read-only");
+                }
+                if !(1..=10).contains(max_requests) {
+                    bail!("elicitation max_requests must be between 1 and 10");
+                }
+            }
+            ProbeCase::ResourceSubscription {
+                access,
+                uri,
+                trigger_arguments,
+                max_wait_seconds,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("resource-subscription must be read-only");
+                }
+                if uri.is_empty() || uri.len() > 512 {
+                    bail!("resource-subscription uri is invalid");
+                }
+                if trigger_arguments
+                    .as_ref()
+                    .is_some_and(|arguments| !arguments.is_object())
+                {
+                    bail!("resource-subscription trigger arguments must be an object");
+                }
+                if !(1..=60).contains(max_wait_seconds) {
+                    bail!("resource-subscription max_wait_seconds must be between 1 and 60");
+                }
+            }
+            ProbeCase::Completion {
+                access,
+                ref_uri,
+                ref_type,
+                argument_name,
+                argument_value,
+                max_values,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("completion must be read-only");
+                }
+                if ref_type != "ref/prompt" && ref_type != "ref/resource" {
+                    bail!("completion ref_type must be ref/prompt or ref/resource");
+                }
+                if ref_uri.is_empty() || ref_uri.len() > 512 {
+                    bail!("completion ref_uri is invalid");
+                }
+                if ref_type == "ref/prompt" && !privacy::valid_identifier(argument_name) {
+                    bail!("completion argument_name is invalid");
+                }
+                if !privacy::valid_identifier(argument_value) {
+                    bail!("completion argument_value is invalid");
+                }
+                if !(1..=100).contains(max_values) {
+                    bail!("completion max_values must be between 1 and 100");
+                }
+            }
+            ProbeCase::InstructionFidelity { expect, .. } => validate_expectation(expect)?,
         }
         Ok(())
     }

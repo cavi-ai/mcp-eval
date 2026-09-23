@@ -14,6 +14,8 @@ MCP Eval validates the manifest, case selection, mutation authorization, server 
 - every required tool is returned by the server's `tools/list`;
 - every mutating case names a declared sandbox and the command includes `--allow-mutation`.
 
+A missing manifest prints `manifest <path> not found; run mcpeval init to scaffold one` and exits 2; `--manifest` defaults to `mcp-eval.manifest.json` in the working directory. A case that fails validation is named in the error, as in `probe case slow-read: latency-budget attempts must be between 2 and 20`. A server command that cannot start prints `spawning MCP server <program>` with the operating-system cause.
+
 ## An HTTP endpoint is rejected
 
 Loopback HTTP is accepted by default. A remote endpoint must use HTTPS and requires `--allow-remote-http`. Remove credentials, query strings, and fragments from the URL. Responses are limited to 8 MiB and use five-second connect, read, and write timeouts.

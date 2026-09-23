@@ -46,8 +46,34 @@ fn explain_lists_reasons_and_prints_the_matching_hint() {
     assert!(!stdout.contains("cursor sequence never terminated"));
 
     let unknown = run(&dir, &["explain", "made-up-reason"]);
-    assert!(!unknown.status.success());
-    assert!(String::from_utf8_lossy(&unknown.stderr).contains("unknown reason"));
+    assert_eq!(unknown.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(
+        stderr.contains("unknown reason made-up-reason; run mcpeval explain for the list"),
+        "{stderr}"
+    );
+
+    let near = run(&dir, &["explain", "pagination-stalled"]);
+    assert_eq!(near.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&near.stderr);
+    let suggestions = stderr
+        .split_once("unknown reason pagination-stalled; did you mean: ")
+        .map(|(_, rest)| rest.trim_end())
+        .unwrap_or_else(|| panic!("no suggestions: {stderr}"));
+    assert!(
+        suggestions
+            .split(", ")
+            .any(|label| label == "pagination-stalled-cursor"),
+        "{stderr}"
+    );
+
+    let prefix = run(&dir, &["explain", "unstable"]);
+    assert_eq!(prefix.status.code(), Some(2));
+    assert!(
+        String::from_utf8_lossy(&prefix.stderr).contains("did you mean: unstable-error-code"),
+        "{}",
+        String::from_utf8_lossy(&prefix.stderr)
+    );
 }
 
 #[test]

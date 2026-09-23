@@ -575,7 +575,7 @@ fn run() -> anyhow::Result<()> {
                     now: chrono::Utc::now(),
                 },
             )?;
-            println!("promoted {} of {} issues", stats.findings, stats.issues);
+            println!("{}", stats.summary(threshold));
             Ok(())
         }
         cli::Command::Generate {
@@ -597,7 +597,13 @@ fn run() -> anyhow::Result<()> {
                 cli::FindingsFormat::Md => mcpeval::report::ReportFormat::Md,
                 cli::FindingsFormat::Json => mcpeval::report::ReportFormat::Json,
             };
-            print!("{}", mcpeval::report::render(store.root(), format)?);
+            let findings = mcpeval::report::load_findings(store.root())?;
+            if findings.is_empty() {
+                eprintln!(
+                    "no promoted findings; run mcpeval promote --threshold 0 to see every issue"
+                );
+            }
+            print!("{}", mcpeval::report::render(&findings, format)?);
             Ok(())
         }
         cli::Command::Annotate {

@@ -186,3 +186,60 @@ fn findings_cli_renders_the_selected_format() {
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(value.as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn promote_cli_says_why_issues_were_not_promoted_and_findings_explains_an_empty_list() {
+    let dir = std::env::temp_dir().join(format!("mcpeval-cli-{}", uuid::Uuid::new_v4()));
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store
+        .append(&CallRecord {
+            ts: chrono::Utc::now().to_rfc3339(),
+            session: "only".into(),
+            seq: 1,
+            server: "demo".into(),
+            method: "tools/call".into(),
+            tool: Some("click".into()),
+            args: None,
+            latency_ms: Some(1),
+            outcome: "error".into(),
+            error: Some(ErrorInfo {
+                code: Some(json!("blocked")),
+                layer: None,
+                retryable: Some(false),
+                kind: None,
+                template: None,
+                template_id: Some("aaaaaaaaaaaaaaaa".into()),
+            }),
+            shim_self_us: 1,
+            kind: "real".into(),
+        })
+        .unwrap();
+    index::build(&dir).unwrap();
+    let promoted = Command::new(bin())
+        .args(["promote", "--threshold", "0"])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(promoted.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&promoted.stdout),
+        "promoted 0 of 1 issues (1 seen in one session only)\n"
+    );
+
+    for format in ["agent", "md", "json"] {
+        let out = Command::new(bin())
+            .args(["findings", "--format", format])
+            .env("MCPEVAL_HOME", &dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{format}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stderr),
+            "no promoted findings; run mcpeval promote --threshold 0 to see every issue\n",
+            "{format}"
+        );
+        if format == "agent" {
+            assert!(out.stdout.is_empty());
+        }
+    }
+}

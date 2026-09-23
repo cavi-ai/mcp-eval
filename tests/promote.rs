@@ -5,7 +5,7 @@ use mcpeval::promote::{
     calibrate_seed, promote, resolve_threshold, score, wilson_lower_bound, PromotionConfig,
     ScoreInput,
 };
-use mcpeval::record::{CallRecord, ErrorInfo};
+use mcpeval::record::{AnnotationRecord, CallRecord, ErrorInfo};
 use mcpeval::store::Store;
 use serde_json::json;
 
@@ -290,4 +290,415 @@ fn aggregation_orders_rfc3339_timestamps_by_instant_and_rejects_any_invalid_valu
         }
     )
     .is_err());
+}
+
+fn at(hour: u32) -> PromotionConfig {
+    PromotionConfig {
+        threshold: 0.0,
+        now: Utc.with_ymd_and_hms(2026, 8, 5, hour, 0, 0).unwrap(),
+    }
+}
+
+fn coded(
+    session: &str,
+    seq: u64,
+    tool: &str,
+    code: i64,
+    retryable: bool,
+    template_id: &str,
+) -> CallRecord {
+    let mut record = call(session, seq, tool, "error", template_id);
+    let error = record.error.as_mut().unwrap();
+    error.code = Some(json!(code));
+    error.retryable = Some(retryable);
+    record
+}
+
+#[test]
+fn promotion_counts_only_real_calls_and_failures() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    for session in ["probe-one", "probe-two"] {
+        for seq in 1..=3 {
+            let mut record = call(session, seq, "click", "error", "aaaaaaaaaaaaaaaa");
+            record.kind = "synthetic".into();
+            store.append(&record).unwrap();
+        }
+    }
+    index::build(&dir).unwrap();
+    let stats = promote(&dir, at(0)).unwrap();
+    assert_eq!((stats.issues, stats.findings), (0, 0));
+
+    for record in [
+        call("s1", 1, "click", "error", "aaaaaaaaaaaaaaaa"),
+        call("s1", 2, "click", "ok", "aaaaaaaaaaaaaaaa"),
+        call("s2", 1, "click", "error", "aaaaaaaaaaaaaaaa"),
+    ] {
+        store.append(&record).unwrap();
+    }
+    index::build(&dir).unwrap();
+    let stats = promote(&dir, at(0)).unwrap();
+    assert_eq!((stats.issues, stats.findings), (1, 1));
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let counts: (i64, i64, i64) = db
+        .query_row("SELECT failures, calls, sessions FROM issues", [], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .unwrap();
+    assert_eq!(counts, (2, 3, 2));
+}
+
+#[test]
+fn one_template_with_several_codes_is_one_issue_keyed_without_the_code() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    for record in [
+        coded("s1", 1, "click", -32002, false, "aaaaaaaaaaaaaaaa"),
+        coded("s2", 1, "click", -32001, false, "aaaaaaaaaaaaaaaa"),
+        coded("s2", 2, "click", -32002, false, "aaaaaaaaaaaaaaaa"),
+        coded("s1", 2, "type", -32005, false, "bbbbbbbbbbbbbbbb"),
+        coded("s2", 3, "type", -32003, false, "bbbbbbbbbbbbbbbb"),
+    ] {
+        store.append(&record).unwrap();
+    }
+    index::build(&dir).unwrap();
+    let stats = promote(&dir, at(0)).unwrap();
+    assert_eq!((stats.issues, stats.findings), (2, 2));
+
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let rows: Vec<(String, String, String, String, i64)> = db
+        .prepare(
+            "SELECT finding_id, err_code, err_codes, class, failures FROM issues
+             ORDER BY err_template_id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            (
+                mcpeval::lifecycle::finding_id(
+                    "demo",
+                    Some("click"),
+                    None,
+                    Some("aaaaaaaaaaaaaaaa")
+                ),
+                "-32002".into(),
+                "[-32001,-32002]".into(),
+                "unstable-error-code".into(),
+                3,
+            ),
+            (
+                mcpeval::lifecycle::finding_id(
+                    "demo",
+                    Some("type"),
+                    None,
+                    Some("bbbbbbbbbbbbbbbb")
+                ),
+                "-32003".into(),
+                "[-32003,-32005]".into(),
+                "unstable-error-code".into(),
+                2,
+            ),
+        ]
+    );
+}
+
+#[test]
+fn rekeyed_findings_keep_the_latest_lifecycle_state_and_its_probe_history() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    for record in [
+        coded("s1", 1, "click", -32001, false, "aaaaaaaaaaaaaaaa"),
+        coded("s2", 1, "click", -32001, false, "aaaaaaaaaaaaaaaa"),
+    ] {
+        store.append(&record).unwrap();
+    }
+    index::build(&dir).unwrap();
+    let template = Some("aaaaaaaaaaaaaaaa");
+    let kept = mcpeval::lifecycle::finding_id("demo", Some("click"), Some("-32001"), template);
+    let stale = mcpeval::lifecycle::finding_id("demo", Some("click"), Some("-32002"), template);
+    let rekeyed = mcpeval::lifecycle::finding_id("demo", Some("click"), None, template);
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    db.execute_batch(mcpeval::lifecycle::SCHEMA).unwrap();
+    for (id, code, probe, state, passes, updated_at) in [
+        (
+            &kept,
+            "-32001",
+            "probe-kept",
+            "verifying",
+            2,
+            "2026-08-04T12:00:00.000Z",
+        ),
+        (
+            &stale,
+            "-32002",
+            "probe-stale",
+            "open",
+            0,
+            "2026-08-01T00:00:00.000Z",
+        ),
+    ] {
+        db.execute(
+            "INSERT INTO finding_lifecycle
+             (finding_id,server,tool,err_code,err_template_id,probe_id,state,consecutive_passes,updated_at)
+             VALUES (?1,'demo','click',?2,'aaaaaaaaaaaaaaaa',?3,?4,?5,?6)",
+            rusqlite::params![id, code, probe, state, passes, updated_at],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO probe_history(finding_id,probe_id,passed,ts) VALUES (?1,?2,1,?3)",
+            rusqlite::params![id, probe, updated_at],
+        )
+        .unwrap();
+    }
+
+    let stats = promote(&dir, at(0)).unwrap();
+    assert_eq!(stats.findings, 1);
+    let lifecycle: Vec<(String, String, Option<String>, i64)> = db
+        .prepare("SELECT finding_id,state,probe_id,consecutive_passes FROM finding_lifecycle")
+        .unwrap()
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        lifecycle,
+        vec![(
+            rekeyed.clone(),
+            "verifying".into(),
+            Some("probe-kept".into()),
+            2
+        )]
+    );
+    let history: Vec<(String, String)> = db
+        .prepare("SELECT finding_id,probe_id FROM probe_history")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(history, vec![(rekeyed.clone(), "probe-kept".into())]);
+    let finding: String = db
+        .query_row("SELECT finding_id FROM findings", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(finding, rekeyed);
+}
+
+#[test]
+fn promotion_classifies_each_issue_from_codes_annotations_and_retries() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    for record in [
+        coded("c1", 1, "click", -32000, true, "cccccccccccccccc"),
+        call("c1", 2, "click", "ok", "cccccccccccccccc"),
+        coded("c2", 1, "click", -32000, true, "cccccccccccccccc"),
+        coded("d1", 1, "type", -32000, true, "dddddddddddddddd"),
+        call("d1", 2, "click", "ok", "dddddddddddddddd"),
+        coded("d2", 1, "type", -32000, true, "dddddddddddddddd"),
+        coded("e1", 1, "open", -32000, false, "eeeeeeeeeeeeeeee"),
+        coded("e2", 1, "open", -32000, false, "eeeeeeeeeeeeeeee"),
+        coded("f1", 1, "scroll", -32000, false, "ffffffffffffffff"),
+        coded("f2", 1, "scroll", -32000, false, "ffffffffffffffff"),
+        coded("g1", 1, "wait", -32000, true, "gggggggggggggggg"),
+        call("g1", 2, "wait", "ok", "gggggggggggggggg"),
+        coded("g2", 1, "wait", -32000, false, "gggggggggggggggg"),
+    ] {
+        store.append(&record).unwrap();
+    }
+    for (session, kind) in [("e1", "false-success"), ("f1", "blocked-optimal-path")] {
+        store
+            .append_annotation(&AnnotationRecord {
+                ts: "2026-08-04T12:00:01Z".into(),
+                session: mcpeval::privacy::opaque_session(session),
+                seq: 1,
+                kind: kind.into(),
+                note: "observed".into(),
+            })
+            .unwrap();
+    }
+    index::build(&dir).unwrap();
+    promote(&dir, at(0)).unwrap();
+
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let classes: Vec<(String, String, String)> = db
+        .prepare("SELECT tool, class, err_codes FROM issues ORDER BY tool")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let expected = [
+        ("click", "recovers-on-retry"),
+        ("open", "false-success"),
+        ("scroll", "blocked-optimal-path"),
+        ("type", "retry-did-not-recover"),
+        ("wait", "recurring-error"),
+    ];
+    assert_eq!(
+        classes,
+        expected
+            .iter()
+            .map(|(tool, class)| (tool.to_string(), class.to_string(), "[-32000]".to_string()))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn promotion_counts_why_issues_stayed_below_findings() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    for record in [
+        call("s1", 1, "click", "error", "aaaaaaaaaaaaaaaa"),
+        call("s1", 2, "type", "error", "bbbbbbbbbbbbbbbb"),
+        call("s2", 1, "type", "error", "bbbbbbbbbbbbbbbb"),
+    ] {
+        store.append(&record).unwrap();
+    }
+    index::build(&dir).unwrap();
+
+    let blocked = promote(
+        &dir,
+        PromotionConfig {
+            threshold: 1000.0,
+            ..at(0)
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        (
+            blocked.issues,
+            blocked.findings,
+            blocked.single_session,
+            blocked.below_threshold
+        ),
+        (2, 0, 1, 1)
+    );
+    assert_eq!(
+        blocked.summary(1000.0),
+        "promoted 0 of 2 issues (1 seen in one session only, 1 below threshold 1000.000000)"
+    );
+
+    let promoted = promote(&dir, at(0)).unwrap();
+    assert_eq!(
+        promoted.summary(0.0),
+        "promoted 1 of 2 issues (1 seen in one session only)"
+    );
+    let below_only = mcpeval::promote::PromotionStats {
+        single_session: 0,
+        ..blocked
+    };
+    assert_eq!(
+        below_only.summary(2.5),
+        "promoted 0 of 2 issues (1 below threshold 2.500000)"
+    );
+    let clean = mcpeval::promote::PromotionStats {
+        below_threshold: 0,
+        ..below_only
+    };
+    assert_eq!(clean.summary(2.5), "promoted 0 of 2 issues");
+}
+
+fn shim_session(home: &std::path::Path, session: &str) {
+    use std::io::{BufRead, BufReader, Write};
+    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+        .args(["shim", "--server", "demo", "--"])
+        .arg(env!("CARGO_BIN_EXE_mcpeval-demo"))
+        .args(["--broken", "unstable-errors"])
+        .env("MCPEVAL_HOME", home)
+        .env("MCPEVAL_SESSION", session)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut frames = vec![
+        (
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"promote-test","version":"0"}}}),
+            true,
+        ),
+        (
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+            false,
+        ),
+        (json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}), true),
+    ];
+    for id in 3..=8 {
+        frames.push((
+            json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"flaky_read","arguments":{}}}),
+            true,
+        ));
+    }
+    for (frame, answered) in frames {
+        writeln!(stdin, "{frame}").unwrap();
+        stdin.flush().unwrap();
+        if answered {
+            let mut line = String::new();
+            stdout.read_line(&mut line).unwrap();
+            assert!(line.contains("\"jsonrpc\""), "{line}");
+        }
+    }
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
+#[test]
+fn shim_captured_unstable_error_codes_promote_to_one_classified_finding() {
+    let home = tempdir();
+    for session in ["one", "two", "three"] {
+        shim_session(&home, session);
+    }
+    let run = |args: &[&str]| {
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+            .args(args)
+            .env("MCPEVAL_HOME", &home)
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8(out.stdout).unwrap()
+    };
+    run(&["index"]);
+    assert_eq!(
+        run(&["promote", "--threshold", "0"]),
+        "promoted 1 of 1 issues\n"
+    );
+    let findings: serde_json::Value =
+        serde_json::from_str(&run(&["findings", "--format", "json"])).unwrap();
+    let findings = findings.as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = &findings[0];
+    assert_eq!(
+        (&finding["server"], &finding["tool"]),
+        (&json!("demo"), &json!("flaky_read"))
+    );
+    assert_eq!(finding["err_codes"], json!([-32001, -32002]));
+    assert_eq!(finding["class"], "unstable-error-code");
+    assert_eq!(
+        finding["hint"],
+        mcpeval::remediation::hint(mcpeval::probe::FailureReason::UnstableErrorCode)
+    );
+    assert_eq!(finding["state"], "open");
+    assert_eq!(
+        (&finding["failures"], &finding["sessions"]),
+        (&json!(6), &json!(3))
+    );
 }

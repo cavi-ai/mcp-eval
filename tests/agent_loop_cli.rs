@@ -139,7 +139,42 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
     let manifest: Value =
         serde_json::from_str(scaffolded["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(manifest["version"], 1);
-    assert!(manifest["probes"].as_array().unwrap().len() >= 2);
+    // The agent surface scaffolds the same battery as `mcpeval init`.
+    let init_path = dir.join("init.manifest.json");
+    let init = Command::new(bin())
+        .args([
+            "init",
+            "--server",
+            "demo",
+            "--confirm-read-only",
+            "--output",
+        ])
+        .arg(&init_path)
+        .args(["--", demo()])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(
+        init.status.success(),
+        "{}",
+        String::from_utf8_lossy(&init.stderr)
+    );
+    let initialized: Value = serde_json::from_slice(&std::fs::read(&init_path).unwrap()).unwrap();
+    let battery = |manifest: &Value| -> Vec<(String, String)> {
+        manifest["probes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|case| {
+                (
+                    case["id"].as_str().unwrap().to_owned(),
+                    case["probe"].as_str().unwrap().to_owned(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(battery(&manifest), battery(&initialized));
+    assert_eq!(battery(&manifest).len(), 25);
 
     // Step 2: run the scaffolded manifest back through run_probe.
     let report = call(

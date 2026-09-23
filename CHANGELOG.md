@@ -15,6 +15,30 @@
 
 ### Changed
 
+- `mcpeval init` and `serve`'s `scaffold` tool also scaffold
+  `pagination`, `protocol-negotiation`, and `surface-listing` (when
+  `resources` or `prompts` are declared); with `--confirm-read-only`, each
+  tool that answers `{}` also gets `degradation-over-n`, `latency-budget`,
+  and `output-schema` (when declared), plus one `contention` and one
+  `payload-bounds` case. The summary line reports the case count per probe
+  kind instead of the schema-guessability count. Non-identifier tool names
+  fall back to `case-<kind>-<n>` ids (`case-schema-guessability-<n>`, was
+  `case-schema-<n>`).
+- `mcpeval init` and `serve`'s `scaffold` tool never call or scaffold a
+  tool annotated `destructiveHint: true` or `readOnlyHint: false`, with or
+  without `--confirm-read-only`.
+- Without `--confirm-read-only`, `init` scaffolds per-tool cases for
+  zero-required tools annotated `readOnlyHint: true`.
+- `--confirm-read-only` adds the unannotated zero-required tools to the
+  candidates.
+- The `init` summary line appends the number of tools skipped by
+  annotations.
+- `mcpeval-demo` annotates `readOnlyHint: true` on its read tools,
+  `destructiveHint: true` on `break_session`, and `readOnlyHint: false` on
+  `recover_session`; its catalog measures 2262 bytes and 566 estimated
+  tokens (was 1802 and 451).
+- `mcpeval-demo`'s `slow_read` description states its 400 ms delay (was
+  200 ms).
 - `mcpeval diff` reports a case that fails in both documents for different
   reasons as `changed` (text `CHANGED <old> → <new>`, JSON verdict
   `changed`, summary count `changed`) instead of `unchanged`. The new
@@ -41,6 +65,8 @@
 
 ### Fixed
 
+- `mcpeval-demo --broken slow` behaved like the clean demo; under it
+  `slow_read` now sleeps 2000 ms.
 - `--probe` rejected `protocol-negotiation`, `sampling`, `elicitation`,
   and `resource-subscription`; it now accepts every probe kind.
 - A `latency-budget` call slower than the transport timeout (30 s over
@@ -57,6 +83,11 @@
 
 ### Added
 
+- `mcpeval init --tool <NAME>` (repeatable) restricts the candidates to the
+  named tools; a name the catalog lacks, or one init cannot call (annotated
+  as a writer, required arguments, or unattested), exits 2.
+- `mcpeval init --dry-run` prints each catalog tool's decision; it calls no
+  tool, writes no file, and skips the `--output` existence check.
 - `mcpeval.probe-report/v1` gains optional fields: `generator` (name and
   version), `manifest_sha256` (SHA-256 of the manifest bytes the run
   parsed), and per case `tool`, `hint` (the remediation for its reason), and

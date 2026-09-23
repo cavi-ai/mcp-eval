@@ -6,7 +6,8 @@ use anyhow::{bail, Context};
 use serde_json::{json, Value};
 
 use crate::mcp_client::{
-    CancellationOutcome, ToolCatalog, ToolDefinition, ToolResponse, TransportFailure,
+    annotation_hint, CancellationOutcome, ToolCatalog, ToolDefinition, ToolResponse,
+    TransportFailure,
 };
 use crate::privacy;
 
@@ -198,6 +199,8 @@ impl HttpMcpClient {
                         .get("outputSchema")
                         .filter(|schema| schema.is_object())
                         .cloned(),
+                    read_only_hint: annotation_hint(tool, "readOnlyHint"),
+                    destructive_hint: annotation_hint(tool, "destructiveHint"),
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;

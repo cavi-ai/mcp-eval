@@ -316,64 +316,83 @@ fn tool_entry(name: &str, description: &str, properties: Value) -> Value {
     })
 }
 
+/// A tool entry carrying the MCP `readOnlyHint` annotation.
+fn read_only_entry(name: &str, description: &str, properties: Value) -> Value {
+    annotated(
+        tool_entry(name, description, properties),
+        json!({"readOnlyHint": true}),
+    )
+}
+
+fn annotated(mut entry: Value, annotations: Value) -> Value {
+    entry["annotations"] = annotations;
+    entry
+}
+
 fn catalog(broken: Option<&str>) -> Vec<Value> {
     let mut entries = vec![
-        tool_entry(
+        read_only_entry(
             "describe_status",
             "Return the service status. Read-only.",
             json!({}),
         ),
-        tool_entry(
+        read_only_entry(
             "read_counter",
             "Read and increment the call counter. Read-only.",
             json!({}),
         ),
-        tool_entry(
+        read_only_entry(
             "shared_read",
             "Read shared state concurrently. Read-only.",
             json!({"port": {"type": "integer", "description": "ignored port hint"}}),
         ),
-        tool_entry(
+        read_only_entry(
             "flaky_read",
             "Fails twice then succeeds; exercises retry behavior. Read-only.",
             json!({}),
         ),
-        tool_entry(
+        read_only_entry(
             "slow_read",
-            "A deliberately slow read (200 ms). Read-only.",
+            "A deliberately slow read (400 ms). Read-only.",
             json!({}),
         ),
-        tool_entry(
-            "break_session",
-            "Force the session into a broken state.",
-            json!({}),
+        annotated(
+            tool_entry(
+                "break_session",
+                "Force the session into a broken state.",
+                json!({}),
+            ),
+            json!({"destructiveHint": true}),
         ),
-        tool_entry(
-            "recover_session",
-            "Recover the session from the broken state.",
-            json!({}),
+        annotated(
+            tool_entry(
+                "recover_session",
+                "Recover the session from the broken state.",
+                json!({}),
+            ),
+            json!({"readOnlyHint": false, "destructiveHint": false}),
         ),
-        tool_entry(
+        read_only_entry(
             "session_status",
             "Report session health; false while broken. Read-only.",
             json!({}),
         ),
-        tool_entry(
+        read_only_entry(
             "report_weather",
             "Return a structured weather reading. Read-only.",
             json!({"city": {"type": "string", "description": "City name"}}),
         ),
-        tool_entry(
+        read_only_entry(
             "sampled_read",
             "Reads with model sampling: issues one sampling/createMessage. Read-only.",
             json!({}),
         ),
-        tool_entry(
+        read_only_entry(
             "elicited_read",
             "Reads with user elicitation: issues one elicitation/create. Read-only.",
             json!({}),
         ),
-        tool_entry(
+        read_only_entry(
             "publish_status",
             "Republishes demo://status, notifying subscribers. Read-only.",
             json!({}),
@@ -399,14 +418,10 @@ fn catalog(broken: Option<&str>) -> Vec<Value> {
     if broken == Some("schema") {
         // Declares a required field the naive {} call cannot supply, and
         // never lists the property: incoherent schema.
-        entries[0] = json!({
-            "name": "describe_status",
-            "description": "Return the service status. Read-only.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {},
-                "required": ["missing"]
-            }
+        entries[0]["inputSchema"] = json!({
+            "type": "object",
+            "properties": {},
+            "required": ["missing"]
         });
     }
     if broken == Some("bloated") {
@@ -490,7 +505,8 @@ fn call_tool(
         // polling the cancellation flag that the reader loop updates from
         // notifications/cancelled. A cancelled request is never answered:
         // the caller signals suppression via the marker error.
-        let deadline = Instant::now() + Duration::from_millis(400);
+        let delay_ms = if broken == Some("slow") { 2000 } else { 400 };
+        let deadline = Instant::now() + Duration::from_millis(delay_ms);
         while Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(20));
             if let Some(id) = request_id {

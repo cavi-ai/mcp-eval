@@ -63,14 +63,41 @@ cargo build --release
 ## Track 1: benchmark battery
 
 Scaffold a starter manifest from a live server, then refine it. `init`
-introspects the catalog, derives generous discovery and token budgets, and
-smoke-tests each candidate tool with a naive `{}` call before declaring it —
-so the generated manifest passes on its first run. `--confirm-read-only`
-attests that every empty-argument schema check targets read-only tools:
+introspects the server and writes every probe kind that needs no
+domain input:
+
+- always: `discovery-cost` and `token-cost` budgets derived from the
+  measured catalog, `pagination` (`max_pages` 5), `protocol-negotiation`,
+  and `surface-listing` when `initialize` declares `resources` or `prompts`;
+- per tool, over the candidates: zero-required tools annotated
+  `readOnlyHint: true`, plus, with `--confirm-read-only` (an attestation that
+  unannotated tools are read-only), the unannotated zero-required tools. A
+  tool annotated `destructiveHint: true` or `readOnlyHint: false` is never
+  called. `init` calls up to 20 candidates with `{}` and, for each one that
+  succeeds, writes `schema-guessability`, `degradation-over-n` (5 attempts),
+  `latency-budget` (3 attempts, four times the measured latency rounded up
+  to 100 ms, 1–60 s), and `output-schema` when the tool declares an
+  `outputSchema`; the first such tool also gets `contention`, and one gets
+  `payload-bounds` (a 1 MB string in its first string property, else a
+  `payload` field; a clean rejection passes).
+
+`--tool <NAME>` (repeatable) restricts the candidates to the named tools; a
+name the catalog lacks, or one init cannot call (annotated as a writer,
+required arguments, or unattested), exits 2.
+`--dry-run` stops after `initialize` and `tools/list` and prints each tool's
+decision (`candidate (readOnlyHint)`, `candidate (attested)`,
+`needs --confirm-read-only`, `skipped: destructiveHint`,
+`skipped: readOnlyHint=false`, `skipped: required arguments`,
+`skipped: not in --tool`); it calls no tool and writes no file.
+
+Not scaffolded: `error-honesty`, `state-recovery`, and
+`instruction-fidelity` need expected inputs; `cancellation` needs a
+deliberately slow tool; `sampling`, `elicitation`, `resource-subscription`,
+and `completion` need declared references. Add them by hand.
 
 ```sh
 mcpeval init --server demo --confirm-read-only -- your-mcp-server --flags
-# wrote mcp-eval.manifest.json (7 tools, 5 schema-guessability cases)
+# wrote mcp-eval.manifest.json (7 tools, 21 cases: discovery-cost 1, token-cost 1, pagination 1, protocol-negotiation 1, schema-guessability 5, degradation-over-n 5, latency-budget 5, contention 1, payload-bounds 1)
 mcpeval probe --server demo -- your-mcp-server --flags
 ```
 
@@ -385,7 +412,7 @@ page cannot reach the endpoint through the browser.
 | `get_finding` | One finding by `finding-*` identifier, including its shape-level repro |
 | `get_readiness_trends` | Readiness-score history per server, oldest first |
 | `run_probe` | Execute the read-only battery against any server with an inline manifest and get the full `mcpeval.probe-report/v1` document plus remediation hints — mutation is never authorized through this surface |
-| `scaffold` | Introspect a live server's catalog and return a starter manifest JSON, without writing files |
+| `scaffold` | Introspect a live server and return the same starter manifest JSON as `mcpeval init`, without writing files |
 | `record_annotation` | Record the agent's own observation about a captured call (same fixed kinds and 240-character bounded note as `mcpeval annotate`); the session is hashed before persistence |
 
 With `run_probe`, `scaffold` (both behind `--allow-spawn`), and `record_annotation`, the whole loop is

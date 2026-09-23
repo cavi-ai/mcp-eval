@@ -15,6 +15,25 @@
 
 ### Changed
 
+- The GitHub Action installs the release archive pinned by its
+  `distribution/release.json` for the runner's platform, verifying the
+  `.sha256` companion's digest and file name, the pinned SHA-256, and the
+  size, instead of running `cargo install mcpeval`. `version` installs
+  another release, verified against that release's own `release.json`. A
+  preinstalled `mcpeval` is still used as is.
+- The GitHub Action passes every input to its scripts through environment
+  variables; no input is interpolated into shell code.
+- The GitHub Action's `command` input accepts a JSON array of strings for
+  arguments that contain spaces; any other value is split on whitespace
+  without quoting. Setting both or neither of `command` and `url` exits 2.
+- The GitHub Action writes the rendered markdown report (and the baseline
+  diff, when `baseline` is set) to a `markdown` output path next to the
+  JSON report, instead of only the job summary.
+- The GitHub Action's `baseline` and `sarif` inputs need `mcpeval` 0.3.0
+  or later (`diff` and `report --manifest`); the pinned release moves
+  when `distribution/release.json` is updated at release time. On an
+  older `mcpeval`, the step now fails fast with a usage error naming the
+  installed version instead of a bare usage error from the probe.
 - `mcpeval init` and `serve`'s `scaffold` tool also scaffold
   `pagination`, `protocol-negotiation`, and `surface-listing` (when
   `resources` or `prompts` are declared); with `--confirm-read-only`, each
@@ -92,6 +111,17 @@
 
 ### Added
 
+- GitHub Action outputs `passed`, `readiness`, `report`, `exit-code`,
+  `diff-exit-code`, and `sarif`.
+- The GitHub Action renders the report as markdown into the job summary.
+- GitHub Action `baseline` input runs `mcpeval diff --fail-on-regression`
+  against a committed report (`fail-on-change: 'true'` adds
+  `--fail-on-change`) and appends the diff to the job summary; the step
+  fails with the diff's exit code when the probe passed.
+- GitHub Action `sarif: 'true'` renders `mcpeval.sarif` and uploads it
+  through `github/codeql-action/upload-sarif@v4`, also when the probe fails.
+- GitHub Action `report-path` input sets where the JSON report is written
+  (default `mcpeval.report.json`).
 - `mcpeval init --tool <NAME>` (repeatable) restricts the candidates to the
   named tools; a name the catalog lacks, or one init cannot call (annotated
   as a writer, required arguments, or unattested), exits 2.

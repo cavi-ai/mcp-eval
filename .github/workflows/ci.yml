@@ -132,11 +132,31 @@ jobs:
         with:
           node-version: 24.18.1
 
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # scripts/action/*.test.mjs runs run.sh and install.sh against the
+      # real binaries; build them so npm run test:action exercises the
+      # action end to end instead of skipping its build-gated cases.
+      - name: Build action binaries
+        run: cargo build --release --locked --bins
+
       - name: Docs artifact
         run: |
           npm run docs:build
           npm run docs:verify
           npm run docs:test
+          npm run test:action
 
       - name: Distribution contract
         run: |

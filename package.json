@@ -26,6 +26,7 @@
     "docs:verify": "node scripts/docs/verify.mjs",
     "docs:test": "node --test scripts/docs/*.test.mjs",
     "test:distribution": "node --test scripts/distribution/*.test.mjs",
+    "test:action": "node --test scripts/action/*.test.mjs",
     "verify:distribution": "node scripts/distribution/verify.mjs",
     "verify:package": "node scripts/distribution/package-e2e.mjs",
     "format": "cargo fmt --all --check",

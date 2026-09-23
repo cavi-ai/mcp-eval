@@ -640,11 +640,20 @@ fn run() -> anyhow::Result<()> {
             include_probe_history,
             force,
         } => {
-            let summary = mcpeval::share::run(mcpeval::share::ShareOptions {
+            let summary = match mcpeval::share::run(mcpeval::share::ShareOptions {
                 output: dir,
                 force,
                 include_probe_history,
-            })?;
+            })? {
+                mcpeval::share::ShareOutcome::Packaged(summary) => summary,
+                mcpeval::share::ShareOutcome::Refused { flagged } => {
+                    eprintln!(
+                        "redaction sweep flagged {flagged} file(s); run `mcpeval doctor --check-redaction`, \
+                         remove or fix the flagged records, and re-run `mcpeval share`"
+                    );
+                    std::process::exit(mcpeval::exit::VERDICT);
+                }
+            };
             println!(
                 "share envelope: {} ({} record files)",
                 summary.directory.display(),

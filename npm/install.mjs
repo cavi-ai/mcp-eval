@@ -53,10 +53,10 @@ function verifyCompanion(bytes, asset) {
   }
 }
 
-function extractBinary(archivePath, destination, binaryName) {
+function extractBinaries(archivePath, destination, binaryNames) {
   const args = archivePath.endsWith(".zip")
-    ? ["-xf", archivePath, "-C", destination, binaryName]
-    : ["-xzf", archivePath, "-C", destination, binaryName];
+    ? ["-xf", archivePath, "-C", destination, ...binaryNames]
+    : ["-xzf", archivePath, "-C", destination, ...binaryNames];
   const extracted = spawnSync("tar", args, { encoding: "utf8" });
   if (extracted.error) throw new Error(`mcp-eval: could not run tar: ${extracted.error.message}`);
   if (extracted.status !== 0) {
@@ -92,16 +92,19 @@ export async function installRelease({
 
     const archivePath = path.join(staging, asset.archive);
     await writeFile(archivePath, archive);
-    const binaryName = platform === "win32" ? "mcpeval.exe" : "mcpeval";
-    extractBinary(archivePath, staging, binaryName);
+    const binaryNames = ["mcpeval", "mcpeval-demo"]
+      .map((name) => platform === "win32" ? `${name}.exe` : name);
+    extractBinaries(archivePath, staging, binaryNames);
     await rm(archivePath, { force: true });
-    if (platform !== "win32") await chmod(path.join(staging, binaryName), 0o755);
+    if (platform !== "win32") {
+      for (const name of binaryNames) await chmod(path.join(staging, name), 0o755);
+    }
     await writeFile(path.join(staging, ".version"), `${manifest.tag} ${asset.target}\n`);
 
     await rm(vendorRoot, { recursive: true, force: true });
     await rename(staging, vendorRoot);
     installed = true;
-    return { binary: path.join(vendorRoot, binaryName), target: asset.target };
+    return { binary: path.join(vendorRoot, binaryNames[0]), target: asset.target };
   } finally {
     if (!installed) await rm(staging, { recursive: true, force: true });
   }

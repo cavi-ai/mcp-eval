@@ -26,7 +26,15 @@ pub struct ShareSummary {
     pub notes_requiring_review: usize,
 }
 
-pub fn run(options: ShareOptions) -> anyhow::Result<ShareSummary> {
+pub enum ShareOutcome {
+    Packaged(ShareSummary),
+    /// The redaction sweep flagged this many files; nothing was packaged.
+    Refused {
+        flagged: usize,
+    },
+}
+
+pub fn run(options: ShareOptions) -> anyhow::Result<ShareOutcome> {
     let root = crate::store::Store::resolve_root(None);
     let store_dir = root.join("store");
     if !store_dir.is_dir() {
@@ -55,11 +63,9 @@ pub fn run(options: ShareOptions) -> anyhow::Result<ShareSummary> {
         for finding in &report.findings {
             eprintln!("{finding}");
         }
-        bail!(
-            "redaction sweep flagged {} file(s); run `mcpeval doctor --check-redaction`, \
-             remove or fix the flagged records, and re-run `mcpeval share`",
-            report.findings.len()
-        );
+        return Ok(ShareOutcome::Refused {
+            flagged: report.findings.len(),
+        });
     }
 
     let destination_store = options.output.join("store");
@@ -101,11 +107,11 @@ pub fn run(options: ShareOptions) -> anyhow::Result<ShareSummary> {
     );
     std::fs::write(options.output.join("SHARE.md"), share_note).context("writing SHARE.md")?;
 
-    Ok(ShareSummary {
+    Ok(ShareOutcome::Packaged(ShareSummary {
         directory: options.output,
         files,
         notes_requiring_review: report.notes_requiring_review,
-    })
+    }))
 }
 
 fn copy_tree(

@@ -47,12 +47,14 @@ async function main() {
       env: environment,
     });
 
-    const executable = process.platform === "win32"
-      ? path.join(prefix, "mcpeval.cmd")
-      : path.join(prefix, "bin", "mcpeval");
-    const result = run(executable, ["--version"], { cwd: temporary });
+    const command = (name) => process.platform === "win32"
+      ? path.join(prefix, `${name}.cmd`)
+      : path.join(prefix, "bin", name);
+    const result = run(command("mcpeval"), ["--version"], { cwd: temporary });
     assert.equal(result.stdout.trim(), `mcpeval ${MANIFEST.version}`);
-    console.log(`verified ${packages[0]} on ${process.platform}-${process.arch}: ${result.stdout.trim()}`);
+    const demo = run(command("mcpeval-demo"), ["--help"], { cwd: temporary });
+    assert.match(demo.stdout, /--broken/u);
+    console.log(`verified ${packages[0]} on ${process.platform}-${process.arch}: ${result.stdout.trim()}, mcpeval-demo --help`);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

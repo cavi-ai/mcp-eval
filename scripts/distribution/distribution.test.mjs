@@ -132,28 +132,40 @@ test("npm dry-run contains only the launcher, installer, release contract, and p
       "LICENSE",
       "README.md",
       "distribution/release.json",
+      "npm/demo.mjs",
       "npm/install.mjs",
+      "npm/launch.mjs",
       "npm/run.mjs",
       "package.json",
     ],
   );
 });
 
-test("npm launcher forwards arguments and the binary exit status", { skip: process.platform === "win32" }, async (context) => {
-  const temporary = await mkdtemp(path.join(os.tmpdir(), "mcpeval-npm-run-"));
-  context.after(() => rm(temporary, { recursive: true, force: true }));
-  await mkdir(path.join(temporary, "npm/vendor"), { recursive: true });
-  await copyFile(path.join(ROOT, "npm/run.mjs"), path.join(temporary, "npm/run.mjs"));
-  const binary = path.join(temporary, "npm/vendor/mcpeval");
-  await writeFile(binary, "#!/bin/sh\nprintf '%s\\n' \"$*\"\nexit 23\n");
-  await chmod(binary, 0o755);
-
-  const launched = spawnSync(process.execPath, [path.join(temporary, "npm/run.mjs"), "probe", "--brief"], {
-    encoding: "utf8",
-  });
-  assert.equal(launched.stdout, "probe --brief\n");
-  assert.equal(launched.status, 23);
+test("npm exposes both release binaries as commands", () => {
+  assert.deepEqual(PACKAGE.bin, { mcpeval: "npm/run.mjs", "mcpeval-demo": "npm/demo.mjs" });
 });
+
+for (const [entry, binaryName] of [["run.mjs", "mcpeval"], ["demo.mjs", "mcpeval-demo"]]) {
+  test(`npm ${entry} launches ${binaryName} with its arguments and exit status`, { skip: process.platform === "win32" }, async (context) => {
+    const temporary = await mkdtemp(path.join(os.tmpdir(), "mcpeval-npm-run-"));
+    context.after(() => rm(temporary, { recursive: true, force: true }));
+    await mkdir(path.join(temporary, "npm/vendor"), { recursive: true });
+    for (const file of ["run.mjs", "demo.mjs", "launch.mjs"]) {
+      await copyFile(path.join(ROOT, "npm", file), path.join(temporary, "npm", file));
+    }
+    for (const name of ["mcpeval", "mcpeval-demo"]) {
+      const binary = path.join(temporary, "npm/vendor", name);
+      await writeFile(binary, `#!/bin/sh\nprintf '${name} %s\\n' "$*"\nexit 23\n`);
+      await chmod(binary, 0o755);
+    }
+
+    const launched = spawnSync(process.execPath, [path.join(temporary, "npm", entry), "probe", "--brief"], {
+      encoding: "utf8",
+    });
+    assert.equal(launched.stdout, `${binaryName} probe --brief\n`);
+    assert.equal(launched.status, 23);
+  });
+}
 
 test("Homebrew staging updates the tap formula and index idempotently", async (context) => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "mcpeval-homebrew-stage-"));

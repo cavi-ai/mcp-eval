@@ -92,6 +92,9 @@ test("installer verifies the pinned checksum before exposing the binary", async 
   const executed = spawnSync(installed, [], { encoding: "utf8" });
   assert.equal(executed.status, 0, executed.stderr);
   assert.equal(executed.stdout, "fixture mcpeval 0.1.0\n");
+  const demo = spawnSync(path.join(packageRoot, "npm/vendor/mcpeval-demo"), [], { encoding: "utf8" });
+  assert.equal(demo.status, 0, demo.stderr);
+  assert.equal(demo.stdout, "fixture demo\n");
   assert.equal(await readFile(path.join(packageRoot, "npm/vendor/.version"), "utf8"), "v0.1.0 x86_64-unknown-linux-gnu\n");
 });
 

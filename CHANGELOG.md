@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed
+
+- README and installation docs list the Homebrew, npm, and Cargo install
+  commands, and the quickstart runs the installed `mcpeval` and
+  `mcpeval-demo` instead of `./target/release` paths.
+
+### Fixed
+
+- The npm package installs `mcpeval-demo` next to `mcpeval`. It
+  previously extracted only `mcpeval` from the release archive, so the
+  quickstart's demo server was missing on npm installs.
+- `mcpeval share` exits 1 when the redaction sweep flags a file, per the
+  exit-code contract for gates. It previously exited 3.
+
 ## 0.3.0 - 2026-09-23
 
 ### Security

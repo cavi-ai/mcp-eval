@@ -71,11 +71,34 @@
   servers`); a report with no case of the battery prints none.
 - The text `--price-per-mtok` cost line also appears when the token-cost
   case failed its budget, as the markdown report's already did.
+- A missing manifest prints `manifest <path> not found; run mcpeval init
+  to scaffold one` (exit 2); other read errors name the path.
+- A server command that cannot start prints `spawning MCP server
+  <program>`; arguments are not printed.
+- Per-case manifest validation errors start with `probe case <id>:`.
+- `mcpeval explain <unknown>` lists reasons that contain the text or share
+  its first hyphenated segment (`did you mean: …`); exit 2 either way.
+- Text reports append `bound=<field> limit=<n> observed=<n>` to a failing
+  case that exceeded a manifest bound; the markdown case table gains a
+  `Bound` column (`<field> <observed> > <limit>`). A
+  `token-budget-exceeded` case also lists its three heaviest tools
+  (`heaviest: <tool> <tokens>, …`) in text and under *Remediation*.
+  `mcpeval report` restores the bound from the JSON document.
+- Trend points record `manifest_sha256`. `mcpeval trends` prints a score
+  delta only between runs of the same manifest, `manifest changed`
+  otherwise, and `manifest=<first 8 hex>` per run; history lines without
+  the field still load. `serve`'s `get_readiness_trends` follows the same
+  rule, returns its points as `structuredContent`, and lists them oldest
+  first.
 
 ### Fixed
 
 - `mcpeval-demo --broken slow` behaved like the clean demo; under it
   `slow_read` now sleeps 2000 ms.
+- `mcpeval-demo --broken <unknown>` served the clean personality; it now
+  prints `unknown aspect <x>; expected one of: …` and exits 2.
+  `mcpeval-demo --help` (`-h`) prints the usage line and every aspect and
+  exits 0.
 - `--probe` rejected `protocol-negotiation`, `sampling`, `elicitation`,
   and `resource-subscription`; it now accepts every probe kind.
 - A `latency-budget` call slower than the transport timeout (30 s over

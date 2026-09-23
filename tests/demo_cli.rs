@@ -182,3 +182,144 @@ fn contention_and_state_recovery_pass_against_the_demo() {
     assert!(stdout.contains("parallel-read contention pass"));
     assert!(stdout.contains("recover state-recovery pass attempts=3"));
 }
+
+#[test]
+fn failing_bounds_render_in_text_markdown_and_report() {
+    let dir = home();
+    let probe = |format: &str| {
+        run(
+            &dir,
+            &[
+                "probe",
+                "--server",
+                "demo",
+                "--manifest",
+                "tests/fixtures/mcp-eval.manifest.json",
+                "--format",
+                format,
+                "--",
+                demo(),
+            ],
+        )
+    };
+
+    let text = probe("text");
+    assert_eq!(text.status.code(), Some(1));
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with("bounded-discovery discovery-cost fail"))
+        .unwrap_or_else(|| panic!("no bounded-discovery line: {stdout}"));
+    assert!(
+        line.ends_with(" bound=max_tools limit=10 observed=12"),
+        "{line}"
+    );
+
+    let markdown = probe("markdown");
+    let body = String::from_utf8(markdown.stdout).unwrap();
+    assert!(
+        body.contains("| Case | Probe | Result | Attempts | First failure | Reason | Bound |"),
+        "{body}"
+    );
+    assert!(
+        body.contains("| discovery-limit-exceeded | max_tools 12 > 10 |"),
+        "{body}"
+    );
+    assert!(
+        body.lines()
+            .any(|line| line.contains(" | pass | ") && line.ends_with(" | — | — | — |")),
+        "{body}"
+    );
+
+    let json = probe("json");
+    let document = dir.join("report.json");
+    std::fs::write(&document, &json.stdout).unwrap();
+    let report = run(&dir, &["report", document.to_str().unwrap()]);
+    let replayed = String::from_utf8(report.stdout).unwrap();
+    assert!(
+        replayed.contains(line),
+        "report must render the probe line: {replayed}"
+    );
+}
+
+#[test]
+fn token_budget_failure_names_the_heaviest_tools() {
+    let dir = home();
+    let manifest = dir.join("tokens.manifest.json");
+    std::fs::write(
+        &manifest,
+        r#"{"version":1,"probes":[{"id":"tiny-budget","probe":"token-cost","access":"read_only","max_total_tokens":1}]}"#,
+    )
+    .unwrap();
+    let probe = |format: &str| {
+        run(
+            &dir,
+            &[
+                "probe",
+                "--server",
+                "demo",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--format",
+                format,
+                "--",
+                demo(),
+            ],
+        )
+    };
+    let heaviest = |body: &str, marker: &str| -> Vec<(String, u64)> {
+        let line = body
+            .lines()
+            .find_map(|line| line.strip_prefix(marker))
+            .unwrap_or_else(|| panic!("no {marker:?} line: {body}"));
+        line.split(", ")
+            .map(|entry| {
+                let (tool, tokens) = entry.rsplit_once(' ').unwrap();
+                (tool.to_owned(), tokens.parse().unwrap())
+            })
+            .collect()
+    };
+
+    let text = probe("text");
+    assert_eq!(text.status.code(), Some(1));
+    let stdout = String::from_utf8(text.stdout).unwrap();
+    assert!(
+        stdout.contains(" bound=max_total_tokens limit=1 observed="),
+        "{stdout}"
+    );
+    let tools = heaviest(&stdout, "  heaviest: ");
+    assert_eq!(tools.len(), 3, "{stdout}");
+    assert!(
+        tools.windows(2).all(|pair| pair[0].1 >= pair[1].1),
+        "{stdout}"
+    );
+
+    let body = String::from_utf8(probe("markdown").stdout).unwrap();
+    assert_eq!(heaviest(&body, "  - heaviest: "), tools, "{body}");
+}
+
+#[test]
+fn demo_rejects_unknown_aspects_and_prints_help() {
+    let unknown = Command::new(demo())
+        .args(["--broken", "nonsense"])
+        .output()
+        .unwrap();
+    assert_eq!(unknown.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&unknown.stderr);
+    assert!(
+        stderr.contains("unknown aspect nonsense; expected one of: "),
+        "{stderr}"
+    );
+    assert!(stderr.contains("stalled-cursor"), "{stderr}");
+
+    for flag in ["--help", "-h"] {
+        let help = Command::new(demo()).arg(flag).output().unwrap();
+        assert_eq!(help.status.code(), Some(0), "{flag}");
+        let stdout = String::from_utf8_lossy(&help.stdout);
+        assert!(
+            stdout.contains("usage: mcpeval-demo [--broken <aspect>]"),
+            "{stdout}"
+        );
+        assert!(stdout.contains("output-schema"), "{stdout}");
+    }
+}

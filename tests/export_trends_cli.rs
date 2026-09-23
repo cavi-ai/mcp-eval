@@ -58,7 +58,90 @@ fn trends_record_full_battery_runs_and_render_deltas() {
     let stdout = String::from_utf8(rendered.stdout).unwrap();
     assert!(stdout.contains("fixture"));
     assert!(stdout.contains("score=100/100 cases=7/7"));
-    assert!(stdout.contains(" +0"), "{stdout}");
+    let manifest = sha256_prefix(MANIFEST);
+    assert!(
+        stdout.contains(&format!("score=100/100 cases=7/7 +0 manifest={manifest}")),
+        "{stdout}"
+    );
+}
+
+fn sha256_prefix(path: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(std::fs::read(path).unwrap())
+        .iter()
+        .take(4)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+#[test]
+fn trends_print_no_delta_across_a_manifest_change() {
+    let dir = home();
+    assert!(probe_run(&dir).status.success());
+    let other = dir.join("other.manifest.json");
+    std::fs::write(
+        &other,
+        r#"{"version":1,"probes":[{"id":"bounded","probe":"discovery-cost","access":"read_only","max_tools":100,"max_schema_bytes":100000}]}"#,
+    )
+    .unwrap();
+    let second = Command::new(bin())
+        .args(["probe", "--server", "fixture", "--manifest"])
+        .arg(&other)
+        .args(["--", "python3", CLEAN])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let rendered = Command::new(bin())
+        .args(["trends"])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(rendered.status.success());
+    let stdout = String::from_utf8(rendered.stdout).unwrap();
+    let last = stdout.lines().last().unwrap();
+    assert!(
+        last.contains("score=100/100 cases=1/1 manifest changed manifest="),
+        "{stdout}"
+    );
+    assert!(!last.contains(" +"), "{stdout}");
+}
+
+#[test]
+fn trends_render_history_recorded_before_manifest_identity() {
+    let dir = home();
+    let history = dir.join("store").join("probes");
+    std::fs::create_dir_all(&history).unwrap();
+    std::fs::write(
+        history.join("history.jsonl"),
+        concat!(
+            r#"{"ts":"2026-09-01T00:00:00.000Z","server":"legacy","passed":true,"cases_total":2,"cases_passed":2,"score":100}"#,
+            "\n",
+            r#"{"ts":"2026-09-02T00:00:00.000Z","server":"legacy","passed":false,"cases_total":2,"cases_passed":1,"score":50}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let rendered = Command::new(bin())
+        .args(["trends"])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(
+        rendered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&rendered.stderr)
+    );
+    let stdout = String::from_utf8(rendered.stdout).unwrap();
+    assert!(
+        stdout.contains("2026-09-02T00:00:00.000Z score=50/100 cases=1/2 FAILING -50\n"),
+        "{stdout}"
+    );
 }
 
 #[test]

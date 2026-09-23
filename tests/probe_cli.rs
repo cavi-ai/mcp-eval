@@ -346,3 +346,55 @@ fn token_cost_fails_with_fixed_reason_over_budget() {
     assert_eq!(report["cases"][0]["reason"], "token-budget-exceeded");
     assert_eq!(report["cases"][0]["first_failure"], 1);
 }
+
+#[test]
+fn probe_errors_name_the_manifest_the_program_and_the_case() {
+    let home = home();
+    let probe = |manifest: &str, command: &[&str]| {
+        Command::new(bin())
+            .args(["probe", "--server", "fixture", "--manifest", manifest, "--"])
+            .args(command)
+            .env("MCPEVAL_HOME", &home)
+            .output()
+            .unwrap()
+    };
+
+    let missing = home.join("absent.manifest.json");
+    let output = probe(missing.to_str().unwrap(), &["python3", CLEAN]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "manifest {} not found; run mcpeval init to scaffold one",
+            missing.display()
+        )),
+        "{stderr}"
+    );
+
+    let output = probe(MANIFEST, &["mcpeval-no-such-program", "--private-flag"]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("spawning MCP server mcpeval-no-such-program"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("--private-flag"), "{stderr}");
+
+    let invalid = home.join("invalid.manifest.json");
+    std::fs::write(
+        &invalid,
+        r#"{"version":1,"probes":[
+            {"id":"bounded","probe":"discovery-cost","access":"read_only","max_tools":10,"max_schema_bytes":1000},
+            {"id":"slow-read","probe":"latency-budget","tool":"read","access":"read_only","arguments":{},"attempts":25,"max_latency_ms":100}
+        ]}"#,
+    )
+    .unwrap();
+    let output = probe(invalid.to_str().unwrap(), &["python3", CLEAN]);
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "Error: probe case slow-read: latency-budget attempts must be between 2 and 20"
+        ),
+        "{stderr}"
+    );
+}

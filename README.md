@@ -46,7 +46,8 @@ clean personality and a set of `--broken <aspect>` personalities that
 reproduce specific defects (incoherent schema, unfaithful results, unstable
 error codes, bloated catalogs, broken pagination, slow calls, dropped
 cancellations, echoed protocol versions, malformed sampling and elicitation
-requests, missing subscription notifications, malformed completions):
+requests, missing subscription notifications, malformed completions);
+`mcpeval-demo --help` lists every aspect, and an unknown aspect exits 2:
 
 ```sh
 cargo build --release
@@ -164,7 +165,10 @@ complete (a case that timed out or lost its server is reported as
 case IDs, probe kinds, attempt counts, first-failure positions, and fixed
 reason labels — never actual arguments, responses, or errors. Every failing
 case prints a **remediation hint**: the concrete server-side fix for that
-reason. Hints are suppressed by `--brief` for scripts, rendered in the
+reason. A case that exceeded a manifest bound also prints
+`bound=<field> limit=<n> observed=<n>` (the markdown table's `Bound`
+column), and a `token-budget-exceeded` case lists its three heaviest
+tools. Hints are suppressed by `--brief` for scripts, rendered in the
 markdown report under *Remediation*, and always available standalone:
 
 ```sh
@@ -232,7 +236,8 @@ your server by PR.
 
 Every full-battery run appends a content-free score record to
 `<MCPEVAL_HOME>/store/probes/history.jsonl`; `mcpeval trends` renders the
-per-server history with score deltas.
+per-server history with score deltas between runs of the same manifest and
+`manifest changed` where the manifest differs.
 
 The deterministic battery:
 

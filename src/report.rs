@@ -251,8 +251,8 @@ pub fn render_probe_markdown(
         }
         out.push('\n');
     }
-    out.push_str("| Case | Probe | Result | Attempts | First failure | Reason |\n");
-    out.push_str("| --- | --- | --- | --- | --- | --- |\n");
+    out.push_str("| Case | Probe | Result | Attempts | First failure | Reason | Bound |\n");
+    out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
     for case in &report.cases {
         let (result, first_failure, reason) = match case.reason {
             None => ("pass".to_string(), "—".to_string(), "—".to_string()),
@@ -269,34 +269,42 @@ pub fn render_probe_markdown(
                 reason.as_str().to_string(),
             ),
         };
+        let bound = case.detail.map_or_else(
+            || "—".to_string(),
+            |detail| format!("{} {} > {}", detail.bound, detail.observed, detail.limit),
+        );
         writeln!(
             out,
-            "| {} | {} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} | {} | {} |",
             case.id,
             case.probe.as_str(),
             result,
             case.attempts,
             first_failure,
-            reason
+            reason,
+            bound
         )
         .ok();
     }
-    let failures: Vec<(&str, crate::probe::FailureReason)> = report
-        .cases
-        .iter()
-        .filter_map(|case| case.reason.map(|reason| (case.id.as_str(), reason)))
-        .collect();
-    if !failures.is_empty() {
+    if report.cases.iter().any(|case| case.reason.is_some()) {
         out.push_str("\n### Remediation\n\n");
-        for (case_id, reason) in failures {
+        for case in &report.cases {
+            let Some(reason) = case.reason else {
+                continue;
+            };
             writeln!(
                 out,
                 "- **`{}` (`{}`):** {}",
-                case_id,
+                case.id,
                 reason.as_str(),
                 crate::remediation::hint(reason)
             )
             .ok();
+            if let (crate::probe::FailureReason::TokenBudgetExceeded, Some(usage)) =
+                (reason, &case.token_usage)
+            {
+                writeln!(out, "  - heaviest: {}", usage.heaviest()).ok();
+            }
         }
         out.push('\n');
     }

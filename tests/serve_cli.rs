@@ -244,6 +244,26 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
     let (_, trends) = call(&http, "get_readiness_trends", json!({}));
     let text = trends["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("score=100/100 cases=7/7"), "{text}");
+    let points = trends["result"]["structuredContent"]["points"]
+        .as_array()
+        .unwrap_or_else(|| panic!("no structured points: {trends}"));
+    assert_eq!(points.len(), 2, "{trends}");
+    assert!(
+        points[0]["ts"].as_str() < points[1]["ts"].as_str(),
+        "oldest first: {trends}"
+    );
+    let manifest = points[1]["manifest_sha256"].as_str().unwrap();
+    assert_eq!(manifest.len(), 64, "{trends}");
+    assert_eq!(points[0]["manifest_sha256"], points[1]["manifest_sha256"]);
+    assert!(
+        text.lines()
+            .nth(1)
+            .is_some_and(|line| line.ends_with(&format!(
+                "score=100/100 cases=7/7 +0 manifest={}",
+                &manifest[..8]
+            ))),
+        "{text}"
+    );
 
     let (_, findings) = call(&http, "list_findings", json!({}));
     let text = findings["result"]["content"][0]["text"].as_str().unwrap();

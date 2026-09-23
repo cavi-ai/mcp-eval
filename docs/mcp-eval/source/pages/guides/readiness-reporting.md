@@ -9,15 +9,22 @@ The default format prints one line per case — verdict, attempts, first-failure
 ```text
 literal-status instruction-fidelity pass attempts=1
 demo readiness 87/100 discovery=2/2 reliability=1/1 contract=1/1
-  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 33, below 0 of 34 observed servers
+  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 32, below 0 of 33 observed servers
 ```
 
-Failing cases print a remediation hint: the concrete server-side fix for that fixed reason.
+Failing cases print a remediation hint: the concrete server-side fix for that fixed reason. A case that exceeded a manifest bound also names the bound, its limit, and the observed value:
 
 ```text
-p pagination fail attempts=3 first_failure=3 reason=pagination-stalled-cursor
-  hint: the cursor sequence never terminated within `max_pages`; emit no
-  `nextCursor` on the final page and never re-serve a page a cursor already returned
+bounded-discovery discovery-cost fail attempts=1 first_failure=1 reason=discovery-limit-exceeded tools=12 schema_bytes=2262 bound=max_tools limit=10 observed=12
+  hint: the catalog grew past the declared bounds; merge overlapping tools, drop tools agents never call, or negotiate a larger budget — a sprawling catalog taxes every session's context window
+```
+
+A `token-budget-exceeded` case also lists the three heaviest tools:
+
+```text
+tiny-budget token-cost fail attempts=1 first_failure=1 reason=token-budget-exceeded tools=12 total_tokens=566 bound=max_total_tokens limit=1 observed=566
+  hint: the encoded catalog exceeds the token budget; …
+  heaviest: report_weather 56, shared_read 56, elicited_read 49
 ```
 
 Use `--brief` to suppress hints in scripts. The same hints appear in the markdown report under *Remediation*, and every reason is documented standalone:
@@ -59,7 +66,7 @@ mcpeval explain        # list every fixed reason
 
 ## Markdown
 
-`--format markdown` renders a pull-request-ready report: verdict table, per-category breakdown, readiness score, and a static shields.io badge URL encoding only the score. No payload or server detail ever leaves the report.
+`--format markdown` renders a pull-request-ready report: verdict table, per-category breakdown, readiness score, and a static shields.io badge URL encoding only the score. The verdict table's `Bound` column shows `<field> <observed> > <limit>` for a case that exceeded a manifest bound (`max_tools 12 > 10`), and *Remediation* lists the heaviest tools under a `token-budget-exceeded` case. No payload or server detail ever leaves the report.
 
 ## The readiness score
 
@@ -79,7 +86,7 @@ Each category contributes the fraction of its cases that passed, weighted as abo
 A score without a referent is just a number. mcp-eval ships a corpus of readiness observations from popular public MCP servers (`data/readiness-corpus.json`, refreshed by `scripts/corpus/collect.sh`). The corpus records its `battery`: the probe kinds every observation was scored on (`discovery-cost`, `token-cost`, `pagination`, `surface-listing` when the field is absent). Text and markdown reports score only the report's cases of that battery for the comparison, so a manifest with other cases is compared like for like, and count the observed servers that score is above, tied with, and below:
 
 ```text
-  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 33, below 0 of 34 observed servers
+  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 32, below 0 of 33 observed servers
 ```
 
 The readiness line still scores every case. A report with no case of the corpus battery prints no corpus line.
@@ -87,7 +94,7 @@ The readiness line still scores every case. A report with no case of the corpus 
 When observations carry `catalog_tokens`, a report with a token-cost measurement also places its catalog among them; the median is the lower middle for an even count:
 
 ```text
-  catalog: 566 tokens over 12 tools, lighter than 20 of 34 observed servers (median 1915 tokens)
+  catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
 ```
 
 A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; when no corpus is available, reports omit both lines. JSON reports never carry corpus context. Calibration is deterministic: the same report against the same corpus always produces the same placement.
@@ -106,11 +113,20 @@ Two committed reports of the same server can also be compared directly: `mcpeval
 
 ## Trends
 
-Every full-battery run appends a content-free score record — server label, verdict counts, score, timestamp — to `<MCPEVAL_HOME>/store/probes/history.jsonl`. `mcpeval trends` renders the per-server history with score deltas between consecutive runs:
+Every full-battery run appends a content-free score record — server label, verdict counts, score, manifest SHA-256, timestamp — to `<MCPEVAL_HOME>/store/probes/history.jsonl`. `mcpeval trends` renders the per-server history with a score delta between consecutive runs of the same manifest, `manifest changed` where the manifest differs, and the first eight hex digits of each run's manifest hash:
 
 ```sh
 mcpeval trends --last 5
 ```
+
+```text
+demo
+  2026-09-23T06:06:27.572Z score=88/100 cases=6/7 FAILING manifest=a4b5f651
+  2026-09-23T06:06:27.584Z score=88/100 cases=6/7 FAILING +0 manifest=a4b5f651
+  2026-09-23T06:06:27.590Z score=0/100 cases=0/1 FAILING manifest changed manifest=640fe10d
+```
+
+Records written before the hash was recorded carry none and compare only with each other.
 
 ## Comparing servers
 

@@ -59,6 +59,12 @@ fn render_probe_text(
             }
         } else {
             let reason = case.reason.expect("failed case has a reason");
+            if let Some(detail) = case.detail {
+                measurements.push_str(&format!(
+                    " bound={} limit={} observed={}",
+                    detail.bound, detail.limit, detail.observed
+                ));
+            }
             println!(
                 "{} {probe} fail attempts={} first_failure={} reason={}{measurements}",
                 case.id,
@@ -68,6 +74,11 @@ fn render_probe_text(
             );
             if !brief {
                 println!("  hint: {}", mcpeval::remediation::hint(reason));
+                if let (mcpeval::probe::FailureReason::TokenBudgetExceeded, Some(usage)) =
+                    (reason, &case.token_usage)
+                {
+                    println!("  heaviest: {}", usage.heaviest());
+                }
             }
         }
     }
@@ -293,9 +304,26 @@ fn run() -> anyhow::Result<()> {
                             println!("{}", mcpeval::remediation::hint(*candidate));
                         }
                         None => {
-                            eprintln!(
-                                "unknown reason {requested}; run mcpeval explain for the list"
-                            );
+                            let family = normalized.split('-').next().unwrap_or_default();
+                            let similar = mcpeval::probe::FailureReason::ALL
+                                .iter()
+                                .map(|candidate| candidate.as_str())
+                                .filter(|label| {
+                                    !normalized.is_empty()
+                                        && (label.contains(normalized.as_str())
+                                            || label.split('-').next() == Some(family))
+                                })
+                                .collect::<Vec<_>>();
+                            if similar.is_empty() {
+                                eprintln!(
+                                    "unknown reason {requested}; run mcpeval explain for the list"
+                                );
+                            } else {
+                                eprintln!(
+                                    "unknown reason {requested}; did you mean: {}",
+                                    similar.join(", ")
+                                );
+                            }
                             std::process::exit(mcpeval::exit::USAGE);
                         }
                     }

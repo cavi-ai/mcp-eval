@@ -2,8 +2,8 @@
 //!
 //! One JSON line per run is appended to `<MCPEVAL_HOME>/store/probes/
 //! history.jsonl`. The records stay inside the share-safe store boundary:
-//! server label, verdict counts, score, and a timestamp — the same class of
-//! metadata the journal already keeps.
+//! server label, verdict counts, score, manifest hash, and a timestamp — the
+//! same class of metadata the journal already keeps.
 
 use std::fmt::Write;
 use std::io::Write as IoWrite;
@@ -23,6 +23,38 @@ pub struct TrendPoint {
     pub cases_total: u64,
     pub cases_passed: u64,
     pub score: u64,
+    /// SHA-256 of the manifest the run parsed; absent in history recorded
+    /// before runs carried it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manifest_sha256: Option<String>,
+}
+
+impl TrendPoint {
+    /// `score=… cases=…`, the verdict, the score delta against `previous`
+    /// when both runs used the same manifest (` manifest changed` when they
+    /// did not), and the manifest hash prefix.
+    pub fn summary(&self, previous: Option<&TrendPoint>) -> String {
+        let mut out = format!(
+            "score={}/100 cases={}/{}{}",
+            self.score,
+            self.cases_passed,
+            self.cases_total,
+            if self.passed { "" } else { " FAILING" }
+        );
+        if let Some(previous) = previous {
+            if previous.manifest_sha256 == self.manifest_sha256 {
+                let difference = self.score as i64 - previous.score as i64;
+                out.push_str(&format!(" {difference:+}"));
+            } else {
+                out.push_str(" manifest changed");
+            }
+        }
+        if let Some(manifest) = &self.manifest_sha256 {
+            let prefix: String = manifest.chars().take(8).collect();
+            out.push_str(&format!(" manifest={prefix}"));
+        }
+        out
+    }
 }
 
 pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result<()> {
@@ -40,6 +72,7 @@ pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result
         cases_total: report.cases.len() as u64,
         cases_passed: report.cases.iter().filter(|case| case.passed()).count() as u64,
         score: readiness.overall,
+        manifest_sha256: report.manifest_sha256.clone(),
     };
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -81,13 +114,19 @@ pub fn load(root: &Path, last: usize) -> anyhow::Result<Vec<TrendPoint>> {
             .iter()
             .filter(|point| point.server == server)
             .collect();
-        selected.extend(runs.iter().rev().take(last).map(|point| (*point).clone()));
+        selected.extend(
+            runs.iter()
+                .rev()
+                .take(last)
+                .rev()
+                .map(|point| (*point).clone()),
+        );
     }
     Ok(selected)
 }
 
 /// Grouped-by-server recent history, oldest first within each group, with a
-/// score delta against the previous run of the same server.
+/// score delta against the previous run of the same server and manifest.
 pub fn render(root: &Path, last: usize) -> anyhow::Result<String> {
     let path = history_path(root);
     if !path.is_file() {
@@ -116,26 +155,10 @@ pub fn render(root: &Path, last: usize) -> anyhow::Result<String> {
             .filter(|point| point.server == server)
             .collect();
         out.push_str(&format!("{server}\n"));
-        let previous_score = std::cell::Cell::new(None::<u64>);
+        let mut previous = None;
         for point in runs.iter().rev().take(last).rev() {
-            let delta = match previous_score.get() {
-                Some(previous) => {
-                    let difference = point.score as i64 - previous as i64;
-                    format!(" {difference:+}")
-                }
-                None => String::new(),
-            };
-            previous_score.set(Some(point.score));
-            writeln!(
-                out,
-                "  {} score={}/100 cases={}/{}{}{}",
-                point.ts,
-                point.score,
-                point.cases_passed,
-                point.cases_total,
-                if point.passed { "" } else { " FAILING" },
-                delta
-            )?;
+            writeln!(out, "  {} {}", point.ts, point.summary(previous))?;
+            previous = Some(*point);
         }
     }
     Ok(out)

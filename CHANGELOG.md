@@ -13,8 +13,28 @@
   `serve` lists and runs them only with the new `--allow-spawn` flag.
   Agent-loop setups that use them must add the flag.
 
+### Changed
+
+- `mcpeval diff` reports a case that fails in both documents for different
+  reasons as `changed` (text `CHANGED <old> → <new>`, JSON verdict
+  `changed`, summary count `changed`) instead of `unchanged`. The new
+  `--fail-on-change` flag exits non-zero on any changed case;
+  `--fail-on-regression` is unchanged.
+- `mcpeval diff` refuses two documents that name different servers.
+- SARIF results carry a location: the manifest file (relative to the
+  working directory) and the failing case's line. Each run declares
+  `automationDetails.id` `mcpeval/<server>/`, and the
+  `mcpevalCaseId` fingerprint is now `<server>/<case id>`, so existing
+  code-scanning alerts re-key once. `mcpeval report` gained `--manifest`
+  (default `mcp-eval.manifest.json`) to locate results.
+
 ### Fixed
 
+- `--probe` rejected `protocol-negotiation`, `sampling`, `elicitation`,
+  and `resource-subscription`; it now accepts every probe kind.
+- `mcpeval diff` paired a token measurement present on one side only
+  with itself and reported no movement; the catalog movement is now
+  reported only when both documents carry it.
 - `mcpeval serve` bounded each header line by the header budget minus
   the body's `Content-Length`, so a body of 16 KiB or more followed by
   any further header was refused with 400 before it was read. The limit

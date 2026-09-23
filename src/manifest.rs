@@ -260,7 +260,7 @@ pub enum ElicitationResponse {
     Cancel,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
 pub enum ProbeKind {
     Contention,
     ErrorHonesty,

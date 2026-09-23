@@ -75,11 +75,11 @@ The token-cost probe's measurement is model-independent; interpreting it is the 
 
 ## SARIF and re-rendering
 
-`--format sarif` emits a SARIF 2.1.0 document: one result per failing case, the probe kind as the rule id, and the fixed reason plus remediation hint as the message. Upload it through GitHub code scanning and failing cases appear as inline pull-request annotations. The document is deterministic and derived only from the sanitized report.
+`--format sarif` emits a SARIF 2.1.0 document: one result per failing case, the probe kind as the rule id, the fixed reason plus remediation hint as the message, and the failing case's line in the manifest as the location. The manifest URI is relative to the working directory, so run the command from the repository root. Each server gets its own code-scanning category (`mcpeval/<server>/`). Upload it through GitHub code scanning and each failing case becomes an alert on its manifest line. `mcpeval report --format sarif` takes `--manifest` to locate results the same way. The document is deterministic and derived only from the sanitized report and the manifest's case lines.
 
 Reports traveled as JSON stay useful offline: `mcpeval report <baseline.json> --format markdown` re-renders any committed `mcpeval.probe-report/v1` document without re-running a server, so the probe run and the report rendering can live in different jobs — or on different days. Re-rendering a failing document exits non-zero, so a rendered report can gate in its own right.
 
-Two committed reports can also be compared directly: `mcpeval diff baseline.json current.json` classifies each case as regressed, fixed, or unchanged and prints the readiness movement. With `--fail-on-regression` it exits non-zero only for regressions, which makes the committed baseline a first-class CI gate. See the continuous-integration guide for the recipe.
+Two committed reports of the same server can also be compared directly: `mcpeval diff baseline.json current.json` classifies each case as regressed, fixed, changed (still failing, for a different reason), or unchanged and prints the readiness movement. With `--fail-on-regression` it exits non-zero for regressions, which makes the committed baseline a first-class CI gate; `--fail-on-change` also gates on changed failure reasons. See the continuous-integration guide for the recipe.
 
 ## Trends
 

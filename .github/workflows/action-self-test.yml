@@ -14,6 +14,7 @@ on:
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "tests/fixtures/action-sarif.manifest.json"
       - ".github/workflows/action-self-test.yml"
   pull_request:
     paths:
@@ -21,6 +22,7 @@ on:
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "tests/fixtures/action-sarif.manifest.json"
       - ".github/workflows/action-self-test.yml"
 
 permissions: {}
@@ -103,3 +105,56 @@ jobs:
             echo "::error::no conclusion recorded for the probe step"
             exit 1
           fi
+
+  sarif-code-scanning:
+    name: self-test SARIF (alert lands on the manifest line)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      MANIFEST: tests/fixtures/action-sarif.manifest.json
+      # Uploads need a write token: same-repository pull requests only, so
+      # fork and Dependabot runs still check the document without uploading.
+      UPLOAD: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install --path . --locked
+      - name: probe the broken demo as SARIF
+        run: |
+          code=0
+          mcpeval probe --server demo-self-test --manifest "$MANIFEST" \
+            --format sarif -- ./target/release/mcpeval-demo --broken stalled-cursor \
+            > mcpeval.sarif || code=$?
+          if [ "$code" -ne 1 ]; then
+            echo "::error::expected a red probe (exit 1), got exit $code"
+            exit 1
+          fi
+          python3 - <<'EOF'
+          import json, os
+          run = json.load(open("mcpeval.sarif"))["runs"][0]
+          assert run["automationDetails"]["id"] == "mcpeval/demo-self-test/", run["automationDetails"]
+          [result] = run["results"]
+          location = result["locations"][0]["physicalLocation"]
+          assert location["artifactLocation"]["uri"] == os.environ["MANIFEST"], location
+          assert location["region"]["startLine"] == 5, location
+          EOF
+      - name: upload to code scanning
+        if: env.UPLOAD == 'true'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: mcpeval.sarif
+      - name: assert the alert is located on the manifest case
+        if: env.UPLOAD == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/code-scanning/alerts?ref=$REF&tool_name=mcpeval&state=open" \
+            --jq '.[] | select(.rule.id == "pagination") | "\(.most_recent_instance.location.path):\(.most_recent_instance.location.start_line)"' \
+            > located.txt
+          cat located.txt
+          grep -qx "$MANIFEST:5" located.txt

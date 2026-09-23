@@ -239,18 +239,20 @@ Every full-battery run appends a content-free score record to
 per-server history with score deltas between runs of the same manifest and
 `manifest changed` where the manifest differs.
 
+Five probes are this release's headline evaluation dimensions — discovery-cost, schema-guessability, error-honesty, state-recovery, and contention; the other fourteen are supplemental checks that score in the same four categories.
+
 The deterministic battery:
 
 | Probe | What it checks |
 | --- | --- |
-| `discovery-cost` | Tool count and encoded `tools/list` catalog size stay within declared bounds |
+| **`discovery-cost`** | Tool count and encoded `tools/list` catalog size stay within declared bounds |
 | `token-cost` | Estimated context cost of the catalog — total and optional per-tool token budgets, using a deterministic model-independent estimator |
-| `schema-guessability` | The selected tool exposes a coherent object schema; every required field is declared, supplied by the naive call, and the call succeeds |
+| **`schema-guessability`** | The selected tool exposes a coherent object schema; every required field is declared, supplied by the naive call, and the call succeeds |
 | `instruction-fidelity` | Declared machine-readable result fields, scalar values, outcomes, and error codes match — deterministic and structural, never sent to an external LLM |
 | `degradation-over-n` | A read-only call keeps succeeding over N attempts, with the first-failure position reported |
-| `error-honesty` | Stable error codes, truthful retryability metadata, recovery within a declared bound |
-| `state-recovery` | An explicit failure → recovery → validation sequence, with both later calls succeeding |
-| `contention` | Two synchronized independent MCP clients both succeed against the same declared tool |
+| **`error-honesty`** | Stable error codes, truthful retryability metadata, recovery within a declared bound |
+| **`state-recovery`** | An explicit failure → recovery → validation sequence, with both later calls succeeding |
+| **`contention`** | Two synchronized independent MCP clients both succeed against the same declared tool |
 | `latency-budget` | A read-only call stays within a declared `max_latency_ms` budget across N attempts; the slowest observed latency is reported |
 | `pagination` | `tools/list` cursor pagination completes within `max_pages` with unique, schema-valid entries on every page |
 | `payload-bounds` | A declared-oversize argument never crashes or hangs the server; `expect_handled` decides whether a clean rejection also counts as failure |
@@ -287,7 +289,11 @@ mcpeval compare --server demo \
 
 Comparison endpoints are loopback-only unless `--allow-remote-http` is
 passed, and remote endpoints require HTTPS. See [the CI guide](docs/ci.md)
-for gating recipes, including the composite GitHub Action — which is
+for gating recipes, including the composite GitHub Action. The action
+installs the checksum-verified release pinned by `distribution/release.json`
+(or a preinstalled `mcpeval`), writes the report to the job summary, exposes
+`passed`, `readiness`, `report`, and `exit-code` outputs, and optionally
+gates on a committed `baseline` and uploads SARIF to code scanning. It is
 self-tested in this repository on every push, consuming itself exactly as a
 downstream repository would.
 

@@ -1,8 +1,10 @@
 name: 'mcp-eval probe'
 description: >
   Run the mcp-eval deterministic probe battery against an MCP server and fail
-  the workflow when any selected case fails. Installs mcpeval from crates.io
-  (or uses a preinstalled binary) and emits the versioned JSON report.
+  the workflow when any selected case fails. Installs the checksum-verified
+  release pinned by this action's distribution/release.json (or uses a
+  preinstalled binary), writes the report to the job summary, and exposes the
+  verdict as step outputs.
 author: 'CAVI'
 
 inputs:
@@ -15,8 +17,10 @@ inputs:
     default: 'mcp-eval.manifest.json'
   command:
     description: >
-      stdio server command to probe, e.g. "python3 server.py --flag". Leave
-      empty when `url` is set.
+      stdio server command to probe. Either whitespace-separated words, e.g.
+      "python3 server.py --flag" (no quoting), or a JSON array of strings,
+      e.g. '["python3", "my server.py"]', for arguments containing spaces.
+      Leave empty when `url` is set.
     required: false
     default: ''
   url:
@@ -33,42 +37,83 @@ inputs:
     default: 'false'
   version:
     description: >
-      mcpeval version to install (default: latest published). Ignored when a
-      preinstalled `mcpeval` is already on PATH.
+      Release to install instead of the one pinned by this action's
+      distribution/release.json, e.g. "0.2.0". The archive is verified against
+      that release's own release.json. Ignored when a preinstalled `mcpeval`
+      is already on PATH.
     required: false
     default: ''
+  baseline:
+    description: >
+      Committed mcpeval.probe-report/v1 baseline. When set, the run fails on
+      any case that regressed against it.
+    required: false
+    default: ''
+  fail-on-change:
+    description: "With `baseline`, also fail on changed failure reasons ('true'/'false')."
+    required: false
+    default: 'false'
+  sarif:
+    description: >
+      Render the report as SARIF and upload it to code scanning
+      ('true'/'false'). The job needs `security-events: write`.
+    required: false
+    default: 'false'
+  report-path:
+    description: 'Where to write the JSON report.'
+    required: false
+    default: 'mcpeval.report.json'
+
+outputs:
+  passed:
+    description: "'true' when every selected case passed."
+    value: ${{ steps.run.outputs.passed }}
+  readiness:
+    description: 'Readiness score (0-100).'
+    value: ${{ steps.run.outputs.readiness }}
+  report:
+    description: 'Path to the JSON report.'
+    value: ${{ steps.run.outputs.report }}
+  markdown:
+    description: 'Path to the rendered markdown report (and baseline diff, when `baseline` is set).'
+    value: ${{ steps.run.outputs.markdown }}
+  exit-code:
+    description: 'Exit code of mcpeval probe.'
+    value: ${{ steps.run.outputs.exit-code }}
+  diff-exit-code:
+    description: 'Exit code of mcpeval diff against `baseline`.'
+    value: ${{ steps.run.outputs.diff-exit-code }}
+  sarif:
+    description: 'Path to the SARIF document when `sarif` is true.'
+    value: ${{ steps.run.outputs.sarif }}
 
 runs:
   using: composite
   steps:
     - name: Install mcpeval
       shell: bash
-      run: |
-        if command -v mcpeval >/dev/null 2>&1; then
-          echo "using preinstalled $(mcpeval --version)"
-        elif [ -n "${{ inputs.version }}" ]; then
-          cargo install mcpeval --locked --version "${{ inputs.version }}"
-        else
-          cargo install mcpeval --locked
-        fi
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        MCPEVAL_VERSION: ${{ inputs.version }}
+      run: bash "$ACTION_PATH/scripts/action/install.sh"
     - name: Run probe battery
+      id: run
       shell: bash
-      run: |
-        ARGS=(probe --server "${{ inputs.server }}" --manifest "${{ inputs.manifest }}" --format json)
-        if [ -n "${{ inputs.url }}" ]; then
-          ARGS+=(--url "${{ inputs.url }}")
-        else
-          ARGS+=(--)
-        fi
-        if [ "${{ inputs.allow-mutation }}" = "true" ]; then
-          ARGS+=(--allow-mutation)
-        fi
-        if [ "${{ inputs.allow-remote-http }}" = "true" ]; then
-          ARGS+=(--allow-remote-http)
-        fi
-        if [ -n "${{ inputs.command }}" ]; then
-          # shellcheck disable=SC2086
-          mcpeval "${ARGS[@]}" ${{ inputs.command }}
-        else
-          mcpeval "${ARGS[@]}"
-        fi
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        INPUT_SERVER: ${{ inputs.server }}
+        INPUT_MANIFEST: ${{ inputs.manifest }}
+        INPUT_COMMAND: ${{ inputs.command }}
+        INPUT_URL: ${{ inputs.url }}
+        INPUT_ALLOW_MUTATION: ${{ inputs.allow-mutation }}
+        INPUT_ALLOW_REMOTE_HTTP: ${{ inputs.allow-remote-http }}
+        INPUT_BASELINE: ${{ inputs.baseline }}
+        INPUT_FAIL_ON_CHANGE: ${{ inputs.fail-on-change }}
+        INPUT_SARIF: ${{ inputs.sarif }}
+        INPUT_REPORT_PATH: ${{ inputs.report-path }}
+      run: bash "$ACTION_PATH/scripts/action/run.sh"
+    - name: Upload SARIF to code scanning
+      if: ${{ !cancelled() && inputs.sarif == 'true' && steps.run.outputs.sarif != '' }}
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.run.outputs.sarif }}

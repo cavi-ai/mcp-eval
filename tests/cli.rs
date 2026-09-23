@@ -21,6 +21,43 @@ fn prints_version() {
 }
 
 #[test]
+fn help_orders_the_battery_before_capture_and_shows_start_here() {
+    let out = Command::new(bin()).arg("--help").output().unwrap();
+    assert!(out.status.success());
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        text.starts_with(
+            "Evaluate MCP servers: a deterministic probe battery for CI and privacy-safe \
+             friction capture from real sessions"
+        ),
+        "unexpected about line: {text}"
+    );
+
+    let init = text.find("\n  init ").expect("init in Commands section");
+    let probe = text.find("\n  probe ").expect("probe in Commands section");
+    let shim = text.find("\n  shim ").expect("shim in Commands section");
+    let doctor = text
+        .find("\n  doctor ")
+        .expect("doctor in Commands section");
+    let share = text.find("\n  share ").expect("share in Commands section");
+    assert!(init < probe, "init must precede probe");
+    assert!(probe < shim, "probe must precede shim");
+    assert!(shim < doctor, "shim must precede doctor");
+    assert!(doctor < share, "doctor must precede share; share is last");
+
+    assert!(text.contains("Start here:"), "missing Start here: block");
+    assert!(text.contains(
+        "mcpeval init --server NAME --confirm-read-only -- your-mcp-server   # scaffold a manifest"
+    ));
+    assert!(text.contains(
+        "mcpeval probe --server NAME -- your-mcp-server                     # run the battery"
+    ));
+    assert!(text.contains(
+        "mcpeval shim --server NAME -- your-mcp-server                      # capture real sessions"
+    ));
+}
+
+#[test]
 fn shim_requires_a_server_name_and_command() {
     let out = Command::new(bin()).arg("shim").output().unwrap();
     assert!(!out.status.success(), "shim with no args must fail");

@@ -68,7 +68,8 @@ pub enum DiffFormat {
 #[command(
     name = "mcpeval",
     version,
-    about = "MCP friction capture and evaluation"
+    about = "Evaluate MCP servers: a deterministic probe battery for CI and privacy-safe friction capture from real sessions",
+    after_help = "Start here:\n  mcpeval init --server NAME --confirm-read-only -- your-mcp-server   # scaffold a manifest\n  mcpeval probe --server NAME -- your-mcp-server                     # run the battery\n  mcpeval shim --server NAME -- your-mcp-server                      # capture real sessions"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -78,6 +79,7 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Proxy an MCP server on stdio, recording every framed message.
+    #[command(display_order = 10)]
     Shim {
         /// Name this server is recorded under.
         #[arg(long)]
@@ -87,6 +89,7 @@ pub enum Command {
         cmd: Vec<String>,
     },
     /// Proxy a Streamable HTTP MCP endpoint and record sanitized call metadata.
+    #[command(display_order = 11)]
     ShimHttp {
         /// Name this server is recorded under.
         #[arg(long)]
@@ -102,6 +105,7 @@ pub enum Command {
         allow_remote_http: bool,
     },
     /// Run deterministic, privacy-safe probes against an MCP server.
+    #[command(display_order = 2)]
     Probe {
         /// Name this server is recorded under.
         #[arg(long)]
@@ -137,6 +141,7 @@ pub enum Command {
         cmd: Vec<String>,
     },
     /// Scaffold a starter manifest from a live server's tool catalog.
+    #[command(display_order = 1)]
     Init {
         /// Name this server is recorded under.
         #[arg(long)]
@@ -173,12 +178,14 @@ pub enum Command {
     /// Print a published JSON Schema: the manifest (for editor validation:
     /// add "$schema" pointing at docs/mcp-eval.manifest.schema.json), the
     /// probe report, or the diff document.
+    #[command(display_order = 7)]
     Schema {
         /// Which document the schema describes.
         #[arg(value_enum, default_value_t = SchemaDocument::Manifest)]
         document: SchemaDocument,
     },
     /// Print the remediation guidance for a fixed failure reason.
+    #[command(display_order = 6)]
     Explain {
         /// A fixed reason label, e.g. pagination-stalled-cursor. Pass no
         /// reason to list every label.
@@ -186,6 +193,7 @@ pub enum Command {
         reason: Option<String>,
     },
     /// Run one manifest against several HTTP endpoints and diff the results.
+    #[command(display_order = 5)]
     Compare {
         /// Shared server label for all endpoints in the report.
         #[arg(long)]
@@ -213,6 +221,7 @@ pub enum Command {
     /// Compare a committed baseline report against a current report and
     /// classify every case as regressed, fixed, or unchanged. Both
     /// documents are mcpeval.probe-report/v1; pass `-` for stdin.
+    #[command(display_order = 4)]
     Diff {
         /// Baseline report document (the committed gate).
         #[arg()]
@@ -232,6 +241,7 @@ pub enum Command {
         format: DiffFormat,
     },
     /// Write one GitHub-issue markdown file per open finding into a directory.
+    #[command(display_order = 17)]
     ExportIssues {
         /// Directory that receives <finding-id>.md files.
         #[arg(long)]
@@ -244,6 +254,7 @@ pub enum Command {
         force: bool,
     },
     /// Show readiness-score history recorded by previous probe runs.
+    #[command(display_order = 8)]
     Trends {
         /// Show at most this many runs per server.
         #[arg(long, default_value_t = 10)]
@@ -252,6 +263,7 @@ pub enum Command {
     /// Re-render a committed mcpeval.probe-report/v1 document (a baseline
     /// or CI artifact) into text, markdown, or SARIF without re-running
     /// any server. Reads the document from a file or stdin with `-`.
+    #[command(display_order = 3)]
     Report {
         /// Path to the report document, or `-` for stdin.
         #[arg()]
@@ -274,6 +286,7 @@ pub enum Command {
     /// Streamable HTTP MCP endpoint (tools: list_findings, get_finding,
     /// get_readiness_trends, record_annotation, and with --allow-spawn
     /// run_probe and scaffold).
+    #[command(display_order = 9)]
     Serve {
         /// Loopback socket address to accept MCP requests on.
         #[arg(long)]
@@ -288,6 +301,7 @@ pub enum Command {
         print_config: bool,
     },
     /// Verify one finding with one manifest case and advance its lifecycle.
+    #[command(display_order = 16)]
     Verify {
         /// Stable ID emitted by `mcpeval findings`.
         #[arg(long)]
@@ -312,14 +326,17 @@ pub enum Command {
         cmd: Vec<String>,
     },
     /// Load JSONL records into the SQLite index and derive failure windows.
+    #[command(display_order = 12)]
     Index,
     /// Aggregate indexed failures into issues and promote supported findings.
+    #[command(display_order = 13)]
     Promote {
         /// Override config.json's promotion_threshold for this run.
         #[arg(long)]
         threshold: Option<f64>,
     },
     /// Generate a read-only manifest from an eligible promoted finding.
+    #[command(display_order = 15)]
     Generate {
         /// Stable ID emitted by `mcpeval findings`.
         #[arg(long)]
@@ -335,6 +352,7 @@ pub enum Command {
         confirm_read_only: bool,
     },
     /// Render promoted findings without exposing captured private content.
+    #[command(display_order = 14)]
     Findings {
         /// Output format for agents, people, or structured consumers.
         #[arg(long, value_enum, default_value_t = FindingsFormat::Agent)]
@@ -343,6 +361,7 @@ pub enum Command {
     /// Record an agent-authored observation about a call, identified by
     /// (session, seq): a documented path was blocked, a call reported
     /// success but changed nothing, and so on.
+    #[command(display_order = 18)]
     Annotate {
         /// The session the annotated call belongs to.
         #[arg(long)]
@@ -358,6 +377,7 @@ pub enum Command {
         note: String,
     },
     /// Run store-hygiene checks against the capture root.
+    #[command(display_order = 19)]
     Doctor {
         /// Scan every `*.jsonl` under the store for text that looks
         /// unredacted and exit non-zero if any is found.
@@ -367,6 +387,7 @@ pub enum Command {
     /// Package the share-safe envelope: the store subtree, minus trend
     /// history, with a SHARE.md manifest. Refuses to package a store the
     /// redaction sweep flags.
+    #[command(display_order = 20)]
     Share {
         /// Directory that receives the envelope.
         #[arg(long)]

@@ -198,7 +198,7 @@ CREATE TABLE issues (
   last_seen TEXT NOT NULL, cost REAL NOT NULL, blast INTEGER NOT NULL,
   rate REAL NOT NULL, confidence REAL NOT NULL, recency REAL NOT NULL,
   score REAL NOT NULL, threshold REAL NOT NULL, severity TEXT NOT NULL,
-  args TEXT
+  args TEXT, retryable INTEGER
 );
 CREATE INDEX issues_score ON issues(score DESC);
 CREATE TABLE findings (
@@ -283,8 +283,13 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         if let Some(tool) = key.tool.as_ref() {
             tools.insert(tool.clone());
         }
+        let retryable = [true, false].into_iter().find(|flag| {
+            failures
+                .iter()
+                .all(|failure| failure.retryable == Some(i64::from(*flag)))
+        });
         let mut evidence = crate::diagnosis::Evidence {
-            all_retryable: failures.iter().all(|failure| failure.retryable == Some(1)),
+            all_retryable: retryable == Some(true),
             ..Default::default()
         };
         for failure in &failures {
@@ -397,8 +402,9 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         transaction.execute(
             "INSERT INTO issues
              (finding_id,server,tool,err_code,err_codes,err_template_id,class,failures,calls,
-              sessions,last_seen,cost,blast,rate,confidence,recency,score,threshold,severity,args)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+              sessions,last_seen,cost,blast,rate,confidence,recency,score,threshold,severity,args,
+              retryable)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
             params![
                 finding_id,
                 key.server,
@@ -420,6 +426,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
                 config.threshold,
                 severity,
                 args,
+                retryable,
             ],
         )?;
         if sessions < 2 {

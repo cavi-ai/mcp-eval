@@ -389,7 +389,9 @@ frequent in `err_code`, and carries a defect class (`unstable-error-code`,
 `retry-did-not-recover`, or `recurring-error`) with a one-line server-side
 fix hint. Finding IDs from earlier releases, which included the error code,
 re-key once on the next `mcpeval promote`; the most recently updated
-lifecycle state and its probe history move to the new ID. The promotion
+lifecycle state and its probe history move to the new ID. `findings --format
+json` also carries `retryable`: `true` when every failure was retryable,
+`false` when none was, `null` when mixed or unreported. The promotion
 score combines the 95% Wilson lower bound of the observed rate, fourteen-day recency decay, median failure-window turns, and
 distinct-tool blast radius. An issue never becomes a finding until it appears
 in two distinct sessions, even with a zero threshold. The default threshold is
@@ -397,11 +399,21 @@ calibrated from the checked-in synthetic seed corpus; override it with
 `promotion_threshold` in `<MCPEVAL_HOME>/config.json` or
 `mcpeval promote --threshold <number>`.
 
+`mcpeval generate` writes a one-case read-only manifest for a finding: a
+`degradation-over-n` case whose `max_attempts` is sized from the observed
+failure rate to catch the defect with 95% probability (3 for a
+deterministic error, up to 100), so the probe passes once the call
+succeeds. The arguments come from the recorded shape: enum members,
+numbers, booleans, and nulls are kept; strings and UUIDs become
+placeholders and arrays become `[]`, each printed as `fill: <path>
+(<shape>)` to complete before `mcpeval verify`.
+
 Each promoted finding has a deterministic, privacy-safe `finding-*` identifier
 and a lifecycle state: `open`, `fix-claimed`, `verifying`, or `closed`.
 `mcpeval verify` runs exactly one matching probe; the first green moves the
 finding to `verifying`, the third consecutive green closes it, and any red
-resets the streak and reopens it. History is append-only and survives
+resets the streak and reopens it; a red run prints its `reason=` and the
+remediation hint. History is append-only and survives
 index/promotion rebuilds. Findings without an attached probe remain open and
 are capped at medium severity.
 

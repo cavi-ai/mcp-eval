@@ -217,3 +217,184 @@ fn a_verification_that_loses_its_server_leaves_the_lifecycle_untouched() {
         "an unevaluated case is no verification evidence"
     );
 }
+
+fn shim_demo_session(home: &std::path::Path, session: &str) {
+    use std::io::{BufRead, BufReader, Write};
+    let mut child = Command::new(bin())
+        .args(["shim", "--server", "demo", "--"])
+        .arg(env!("CARGO_BIN_EXE_mcpeval-demo"))
+        .env("MCPEVAL_HOME", home)
+        .env("MCPEVAL_SESSION", session)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+    let mut frames = vec![
+        (
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"lifecycle-test","version":"0"}}}),
+            true,
+        ),
+        (
+            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+            false,
+        ),
+        (json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}), true),
+    ];
+    for id in 3..=8 {
+        frames.push((
+            json!({"jsonrpc":"2.0","id":id,"method":"tools/call","params":{"name":"flaky_read","arguments":{}}}),
+            true,
+        ));
+    }
+    for (frame, answered) in frames {
+        writeln!(stdin, "{frame}").unwrap();
+        stdin.flush().unwrap();
+        if answered {
+            let mut line = String::new();
+            stdout.read_line(&mut line).unwrap();
+            assert!(line.contains("\"jsonrpc\""), "{line}");
+        }
+    }
+    drop(stdin);
+    assert!(child.wait().unwrap().success());
+}
+
+fn describe_status_call(session: &str, seq: u64, failed: bool) -> CallRecord {
+    CallRecord {
+        ts: format!("2026-08-05T00:00:{seq:02}Z"),
+        session: session.into(),
+        seq,
+        server: "demo".into(),
+        method: "tools/call".into(),
+        tool: Some("describe_status".into()),
+        args: Some(json!({})),
+        latency_ms: Some(1),
+        outcome: if failed { "error" } else { "ok" }.into(),
+        error: failed.then(|| ErrorInfo {
+            code: Some(json!(-32000)),
+            layer: None,
+            retryable: Some(false),
+            kind: None,
+            template: None,
+            template_id: Some("bbbbbbbbbbbbbbbb".into()),
+        }),
+        shim_self_us: 1,
+        kind: "real".into(),
+    }
+}
+
+#[test]
+fn a_captured_finding_generates_a_probe_sized_to_its_rate_that_verify_explains_and_closes() {
+    let home = std::env::temp_dir().join(format!("mcpeval-lifecycle-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&home).unwrap();
+    for session in ["one", "two", "three"] {
+        shim_demo_session(&home, session);
+    }
+    let mut store = Store::open(Some(home.clone())).unwrap();
+    for session in ["hand-one", "hand-two"] {
+        for (seq, failed) in [(1, true), (2, false), (3, false)] {
+            store
+                .append(&describe_status_call(session, seq, failed))
+                .unwrap();
+        }
+    }
+    let run = |args: &[&str]| {
+        let out = Command::new(bin())
+            .args(args)
+            .current_dir(&home)
+            .env("MCPEVAL_HOME", &home)
+            .output()
+            .unwrap();
+        (out.status.code(), String::from_utf8(out.stdout).unwrap())
+    };
+    assert_eq!(run(&["index"]).0, Some(0));
+    assert_eq!(run(&["promote", "--threshold", "0"]).0, Some(0));
+    let findings: Vec<serde_json::Value> =
+        serde_json::from_str(&run(&["findings", "--format", "json"]).1).unwrap();
+    let finding = |tool: &str| {
+        findings
+            .iter()
+            .find(|finding| finding["tool"] == tool)
+            .unwrap()
+            .clone()
+    };
+    let flaky = finding("flaky_read");
+    assert_eq!(
+        (&flaky["class"], &flaky["retryable"], &flaky["rate"]),
+        (&json!("recovers-on-retry"), &json!(true), &json!(1.0 / 3.0))
+    );
+
+    let flaky_id = flaky["finding_id"].as_str().unwrap();
+    assert_eq!(
+        run(&[
+            "generate",
+            "--finding",
+            flaky_id,
+            "--confirm-read-only",
+            "--output",
+            "flaky.json",
+        ]),
+        (
+            Some(0),
+            format!("{flaky_id}\nprobe=degradation-over-n max_attempts=8\n")
+        )
+    );
+    let demo = env!("CARGO_BIN_EXE_mcpeval-demo");
+    let verify_generated = |id: &str, manifest: &str| {
+        run(&[
+            "verify",
+            "--finding",
+            id,
+            "--case",
+            id,
+            "--manifest",
+            manifest,
+            "--",
+            demo,
+        ])
+    };
+    assert_eq!(
+        verify_generated(flaky_id, "flaky.json"),
+        (
+            Some(1),
+            format!(
+                "{flaky_id} state=fix-claimed probe={flaky_id} consecutive_passes=0 \
+                 reason=unexpected-outcome\n  hint: {}\n",
+                mcpeval::remediation::hint(mcpeval::probe::FailureReason::UnexpectedOutcome)
+            )
+        )
+    );
+
+    let status_id = finding("describe_status")["finding_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        run(&[
+            "generate",
+            "--finding",
+            &status_id,
+            "--confirm-read-only",
+            "--output",
+            "status.json",
+        ]),
+        (
+            Some(0),
+            format!("{status_id}\nprobe=degradation-over-n max_attempts=8\n")
+        )
+    );
+    for (state, passes) in [("verifying", 1), ("verifying", 2), ("closed", 3)] {
+        assert_eq!(
+            verify_generated(&status_id, "status.json"),
+            (
+                Some(0),
+                format!(
+                    "{status_id} state={state} probe={status_id} consecutive_passes={passes}\n"
+                )
+            )
+        );
+    }
+}

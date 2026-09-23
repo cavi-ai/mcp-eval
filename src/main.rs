@@ -537,24 +537,27 @@ fn run() -> anyhow::Result<()> {
                 );
                 std::process::exit(mcpeval::exit::INFRASTRUCTURE);
             }
-            let passed = report.cases[0].passed();
+            let reason = report.cases[0].reason;
             let status = mcpeval::lifecycle::record(
                 store.root(),
                 &finding,
                 &case,
-                passed,
+                reason.is_none(),
                 chrono::Utc::now(),
             )?;
-            println!(
+            let line = format!(
                 "{finding} state={} probe={} consecutive_passes={}",
                 status.state.as_str(),
                 case,
                 status.consecutive_passes
             );
-            if !passed {
-                std::process::exit(mcpeval::exit::VERDICT);
-            }
-            Ok(())
+            let Some(reason) = reason else {
+                println!("{line}");
+                return Ok(());
+            };
+            println!("{line} reason={}", reason.as_str());
+            println!("  hint: {}", mcpeval::remediation::hint(reason));
+            std::process::exit(mcpeval::exit::VERDICT);
         }
         cli::Command::Index => {
             let store = mcpeval::store::Store::open(None)?;
@@ -585,9 +588,9 @@ fn run() -> anyhow::Result<()> {
             confirm_read_only,
         } => {
             let root = mcpeval::store::Store::resolve_root(None);
-            let probe_id =
+            let generated =
                 mcpeval::generate::run(&root, &finding, &output, force, confirm_read_only)?;
-            println!("{probe_id}");
+            print!("{}", generated.summary(&output));
             Ok(())
         }
         cli::Command::Findings { format } => {

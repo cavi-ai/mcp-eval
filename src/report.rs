@@ -37,6 +37,7 @@ pub struct Finding {
     threshold: f64,
     severity: String,
     class: FindingClass,
+    retryable: Option<bool>,
     hint: &'static str,
     repro: Option<Value>,
 }
@@ -76,7 +77,7 @@ pub fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {
         "SELECT i.finding_id,l.state,l.probe_id,l.consecutive_passes,
                 i.server,i.tool,i.err_code,i.err_template_id,i.failures,i.calls,
                 i.sessions,i.last_seen,i.cost,i.blast,i.rate,i.confidence,i.recency,
-                i.score,i.threshold,i.severity,i.args,i.err_codes,i.class
+                i.score,i.threshold,i.severity,i.args,i.err_codes,i.class,i.retryable
          FROM findings f JOIN issues i ON i.id=f.issue_id
          JOIN finding_lifecycle l ON l.finding_id=i.finding_id
          ORDER BY i.score DESC, i.server, COALESCE(i.tool,''),
@@ -110,6 +111,7 @@ pub fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {
             threshold: row.get(18)?,
             severity: row.get(19)?,
             class,
+            retryable: row.get(23)?,
             hint: class.hint(),
             repro: args.and_then(|value| serde_json::from_str(&value).ok()),
         })

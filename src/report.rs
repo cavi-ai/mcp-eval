@@ -1,3 +1,4 @@
+use crate::diagnosis::FindingClass;
 use anyhow::{bail, Context};
 use rusqlite::{Connection, OptionalExtension};
 use serde::Serialize;
@@ -21,6 +22,7 @@ pub struct Finding {
     server: String,
     tool: Option<String>,
     err_code: Option<Value>,
+    err_codes: Vec<Value>,
     err_template_id: Option<String>,
     failures: u64,
     calls: u64,
@@ -34,15 +36,16 @@ pub struct Finding {
     score: f64,
     threshold: f64,
     severity: String,
+    class: FindingClass,
+    hint: &'static str,
     repro: Option<Value>,
 }
 
-pub fn render(root: &Path, format: ReportFormat) -> anyhow::Result<String> {
-    let findings = load_findings(root)?;
+pub fn render(findings: &[Finding], format: ReportFormat) -> anyhow::Result<String> {
     match format {
-        ReportFormat::Json => Ok(serde_json::to_string_pretty(&findings)? + "\n"),
-        ReportFormat::Agent => render_agent(&findings),
-        ReportFormat::Md => render_markdown(&findings),
+        ReportFormat::Json => Ok(serde_json::to_string_pretty(findings)? + "\n"),
+        ReportFormat::Agent => render_agent(findings),
+        ReportFormat::Md => render_markdown(findings),
     }
 }
 
@@ -73,7 +76,7 @@ pub fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {
         "SELECT i.finding_id,l.state,l.probe_id,l.consecutive_passes,
                 i.server,i.tool,i.err_code,i.err_template_id,i.failures,i.calls,
                 i.sessions,i.last_seen,i.cost,i.blast,i.rate,i.confidence,i.recency,
-                i.score,i.threshold,i.severity,i.args
+                i.score,i.threshold,i.severity,i.args,i.err_codes,i.class
          FROM findings f JOIN issues i ON i.id=f.issue_id
          JOIN finding_lifecycle l ON l.finding_id=i.finding_id
          ORDER BY i.score DESC, i.server, COALESCE(i.tool,''),
@@ -82,6 +85,8 @@ pub fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {
     let rows = statement.query_map([], |row| {
         let err_code: Option<String> = row.get(6)?;
         let args: Option<String> = row.get(20)?;
+        let err_codes: String = row.get(21)?;
+        let class: FindingClass = row.get(22)?;
         Ok(Finding {
             finding_id: row.get(0)?,
             state: row.get(1)?,
@@ -90,6 +95,7 @@ pub fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {
             server: row.get(4)?,
             tool: row.get(5)?,
             err_code: err_code.and_then(|value| serde_json::from_str(&value).ok()),
+            err_codes: serde_json::from_str(&err_codes).unwrap_or_default(),
             err_template_id: row.get(7)?,
             failures: row.get::<_, i64>(8)?.max(0) as u64,
             calls: row.get::<_, i64>(9)?.max(0) as u64,
@@ -103,6 +109,8 @@ pub fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {
             score: row.get(17)?,
             threshold: row.get(18)?,
             severity: row.get(19)?,
+            class,
+            hint: class.hint(),
             repro: args.and_then(|value| serde_json::from_str(&value).ok()),
         })
     })?;
@@ -113,12 +121,17 @@ fn tool_name(finding: &Finding) -> &str {
     finding.tool.as_deref().unwrap_or("unlisted")
 }
 
+fn codes(finding: &Finding) -> String {
+    let codes: Vec<String> = finding.err_codes.iter().map(Value::to_string).collect();
+    format!("[{}]", codes.join(","))
+}
+
 fn render_agent(findings: &[Finding]) -> anyhow::Result<String> {
     let mut output = String::new();
     for finding in findings {
         writeln!(
             output,
-            "finding {} {}/{} state={} probe={} consecutive_passes={} severity={} score={:.6} threshold={:.6} rate={:.6} confidence={:.6} recency={:.6} failures={}/{} sessions={} cost={:.1} blast={}",
+            "finding {} {}/{} state={} probe={} consecutive_passes={} severity={} score={:.6} threshold={:.6} rate={:.6} confidence={:.6} recency={:.6} failures={}/{} sessions={} cost={:.1} blast={} class={}",
             finding.finding_id,
             finding.server,
             tool_name(finding),
@@ -136,10 +149,16 @@ fn render_agent(findings: &[Finding]) -> anyhow::Result<String> {
             finding.sessions,
             finding.cost,
             finding.blast,
+            finding.class.as_str(),
         )?;
+        let several = if finding.err_codes.len() > 1 {
+            format!(" codes={}", codes(finding))
+        } else {
+            String::new()
+        };
         writeln!(
             output,
-            "  cause code={} template_id={} last_seen={}",
+            "  cause code={}{several} template_id={} last_seen={}",
             finding
                 .err_code
                 .as_ref()
@@ -148,6 +167,7 @@ fn render_agent(findings: &[Finding]) -> anyhow::Result<String> {
             finding.err_template_id.as_deref().unwrap_or("none"),
             finding.last_seen,
         )?;
+        writeln!(output, "  hint: {}", finding.hint)?;
         if let Some(repro) = &finding.repro {
             writeln!(output, "  repro={repro}")?;
         }
@@ -184,6 +204,15 @@ fn render_markdown(findings: &[Finding]) -> anyhow::Result<String> {
             finding.cost,
             finding.blast,
             finding.last_seen,
+        )?;
+        if finding.err_codes.len() > 1 {
+            writeln!(output, "- Error codes: {}", codes(finding))?;
+        }
+        writeln!(
+            output,
+            "- Class: {}\n- Hint: {}",
+            finding.class.as_str(),
+            finding.hint
         )?;
         if let Some(repro) = &finding.repro {
             writeln!(output, "- Shape-level repro: `{repro}`")?;
@@ -395,6 +424,11 @@ fn issue_markdown(finding: &Finding) -> String {
     if let Some(repro) = &finding.repro {
         out.push_str(&format!("- Shape-level repro: `{repro}`\n"));
     }
+    out.push_str(&format!(
+        "\n## Diagnosis\n\n- Class: `{}`\n- Hint: {}\n",
+        finding.class.as_str(),
+        finding.hint
+    ));
     out.push_str("\n## Suggested next steps\n\n1. Reproduce with the shape above against the failing tool.\n2. Attach a deterministic probe:\n   ```sh\n   mcpeval generate --finding ");
     out.push_str(&finding.finding_id);
     out.push_str(" --confirm-read-only --output generated.manifest.json\n   ```\n3. After fixing, verify until it closes (three consecutive green runs):\n   ```sh\n   mcpeval verify --finding ");

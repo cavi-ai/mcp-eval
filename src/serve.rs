@@ -144,8 +144,8 @@ fn list_findings_tool() -> Value {
     tool(
         "list_findings",
         "List promoted findings: privacy-safe failure metadata (server, \
-         tool, state, severity, evidence counts). Run `mcpeval index` and \
-         `mcpeval promote` first.",
+         tool, state, severity, class, evidence counts). Run `mcpeval index` \
+         and `mcpeval promote` first.",
         Some(json!({
             "type": "object",
             "properties": {
@@ -162,7 +162,7 @@ fn get_finding_tool() -> Value {
     tool(
         "get_finding",
         "Get one promoted finding by its finding-* identifier, including \
-         the shape-level repro.",
+         its class, the server-side fix hint, and the shape-level repro.",
         Some(json!({
             "type": "object",
             "properties": {
@@ -339,7 +339,7 @@ fn handle_call(
             else {
                 bail!("no such finding");
             };
-            Ok(text_result(&format_finding(finding)))
+            Ok(text_result(&format_finding_detail(finding)))
         }
         "get_readiness_trends" => {
             let points = crate::trends::load(root, 10)?;
@@ -555,6 +555,7 @@ fn format_finding(finding: &Value) -> String {
         .get("severity")
         .and_then(Value::as_str)
         .unwrap_or("?");
+    let class = finding.get("class").and_then(Value::as_str).unwrap_or("?");
     let id = finding
         .get("finding_id")
         .and_then(Value::as_str)
@@ -572,8 +573,13 @@ fn format_finding(finding: &Value) -> String {
         .map(|repro| format!(" repro={repro}"))
         .unwrap_or_default();
     format!(
-        "{id} {server}/{tool} state={state} severity={severity} probe={probe} failures={failures}/{calls} sessions={sessions}{repro}",
+        "{id} {server}/{tool} state={state} severity={severity} class={class} probe={probe} failures={failures}/{calls} sessions={sessions}{repro}",
     )
+}
+
+fn format_finding_detail(finding: &Value) -> String {
+    let hint = finding.get("hint").and_then(Value::as_str).unwrap_or("?");
+    format!("{}\nhint: {hint}", format_finding(finding))
 }
 
 fn format_trends(points: &[crate::trends::TrendPoint]) -> String {
@@ -782,4 +788,35 @@ fn write_http(stream: &mut TcpStream, status: u16, payload: &Value) -> anyhow::R
     stream.write_all(&body)?;
     stream.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finding_text_names_the_class_and_the_detail_adds_the_hint() {
+        let finding = json!({
+            "finding_id": "finding-0123456789abcdef",
+            "server": "demo",
+            "tool": "flaky_read",
+            "state": "open",
+            "severity": "medium",
+            "class": "unstable-error-code",
+            "hint": "pick one code",
+            "failures": 6,
+            "calls": 18,
+            "sessions": 3
+        });
+        let line = format_finding(&finding);
+        assert_eq!(
+            line,
+            "finding-0123456789abcdef demo/flaky_read state=open severity=medium \
+             class=unstable-error-code probe=none failures=6/18 sessions=3"
+        );
+        assert_eq!(
+            format_finding_detail(&finding),
+            format!("{line}\nhint: pick one code")
+        );
+    }
 }

@@ -2,7 +2,7 @@ use chrono::{TimeZone, Utc};
 use mcpeval::index;
 use mcpeval::promote::{promote, PromotionConfig};
 use mcpeval::record::{AnnotationRecord, CallRecord, ErrorInfo};
-use mcpeval::report::{render, ReportFormat};
+use mcpeval::report::{export_issues, load_findings, render, ReportFormat};
 use mcpeval::store::Store;
 use serde_json::json;
 
@@ -72,7 +72,7 @@ fn promoted_home() -> std::path::PathBuf {
 fn report_requires_promotion_to_have_run() {
     let dir = tempdir();
     Store::open(Some(dir.clone())).unwrap();
-    assert!(render(&dir, ReportFormat::Json)
+    assert!(load_findings(&dir)
         .unwrap_err()
         .to_string()
         .contains("mcpeval promote"));
@@ -81,7 +81,7 @@ fn report_requires_promotion_to_have_run() {
 #[test]
 fn report_json_is_deterministic_and_contains_actionable_safe_metrics() {
     let dir = promoted_home();
-    let text = render(&dir, ReportFormat::Json).unwrap();
+    let text = render(&load_findings(&dir).unwrap(), ReportFormat::Json).unwrap();
     let rows: serde_json::Value = serde_json::from_str(&text).unwrap();
     let rows = rows.as_array().unwrap();
     assert_eq!(rows.len(), 2);
@@ -96,7 +96,7 @@ fn report_json_is_deterministic_and_contains_actionable_safe_metrics() {
 fn report_formats_never_emit_raw_templates_notes_sessions_or_paths() {
     let dir = promoted_home();
     for format in [ReportFormat::Agent, ReportFormat::Md, ReportFormat::Json] {
-        let text = render(&dir, format).unwrap();
+        let text = render(&load_findings(&dir).unwrap(), format).unwrap();
         for forbidden in [
             "CANARY",
             "private annotation",
@@ -116,8 +116,8 @@ fn report_formats_never_emit_raw_templates_notes_sessions_or_paths() {
 #[test]
 fn report_agent_and_markdown_formats_are_focused_and_annotation_uplifts_severity() {
     let dir = promoted_home();
-    let agent = render(&dir, ReportFormat::Agent).unwrap();
-    let markdown = render(&dir, ReportFormat::Md).unwrap();
+    let agent = render(&load_findings(&dir).unwrap(), ReportFormat::Agent).unwrap();
+    let markdown = render(&load_findings(&dir).unwrap(), ReportFormat::Md).unwrap();
     assert!(agent.contains(" demo/click state=open probe=none"));
     assert!(agent.contains("severity=medium"));
     for field in ["rate=", "confidence=", "recency=", "threshold="] {
@@ -153,7 +153,104 @@ fn unprobeable_findings_are_capped_at_medium() {
         },
     )
     .unwrap();
-    let agent = render(&dir, ReportFormat::Agent).unwrap();
+    let agent = render(&load_findings(&dir).unwrap(), ReportFormat::Agent).unwrap();
     assert!(agent.lines().all(|line| !line.contains("severity=high")));
     assert!(agent.lines().any(|line| line.contains("severity=medium")));
+}
+
+#[test]
+fn every_format_carries_the_class_and_hint_and_issue_files_add_a_diagnosis() {
+    let dir = promoted_home();
+    let findings = load_findings(&dir).unwrap();
+    let agent = render(&findings, ReportFormat::Agent).unwrap();
+    let click = agent
+        .lines()
+        .find(|line| line.contains(" demo/click "))
+        .unwrap();
+    assert!(click.ends_with(" class=false-success"), "{click}");
+    assert!(
+        agent.contains(
+            "\n  hint: the call reported success while the agent observed no effect; return a structured error when the operation did not happen\n"
+        ),
+        "{agent}"
+    );
+    assert!(agent
+        .lines()
+        .any(|line| line.contains(" demo/type ") && line.ends_with(" class=recurring-error")));
+    assert!(!agent.contains("codes=["), "{agent}");
+
+    let markdown = render(&findings, ReportFormat::Md).unwrap();
+    assert!(
+        markdown.contains("- Class: false-success\n- Hint: the call reported success"),
+        "{markdown}"
+    );
+    assert!(markdown.contains("- Class: recurring-error\n- Hint: the same structured error"));
+    assert!(!markdown.contains("- Error codes:"));
+
+    let rows: serde_json::Value =
+        serde_json::from_str(&render(&findings, ReportFormat::Json).unwrap()).unwrap();
+    let mut classes: Vec<&str> = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| {
+            assert_eq!(row["err_codes"], json!(["blocked"]));
+            assert!(!row["hint"].as_str().unwrap().is_empty());
+            row["class"].as_str().unwrap()
+        })
+        .collect();
+    classes.sort_unstable();
+    assert_eq!(classes, ["false-success", "recurring-error"]);
+
+    let issues = tempdir().join("issues");
+    assert_eq!(export_issues(&dir, &issues, false, false).unwrap(), 2);
+    for entry in std::fs::read_dir(&issues).unwrap() {
+        let body = std::fs::read_to_string(entry.unwrap().path()).unwrap();
+        let diagnosis = body.find("\n## Diagnosis\n\n- Class: `").unwrap();
+        let hint = body.find("\n- Hint: ").unwrap();
+        let next = body.find("\n## Suggested next steps").unwrap();
+        assert!(diagnosis < hint && hint < next, "{body}");
+    }
+}
+
+#[test]
+fn several_codes_render_in_every_format() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    for (session, code) in [("s1", -32002), ("s2", -32001)] {
+        let mut record = failure(session, 1, "click", "aaaaaaaaaaaaaaaa");
+        record.error.as_mut().unwrap().code = Some(json!(code));
+        store.append(&record).unwrap();
+    }
+    index::build(&dir).unwrap();
+    promote(
+        &dir,
+        PromotionConfig {
+            threshold: 0.0,
+            now: Utc.with_ymd_and_hms(2026, 8, 5, 1, 0, 0).unwrap(),
+        },
+    )
+    .unwrap();
+    let findings = load_findings(&dir).unwrap();
+    let agent = render(&findings, ReportFormat::Agent).unwrap();
+    assert!(
+        agent.contains(
+            "\n  cause code=-32001 codes=[-32001,-32002] template_id=aaaaaaaaaaaaaaaa last_seen="
+        ),
+        "{agent}"
+    );
+    assert!(agent
+        .lines()
+        .next()
+        .unwrap()
+        .ends_with(" class=unstable-error-code"));
+    let markdown = render(&findings, ReportFormat::Md).unwrap();
+    assert!(
+        markdown.contains("- Error codes: [-32001,-32002]\n- Class: unstable-error-code\n"),
+        "{markdown}"
+    );
+    let rows: serde_json::Value =
+        serde_json::from_str(&render(&findings, ReportFormat::Json).unwrap()).unwrap();
+    assert_eq!(rows[0]["err_code"], json!(-32001));
+    assert_eq!(rows[0]["err_codes"], json!([-32001, -32002]));
 }

@@ -24,6 +24,8 @@ use std::time::{Duration, Instant};
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
 
+use crate::loopback::Provenance;
+
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -64,13 +66,13 @@ fn handle_connection(
         Ok(request) => request,
         Err(_) => return write_http(stream, 400, &json!({"error": "invalid request"})),
     };
-    if let Some((status, error)) = untrusted_request(&request) {
+    if let Some((status, error)) = request.provenance.rejection() {
         return write_http(stream, status, &json!({"error": error}));
     }
     if request.method != "POST" {
         return write_http(stream, 405, &json!({"error": "POST only"}));
     }
-    if !is_json_media_type(request.content_type.as_deref()) {
+    if !request.provenance.is_json() {
         return write_http(
             stream,
             415,
@@ -607,80 +609,8 @@ fn format_trends(points: &[crate::trends::TrendPoint]) -> String {
 
 struct ServeRequest {
     method: String,
-    host: Option<String>,
-    origin: Option<String>,
-    content_type: Option<String>,
-    /// `Host`, `Origin`, or `Content-Type` appeared more than once.
-    duplicate_header: bool,
+    provenance: Provenance,
     body: Vec<u8>,
-}
-
-/// The status and error for a request that did not come from this machine,
-/// or `None` when its `Host` and any `Origin` both name loopback.
-fn untrusted_request(request: &ServeRequest) -> Option<(u16, &'static str)> {
-    if request.duplicate_header {
-        return Some((400, "Host, Origin, and Content-Type may appear only once"));
-    }
-    if request
-        .origin
-        .as_deref()
-        .is_some_and(|origin| !is_loopback_origin(origin))
-    {
-        return Some((403, "Origin is not a loopback origin"));
-    }
-    match request.host.as_deref() {
-        None => Some((400, "Host header is required")),
-        Some(host) if !is_loopback_authority(host) => Some((403, "Host is not a loopback host")),
-        Some(_) => None,
-    }
-}
-
-/// `localhost`, or an IPv4 or IPv6 loopback literal.
-fn is_loopback_host(host: &url::Host<&str>) -> bool {
-    match host {
-        url::Host::Domain(name) => name.eq_ignore_ascii_case("localhost"),
-        url::Host::Ipv4(address) => address.is_loopback(),
-        url::Host::Ipv6(address) => address.is_loopback(),
-    }
-}
-
-/// An `Origin` value such as `http://localhost:6274`. The opaque `null`
-/// origin of sandboxed frames and local files is not loopback.
-fn is_loopback_origin(origin: &str) -> bool {
-    url::Url::parse(origin).is_ok_and(|parsed| {
-        matches!(parsed.scheme(), "http" | "https")
-            && parsed.host().is_some_and(|host| is_loopback_host(&host))
-    })
-}
-
-/// A `Host` value: host and optional port, nothing else.
-fn is_loopback_authority(authority: &str) -> bool {
-    !authority.contains(['/', '@', '?', '#', '\\'])
-        && url::Url::parse(&format!("http://{authority}/"))
-            .is_ok_and(|parsed| parsed.host().is_some_and(|host| is_loopback_host(&host)))
-}
-
-fn is_json_media_type(content_type: Option<&str>) -> bool {
-    content_type.is_some_and(|value| {
-        value
-            .split(';')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .eq_ignore_ascii_case("application/json")
-    })
-}
-
-/// Store a header that must appear at most once. A repeat is recorded
-/// rather than failing the read: the request is consumed in full so that
-/// closing the socket after the 400 cannot reset it, which on Linux would
-/// discard the response before the client reads it.
-fn set_once(slot: &mut Option<String>, value: &str, duplicate: &mut bool) {
-    if slot.is_some() {
-        *duplicate = true;
-        return;
-    }
-    *slot = Some(value.trim().to_owned());
 }
 
 fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
@@ -694,10 +624,7 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
         bail!("unsupported HTTP request line");
     }
     let mut content_length = 0usize;
-    let mut host = None;
-    let mut origin = None;
-    let mut content_type = None;
-    let mut duplicate_header = false;
+    let mut provenance = Provenance::default();
     let mut header_bytes = request_line.len();
     loop {
         let line = read_line_bounded(
@@ -712,12 +639,8 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
         if let Some((name, value)) = line.trim_end_matches(['\r', '\n']).split_once(':') {
             if name.eq_ignore_ascii_case("content-length") {
                 content_length = value.trim().parse().unwrap_or(0);
-            } else if name.eq_ignore_ascii_case("host") {
-                set_once(&mut host, value, &mut duplicate_header);
-            } else if name.eq_ignore_ascii_case("origin") {
-                set_once(&mut origin, value, &mut duplicate_header);
-            } else if name.eq_ignore_ascii_case("content-type") {
-                set_once(&mut content_type, value, &mut duplicate_header);
+            } else {
+                provenance.record(name, value);
             }
         }
     }
@@ -728,10 +651,7 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
     reader.read_exact(&mut body)?;
     Ok(ServeRequest {
         method,
-        host,
-        origin,
-        content_type,
-        duplicate_header,
+        provenance,
         body,
     })
 }

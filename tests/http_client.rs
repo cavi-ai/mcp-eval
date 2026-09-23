@@ -118,6 +118,9 @@ fn streamable_http_supports_json_and_sse_responses() {
 #[test]
 fn endpoint_policy_is_local_and_credential_free_by_default() {
     assert!(HttpMcpClient::connect("http://127.0.0.1:1/mcp", false).is_ok());
+    assert!(HttpMcpClient::connect("http://localhost:1/mcp", false).is_ok());
+    assert!(HttpMcpClient::connect("http://[::1]:8080/mcp", false).is_ok());
+    assert!(HttpMcpClient::connect("http://[fe80::1]/mcp", false).is_err());
     assert!(HttpMcpClient::connect("http://example.com/mcp", true).is_err());
     assert!(HttpMcpClient::connect("https://example.com/mcp", false).is_err());
     assert!(HttpMcpClient::connect("https://example.com/mcp", true).is_ok());

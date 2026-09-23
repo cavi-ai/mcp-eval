@@ -8,7 +8,6 @@ import test from "node:test";
 import { slug } from "./render-site.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
-const DOCS = path.join(ROOT, "docs/mcp-eval");
 
 function git(...args) {
   return execFileSync("git", args, { cwd: ROOT, encoding: "utf8" }).trim();
@@ -50,7 +49,7 @@ async function renderInto(temporary, versions) {
   }
   const output = path.join(temporary, "site");
   const { renderSite } = await import(`./render-site.mjs?case=${versions.join("-")}`);
-  return { site: await renderSite({ docsRoot, output }), output };
+  return { site: await renderSite({ docsRoot, output }), output, docsRoot };
 }
 
 async function readSite(output, relative) {
@@ -60,11 +59,13 @@ async function readSite(output, relative) {
 test("site renders every navigated page as html with navigation", async (context) => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "mcpeval-site-"));
   context.after(() => rm(temporary, { recursive: true, force: true }));
-  const { site, output } = await renderInto(temporary, ["0.1.0", "0.2.0"]);
+  const { site, output, docsRoot } = await renderInto(temporary, ["0.1.0", "0.2.0"]);
   assert.equal(site.versions.length, 2);
   assert.equal(site.currentVersion, "0.2.0");
 
-  const navigation = JSON.parse(await readFile(path.join(DOCS, "v0.2.0/navigation.json"), "utf8"));
+  const navigation = JSON.parse(
+    await readFile(path.join(docsRoot, "v0.2.0/navigation.json"), "utf8"),
+  );
   const expectedPages = navigation.sections
     .flatMap((section) => section.pages)
     .map((page) => `docs/mcp-eval/v0.2.0/${page.path.replace(/\.md$/u, ".html")}`);
@@ -121,7 +122,7 @@ test("manifest version mismatch is rejected", async (context) => {
   const temporary = await mkdtemp(path.join(os.tmpdir(), "mcpeval-site-"));
   context.after(() => rm(temporary, { recursive: true, force: true }));
   const docsRoot = path.join(temporary, "docs/mcp-eval");
-  await cp(path.join(DOCS, "v0.2.0"), path.join(docsRoot, "v0.2.0"), { recursive: true });
+  await materializeVersion("0.2.0", path.join(docsRoot, "v0.2.0"));
   const manifestPath = path.join(docsRoot, "v0.2.0/manifest.json");
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
   manifest.version = "9.9.9";

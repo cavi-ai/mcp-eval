@@ -1,5 +1,4 @@
 use std::io::Read;
-use std::net::IpAddr;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
@@ -547,13 +546,8 @@ pub(crate) fn validate_endpoint(endpoint: &str, allow_remote: bool) -> anyhow::R
     {
         bail!("HTTP endpoint must be a credential-free HTTP(S) URL without query or fragment");
     }
-    let host = parsed
-        .host_str()
-        .context("HTTP endpoint is missing a host")?;
-    let loopback = host.eq_ignore_ascii_case("localhost")
-        || host
-            .parse::<IpAddr>()
-            .is_ok_and(|address| address.is_loopback());
+    let host = parsed.host().context("HTTP endpoint is missing a host")?;
+    let loopback = crate::loopback::is_loopback_host(&host);
     if !loopback && !allow_remote {
         bail!("remote HTTP endpoints require --allow-remote-http");
     }

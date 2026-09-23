@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use crate::correlate::Correlator;
 use crate::fingerprint::Salt;
+use crate::loopback::Provenance;
 use crate::store::Store;
 
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
@@ -101,6 +102,7 @@ struct CaptureState {
 struct IncomingRequest {
     method: String,
     headers: Vec<(String, String)>,
+    provenance: Provenance,
     body: Vec<u8>,
 }
 
@@ -117,6 +119,12 @@ fn forward(
             return Ok(());
         }
     };
+    if let Some((status, _)) = incoming.provenance.rejection() {
+        return write_response(&mut stream, status, &[], &[]);
+    }
+    if incoming.method == "POST" && !incoming.provenance.is_json() {
+        return write_response(&mut stream, 415, &[], &[]);
+    }
     let started_ms = now_ms();
     let request_scope = uuid::Uuid::new_v4().to_string();
     let request_value = serde_json::from_slice::<Value>(&incoming.body).ok();
@@ -192,6 +200,7 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<IncomingRequest> {
         bail!("unsupported HTTP request line");
     }
     let mut headers = Vec::new();
+    let mut provenance = Provenance::default();
     let mut header_bytes = request_line.len();
     loop {
         let line = read_line_bounded(
@@ -221,6 +230,7 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<IncomingRequest> {
         if value.bytes().any(|byte| byte.is_ascii_control()) {
             bail!("HTTP header value is invalid");
         }
+        provenance.record(name, value);
         headers.push((name.to_owned(), value.to_owned()));
     }
     let content_length = headers
@@ -237,6 +247,7 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<IncomingRequest> {
     Ok(IncomingRequest {
         method,
         headers,
+        provenance,
         body,
     })
 }
@@ -300,7 +311,9 @@ fn reason(status: u16) -> &'static str {
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
+        403 => "Forbidden",
         413 => "Payload Too Large",
+        415 => "Unsupported Media Type",
         502 => "Bad Gateway",
         503 => "Service Unavailable",
         _ => "Response",

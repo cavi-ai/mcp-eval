@@ -21,6 +21,17 @@ pub enum ProbeFormat {
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum SchemaDocument {
+    /// mcp-eval.manifest.json.
+    #[default]
+    Manifest,
+    /// mcpeval.probe-report/v1 (`probe --format json`).
+    Report,
+    /// mcpeval.probe-diff/v1 (`diff --format json`).
+    Diff,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum ReportFormat {
     /// Human-readable summary with readiness and hints.
     #[default]
@@ -149,9 +160,14 @@ pub enum Command {
         #[arg(last = true)]
         cmd: Vec<String>,
     },
-    /// Print the JSON Schema for mcp-eval.manifest.json (for editor
-    /// validation: add "$schema" pointing at docs/mcp-eval.manifest.schema.json).
-    Schema,
+    /// Print a published JSON Schema: the manifest (for editor validation:
+    /// add "$schema" pointing at docs/mcp-eval.manifest.schema.json), the
+    /// probe report, or the diff document.
+    Schema {
+        /// Which document the schema describes.
+        #[arg(value_enum, default_value_t = SchemaDocument::Manifest)]
+        document: SchemaDocument,
+    },
     /// Print the remediation guidance for a fixed failure reason.
     Explain {
         /// A fixed reason label, e.g. pagination-stalled-cursor. Pass no

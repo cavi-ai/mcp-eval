@@ -507,7 +507,12 @@ impl ProbeCase {
 impl Manifest {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let body = std::fs::read(path).context("reading manifest")?;
-        let manifest: Self = serde_json::from_slice(&body).context("parsing manifest structure")?;
+        Self::parse(&body)
+    }
+
+    /// Parse and validate manifest bytes.
+    pub fn parse(body: &[u8]) -> anyhow::Result<Self> {
+        let manifest: Self = serde_json::from_slice(body).context("parsing manifest structure")?;
         manifest.validate()?;
         Ok(manifest)
     }

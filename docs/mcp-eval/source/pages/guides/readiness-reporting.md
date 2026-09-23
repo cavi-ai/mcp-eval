@@ -28,17 +28,31 @@ mcpeval explain        # list every fixed reason
 
 ## JSON
 
-`--format json` emits the versioned `mcpeval.probe-report/v1` document: server label, per-case verdicts, fixed reason labels, measurement numbers, and a `readiness` object. There are no timestamps, sessions, or payloads, so the document is safe to commit as a baseline or attach to CI artifacts.
+`--format json` emits the versioned `mcpeval.probe-report/v1` document: the generator, server label, manifest SHA-256, per-case verdicts with tool names, fixed reason labels with their remediation hints, the declared bound behind a bound-based failure, measurement numbers, and a `readiness` object. There are no timestamps, sessions, or payloads, so the document is safe to commit as a baseline or attach to CI artifacts. `mcpeval schema report` prints its JSON Schema.
 
 ```json
 {
   "schema": "mcpeval.probe-report/v1",
+  "generator": {"name": "mcpeval", "version": "{{PRODUCT_VERSION}}"},
   "server": "demo",
-  "passed": true,
+  "manifest_sha256": "3f1c…",
+  "passed": false,
   "readiness": {
-    "score": 100,
-    "categories": [{"name": "discovery", "passed": 2, "total": 2}]
-  }
+    "score": 0,
+    "categories": [{"name": "discovery", "passed": 0, "total": 1}]
+  },
+  "cases": [{
+    "id": "catalog-budget",
+    "probe": "discovery-cost",
+    "tool": null,
+    "passed": false,
+    "attempts": 1,
+    "first_failure": 1,
+    "reason": "discovery-limit-exceeded",
+    "hint": "…",
+    "detail": {"bound": "max_tools", "limit": 10, "observed": 12},
+    "measurements": {"tool_count": 12, "schema_bytes": 1802}
+  }]
 }
 ```
 
@@ -53,8 +67,8 @@ The score (0–100) is a deterministic composite over four weighted categories:
 | Category | Weight | Probes |
 | --- | --- | --- |
 | discovery | 0.25 | `discovery-cost`, `token-cost`, `pagination`, `surface-listing` |
-| reliability | 0.35 | `degradation-over-n`, `error-honesty`, `state-recovery`, `latency-budget`, `payload-bounds` |
-| contract | 0.30 | `schema-guessability`, `instruction-fidelity`, `output-schema` |
+| reliability | 0.35 | `degradation-over-n`, `error-honesty`, `state-recovery`, `latency-budget`, `payload-bounds`, `cancellation`, `resource-subscription` |
+| contract | 0.30 | `schema-guessability`, `instruction-fidelity`, `output-schema`, `protocol-negotiation`, `sampling`, `elicitation`, `completion` |
 | concurrency | 0.10 | `contention` |
 
 Each category contributes the fraction of its cases that passed, weighted as above. Categories with no cases in the manifest are excluded from both numerator and denominator, so a partial manifest is never penalized for probes it did not declare. The same report always produces the same score.

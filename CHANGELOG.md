@@ -57,6 +57,16 @@
 
 ### Added
 
+- `mcpeval.probe-report/v1` gains optional fields: `generator` (name and
+  version), `manifest_sha256` (SHA-256 of the manifest bytes the run
+  parsed), and per case `tool`, `hint` (the remediation for its reason), and
+  `detail` (the declared bound a bound-based failure exceeded, with its
+  limit and the observed value).
+- Published JSON Schemas for the report and diff documents:
+  `docs/mcp-eval.probe-report.schema.json` and
+  `docs/mcp-eval.probe-diff.schema.json`, printed by `mcpeval schema report`
+  and `mcpeval schema diff` (`mcpeval schema` still prints the manifest
+  schema).
 - Manifest `timeout_ms` (100 to 600000): how long each request waits for
   its response, over stdio and HTTP.
 - `completion` probe: for a server declaring the `completions` capability,

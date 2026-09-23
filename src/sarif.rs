@@ -219,6 +219,8 @@ mod tests {
         CaseReport {
             id: id.into(),
             probe,
+            tool: None,
+            detail: None,
             attempts: 1,
             first_failure: reason.map(|_| 1),
             reason,
@@ -246,6 +248,7 @@ mod tests {
                     Some(FailureReason::UnexpectedOutcome),
                 ),
             ],
+            manifest_sha256: None,
         };
         let manifest = ManifestSource {
             uri: "mcp-eval.manifest.json",

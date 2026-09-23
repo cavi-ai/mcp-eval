@@ -83,8 +83,13 @@ enum CancelMode {
 }
 
 /// Run the cancellation probe against a thread-based Streamable HTTP
-/// fixture and return the CLI output with its wall-clock duration.
-fn probe_http(mode: CancelMode, grace_seconds: u64) -> (std::process::Output, std::time::Duration) {
+/// fixture and return the CLI output with the silence the fixture
+/// observed: from the arrival of a call it never answered to the client
+/// closing that connection.
+fn probe_http(
+    mode: CancelMode,
+    grace_seconds: u64,
+) -> (std::process::Output, Option<std::time::Duration>) {
     let dir = home();
     let manifest = dir.join("m.json");
     std::fs::write(
@@ -103,17 +108,21 @@ fn probe_http(mode: CancelMode, grace_seconds: u64) -> (std::process::Output, st
     let server = std::thread::spawn(move || {
         // initialize, initialized, tools/list, preflight call, cancelled
         // call, cancellation notification: six connections per run.
+        let mut handlers = Vec::new();
         for _ in 0..6 {
             let Ok((mut stream, _)) = listener.accept() else {
                 break;
             };
             let cancel_seen = std::sync::Arc::clone(&cancel_seen);
-            std::thread::spawn(move || {
-                handle_http_connection(&mut stream, &cancel_seen, mode);
-            });
+            handlers.push(std::thread::spawn(move || {
+                handle_http_connection(&mut stream, &cancel_seen, mode)
+            }));
         }
+        handlers
+            .into_iter()
+            .filter_map(|handler| handler.join().ok().flatten())
+            .last()
     });
-    let started = std::time::Instant::now();
     let output = Command::new(bin())
         .args([
             "probe",
@@ -129,9 +138,7 @@ fn probe_http(mode: CancelMode, grace_seconds: u64) -> (std::process::Output, st
         .env("MCPEVAL_HOME", &dir)
         .output()
         .unwrap();
-    let elapsed = started.elapsed();
-    server.join().unwrap();
-    (output, elapsed)
+    (output, server.join().unwrap())
 }
 
 #[test]
@@ -154,9 +161,12 @@ fn cancellation_works_over_streamable_http() {
 fn http_silence_within_grace_is_honored() {
     // A server that never answers the cancelled call is honoring the
     // cancellation. The wait is bounded by the manifest's grace_seconds,
-    // not by the client's fixed read timeout: one second of grace must
-    // finish well under the five-second agent default.
-    let (output, elapsed) = probe_http(CancelMode::Silence, 1);
+    // not by the client's fixed read timeout: with one second of grace the
+    // client hangs up on the silent call well before the five-second agent
+    // default. The client starts its grace timer as it sends the call, so
+    // the fixture sees the call arrive slightly after the timer started.
+    let grace = std::time::Duration::from_secs(1);
+    let (output, silence) = probe_http(CancelMode::Silence, grace.as_secs());
     assert!(
         output.status.success(),
         "{} {}",
@@ -165,9 +175,14 @@ fn http_silence_within_grace_is_honored() {
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["cases"][0]["passed"], true);
+    let silence = silence.expect("the fixture never held a cancelled call");
     assert!(
-        elapsed < std::time::Duration::from_secs(3),
-        "silence took {elapsed:?}; grace_seconds was not applied"
+        silence + std::time::Duration::from_millis(250) >= grace,
+        "the client hung up after {silence:?}, before the grace elapsed"
+    );
+    assert!(
+        silence < grace + std::time::Duration::from_secs(2),
+        "the client waited {silence:?}; grace_seconds was not applied"
     );
 }
 
@@ -181,11 +196,13 @@ fn http_full_result_after_cancel_is_ignored() {
 
 /// Minimal Streamable HTTP MCP fixture: initialize/tools-list plus a
 /// tools/call handler whose response to a cancelled call depends on `mode`.
+/// Returns how long a call it never answered was held before the client
+/// closed the connection.
 fn handle_http_connection(
     stream: &mut std::net::TcpStream,
     cancel_seen: &std::sync::atomic::AtomicBool,
     mode: CancelMode,
-) {
+) -> Option<std::time::Duration> {
     use std::io::{BufRead, BufReader, Read, Write};
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut content_length = 0usize;
@@ -202,6 +219,7 @@ fn handle_http_connection(
     let mut body = vec![0; content_length];
     reader.read_exact(&mut body).unwrap();
     let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let arrived = std::time::Instant::now();
     if request["method"] == "notifications/cancelled" {
         cancel_seen.store(true, std::sync::atomic::Ordering::SeqCst);
     }
@@ -209,7 +227,7 @@ fn handle_http_connection(
         stream
             .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .unwrap();
-        return;
+        return None;
     }
     let result = match request["method"].as_str().unwrap() {
         "initialize" => serde_json::json!({
@@ -242,10 +260,13 @@ fn handle_http_connection(
                         "error": {"code": -32800, "message": "Request cancelled"}});
                 }
                 CancelMode::Silence => {
-                    // Never answer: hold the connection until the client has
-                    // given up, then drop it without writing a frame.
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    return;
+                    // Never answer: hold the connection until the client
+                    // gives up and closes it, without writing a frame.
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                        .unwrap();
+                    let _ = stream.read(&mut [0; 1]);
+                    return Some(arrived.elapsed());
                 }
                 CancelMode::Ignore => {}
             }
@@ -258,6 +279,7 @@ fn handle_http_connection(
         payload.len()
     )
     .unwrap();
+    None
 }
 
 #[test]

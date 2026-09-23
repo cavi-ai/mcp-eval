@@ -14,6 +14,7 @@ pub mod http_proxy;
 pub mod index;
 pub mod init;
 pub mod lifecycle;
+mod loopback;
 pub mod manifest;
 pub mod mcp_client;
 pub mod privacy;

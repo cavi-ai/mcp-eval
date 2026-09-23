@@ -240,28 +240,6 @@ pub fn ensure_same_server(baseline: &Document, current: &Document) -> anyhow::Re
     Ok(())
 }
 
-pub fn run(
-    baseline_path: &Path,
-    current_path: &Path,
-    fail_on_regression: bool,
-) -> anyhow::Result<String> {
-    let baseline = load_document(baseline_path)?;
-    let current = load_document(current_path)?;
-    ensure_same_server(&baseline, &current)?;
-    let outcome = diff(&baseline.report, &current.report);
-    let rendered = render(&outcome);
-    if fail_on_regression && outcome.gated() {
-        print!("{rendered}");
-        bail!(
-            "{} regressed case{}, {} fixed",
-            outcome.regressed(),
-            if outcome.regressed() == 1 { "" } else { "s" },
-            outcome.fixed()
-        );
-    }
-    Ok(rendered)
-}
-
 fn movement(measurement: Option<(u64, u64)>, unit: &str) -> String {
     match measurement {
         None => String::new(),

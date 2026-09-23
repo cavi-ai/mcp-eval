@@ -194,7 +194,7 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
     probe_run(&dir);
     probe_run(&dir);
 
-    let (mut server, port) = start_serve(&dir, &[]);
+    let (_server, port) = start_serve(&dir, &[]);
     let http = format!("http://127.0.0.1:{port}/mcp");
 
     let (status, response) = raw_call(
@@ -364,9 +364,6 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
 
     // The store still holds only the one accepted record.
     assert_eq!(read_annotations(&dir).len(), 1);
-
-    server.kill().ok();
-    let _ = server.wait();
 }
 
 fn read_annotations(dir: &std::path::Path) -> Vec<Value> {
@@ -387,7 +384,7 @@ fn read_annotations(dir: &std::path::Path) -> Vec<Value> {
 #[test]
 fn serve_rejects_requests_a_browser_page_can_forge() {
     let dir = home();
-    let (mut server, port) = start_serve(&dir, &[]);
+    let (_server, port) = start_serve(&dir, &[]);
     let body = serde_json::to_vec(&json!({
         "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
     }))
@@ -438,8 +435,6 @@ fn serve_rejects_requests_a_browser_page_can_forge() {
             "{headers:?}"
         );
     }
-    server.kill().ok();
-    let _ = server.wait();
 }
 
 /// A legitimate request whose body exceeds the header budget, with
@@ -448,7 +443,7 @@ fn serve_rejects_requests_a_browser_page_can_forge() {
 #[test]
 fn large_request_body_is_accepted_whatever_the_header_order() {
     let dir = home();
-    let (mut server, port) = start_serve(&dir, &[]);
+    let (_server, port) = start_serve(&dir, &[]);
     let mut body = br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#.to_vec();
     body.resize(64 * 1024, b' ');
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -467,8 +462,6 @@ fn large_request_body_is_accepted_whatever_the_header_order() {
         "{:?}",
         String::from_utf8_lossy(&response)
     );
-    server.kill().ok();
-    let _ = server.wait();
 }
 
 /// A rejected request with a body larger than the server's header read:
@@ -478,7 +471,7 @@ fn large_request_body_is_accepted_whatever_the_header_order() {
 #[test]
 fn duplicate_header_rejection_is_readable_despite_a_large_body() {
     let dir = home();
-    let (mut server, port) = start_serve(&dir, &[]);
+    let (_server, port) = start_serve(&dir, &[]);
     let mut body = br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#.to_vec();
     body.resize(64 * 1024, b' ');
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
@@ -501,8 +494,6 @@ fn duplicate_header_rejection_is_readable_despite_a_large_body() {
         "{:?}",
         String::from_utf8_lossy(&response)
     );
-    server.kill().ok();
-    let _ = server.wait();
 }
 
 /// The request a hostile page sends with `fetch(url, {method: "POST",
@@ -513,7 +504,7 @@ fn duplicate_header_rejection_is_readable_despite_a_large_body() {
 fn forged_cross_origin_run_probe_never_launches_its_command() {
     let dir = home();
     let marker = dir.join("launched");
-    let (mut server, port) = start_serve(&dir, &["--allow-spawn"]);
+    let (_server, port) = start_serve(&dir, &["--allow-spawn"]);
     let body = serde_json::to_vec(&json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -546,6 +537,4 @@ fn forged_cross_origin_run_probe_never_launches_its_command() {
     assert_eq!(status, 415);
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(!marker.exists(), "the forged request launched its command");
-    server.kill().ok();
-    let _ = server.wait();
 }

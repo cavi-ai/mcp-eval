@@ -12,6 +12,11 @@
 - `run_probe` and `scaffold` launch the server process an agent names, so
   `serve` lists and runs them only with the new `--allow-spawn` flag.
   Agent-loop setups that use them must add the flag.
+- `mcpeval shim-http` validates every request before forwarding it, with
+  the same checks as `serve`: `Host` must name loopback (403, or 400 when
+  missing or repeated), an `Origin` must be loopback (403), and a POST's
+  `Content-Type` must be `application/json` (415). Previously it
+  forwarded any request, its `Origin` included, to the upstream server.
 
 ### Changed
 
@@ -143,6 +148,9 @@
 
 ### Fixed
 
+- HTTP endpoints on the IPv6 loopback address, such as
+  `http://[::1]:8080/mcp`, count as local and no longer require
+  `--allow-remote-http`.
 - `docs/mcp-eval/source/pages/reference/evaluation-dimensions.md` said
   the CLI exposes nine supplemental probes; it exposes fourteen, all
   already documented there.

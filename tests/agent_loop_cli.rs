@@ -58,6 +58,17 @@ fn raw_call(endpoint: &str, message: &Value) -> (u16, Value) {
     (status, serde_json::from_slice(&raw).unwrap())
 }
 
+/// A running `mcpeval serve`, killed when dropped so a failing assertion
+/// never leaks the process.
+struct Serve(std::process::Child);
+
+impl Drop for Serve {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 fn call(endpoint: &str, tool: &str, arguments: Value) -> Value {
     let (_, response) = raw_call(
         endpoint,
@@ -79,22 +90,24 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
         .local_addr()
         .unwrap()
         .port();
-    let mut server = Command::new(bin())
-        .args([
-            "serve",
-            "--listen",
-            &format!("127.0.0.1:{port}"),
-            "--allow-spawn",
-        ])
-        .env("MCPEVAL_HOME", &dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
+    let mut server = Serve(
+        Command::new(bin())
+            .args([
+                "serve",
+                "--listen",
+                &format!("127.0.0.1:{port}"),
+                "--allow-spawn",
+            ])
+            .env("MCPEVAL_HOME", &dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
     let http = format!("http://127.0.0.1:{port}/mcp");
     // Wait for this child's own bind announcement, not merely an open port;
     // keep draining stderr so serve never writes into a closed pipe.
-    let mut stderr = BufReader::new(server.stderr.take().unwrap());
+    let mut stderr = BufReader::new(server.0.stderr.take().unwrap());
     let mut announcement = String::new();
     stderr.read_line(&mut announcement).unwrap();
     assert!(
@@ -237,8 +250,7 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
         "{recorded_text}"
     );
 
-    server.kill().ok();
-    let _ = server.wait();
+    drop(server);
     let mut stored = Vec::new();
     for entry in std::fs::read_dir(dir.join("store")).unwrap() {
         let path = entry.unwrap().path();

@@ -372,8 +372,12 @@ persistence.
 The stdio shim targets Unix and Windows and expects newline-delimited JSON-RPC.
 `shim-http` provides the same privacy-safe capture boundary for Streamable
 HTTP POST traffic: explicit loopback socket only, validated upstream,
-bounded JSON and finite SSE responses. See [the installation
-guide](docs/install.md) for MCP client configuration and live verification.
+bounded JSON and finite SSE responses. Like `serve`, it refuses a request
+without a loopback `Host` (400 when missing or repeated, 403 otherwise),
+with a non-loopback `Origin` (403), or a POST without `Content-Type:
+application/json` (415), before forwarding anything upstream. See [the
+installation guide](docs/install.md) for MCP client configuration and live
+verification.
 
 HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS
 plus `--allow-remote-http`; URLs must not contain credentials, query strings,

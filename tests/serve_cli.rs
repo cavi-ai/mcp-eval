@@ -379,6 +379,69 @@ fn serve_rejects_requests_a_browser_page_can_forge() {
     let _ = server.wait();
 }
 
+/// A legitimate request whose body exceeds the header budget, with
+/// `Content-Length` sent before other headers: the header limit counts
+/// header bytes only, never the body length.
+#[test]
+fn large_request_body_is_accepted_whatever_the_header_order() {
+    let dir = home();
+    let (mut server, port) = start_serve(&dir, &[]);
+    let mut body = br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#.to_vec();
+    body.resize(64 * 1024, b' ');
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        stream,
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .unwrap();
+    stream.write_all(&body).unwrap();
+    stream.flush().unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    assert!(
+        response.starts_with(b"HTTP/1.1 200"),
+        "{:?}",
+        String::from_utf8_lossy(&response)
+    );
+    server.kill().ok();
+    let _ = server.wait();
+}
+
+/// A rejected request with a body larger than the server's header read:
+/// the server must consume the body before closing, or the close resets
+/// the connection (Linux sends RST when unread input remains) and the
+/// client never sees the 400.
+#[test]
+fn duplicate_header_rejection_is_readable_despite_a_large_body() {
+    let dir = home();
+    let (mut server, port) = start_serve(&dir, &[]);
+    let mut body = br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#.to_vec();
+    body.resize(64 * 1024, b' ');
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    // The server may answer and close before the body is sent; a failed
+    // write is part of what this test exercises, not an error.
+    let _ = write!(
+        stream,
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nHost: evil.example:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    let _ = stream.write_all(&body);
+    let _ = stream.flush();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .expect("the server must close cleanly after the 400, not reset");
+    assert!(
+        response.starts_with(b"HTTP/1.1 400"),
+        "{:?}",
+        String::from_utf8_lossy(&response)
+    );
+    server.kill().ok();
+    let _ = server.wait();
+}
+
 /// The request a hostile page sends with `fetch(url, {method: "POST",
 /// mode: "no-cors", body})`: cross-origin and `text/plain`. Even with
 /// --allow-spawn it must not launch the command it names.

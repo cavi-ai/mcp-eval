@@ -596,12 +596,17 @@ struct ServeRequest {
     host: Option<String>,
     origin: Option<String>,
     content_type: Option<String>,
+    /// `Host`, `Origin`, or `Content-Type` appeared more than once.
+    duplicate_header: bool,
     body: Vec<u8>,
 }
 
 /// The status and error for a request that did not come from this machine,
 /// or `None` when its `Host` and any `Origin` both name loopback.
 fn untrusted_request(request: &ServeRequest) -> Option<(u16, &'static str)> {
+    if request.duplicate_header {
+        return Some((400, "Host, Origin, and Content-Type may appear only once"));
+    }
     if request
         .origin
         .as_deref()
@@ -652,14 +657,16 @@ fn is_json_media_type(content_type: Option<&str>) -> bool {
     })
 }
 
-/// Store a header that must appear at most once; a repeat makes the
-/// request ambiguous and is rejected.
-fn set_once(slot: &mut Option<String>, value: &str) -> anyhow::Result<()> {
+/// Store a header that must appear at most once. A repeat is recorded
+/// rather than failing the read: the request is consumed in full so that
+/// closing the socket after the 400 cannot reset it, which on Linux would
+/// discard the response before the client reads it.
+fn set_once(slot: &mut Option<String>, value: &str, duplicate: &mut bool) {
     if slot.is_some() {
-        bail!("duplicate HTTP header");
+        *duplicate = true;
+        return;
     }
     *slot = Some(value.trim().to_owned());
-    Ok(())
 }
 
 fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
@@ -676,12 +683,15 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
     let mut host = None;
     let mut origin = None;
     let mut content_type = None;
+    let mut duplicate_header = false;
+    let mut header_bytes = request_line.len();
     loop {
         let line = read_line_bounded(
             &mut reader,
-            MAX_HEADER_BYTES.saturating_sub(content_length),
+            MAX_HEADER_BYTES.saturating_sub(header_bytes),
             deadline,
         )?;
+        header_bytes = header_bytes.saturating_add(line.len());
         if line == "\r\n" {
             break;
         }
@@ -689,11 +699,11 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
             if name.eq_ignore_ascii_case("content-length") {
                 content_length = value.trim().parse().unwrap_or(0);
             } else if name.eq_ignore_ascii_case("host") {
-                set_once(&mut host, value)?;
+                set_once(&mut host, value, &mut duplicate_header);
             } else if name.eq_ignore_ascii_case("origin") {
-                set_once(&mut origin, value)?;
+                set_once(&mut origin, value, &mut duplicate_header);
             } else if name.eq_ignore_ascii_case("content-type") {
-                set_once(&mut content_type, value)?;
+                set_once(&mut content_type, value, &mut duplicate_header);
             }
         }
     }
@@ -707,6 +717,7 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
         host,
         origin,
         content_type,
+        duplicate_header,
         body,
     })
 }

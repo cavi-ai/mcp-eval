@@ -1,4 +1,4 @@
-use mcpeval::mcp_client::{McpClient, ToolResponse};
+use mcpeval::mcp_client::{McpClient, ToolResponse, TransportFailure};
 use serde_json::json;
 
 const FIXTURE: &str = "tests/fixtures/probe_clean_server.py";
@@ -65,7 +65,13 @@ fn a_server_that_never_answers_fails_with_a_timeout() {
     // The "malformed" mode emits unparseable lines and never responds:
     // skipping them must lead to a timeout, not an echo of the prose.
     let mut client = McpClient::spawn(&command(Some("malformed"))).unwrap();
-    let error = client.initialize().unwrap_err().to_string();
+    client.set_response_timeout(Some(std::time::Duration::from_secs(2)));
+    let error = client.initialize().unwrap_err();
+    assert_eq!(
+        TransportFailure::of(&error),
+        Some(TransportFailure::Timeout)
+    );
+    let error = error.to_string();
     assert!(error.contains("timed out"));
     assert!(!error.contains("not-json"));
 }
@@ -73,6 +79,7 @@ fn a_server_that_never_answers_fails_with_a_timeout() {
 #[test]
 fn reports_early_exit_without_hanging() {
     let mut client = McpClient::spawn(&command(Some("early-exit"))).unwrap();
-    let error = client.initialize().unwrap_err().to_string();
-    assert!(error.contains("closed stdout"));
+    let error = client.initialize().unwrap_err();
+    assert_eq!(TransportFailure::of(&error), Some(TransportFailure::Closed));
+    assert!(error.to_string().contains("closed stdout"));
 }

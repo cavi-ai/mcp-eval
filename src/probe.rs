@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Barrier};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use crate::fingerprint::Salt;
 use crate::http_client::HttpMcpClient;
 use crate::manifest::{Access, Expectation, Manifest, OutcomeExpectation, ProbeCase, ProbeKind};
-use crate::mcp_client::{McpClient, ToolCatalog, ToolDefinition, ToolResponse};
+use crate::mcp_client::{McpClient, ToolCatalog, ToolDefinition, ToolResponse, TransportFailure};
 use crate::record::{error_info, CallRecord};
 use crate::store::Store;
 use anyhow::{bail, Context};
@@ -53,21 +53,37 @@ impl ClientTarget {
         }
     }
 
-    fn connect(&self) -> anyhow::Result<ProbeClient> {
-        match self {
-            Self::Stdio(command) => Ok(ProbeClient::Stdio(McpClient::spawn(command)?)),
+    /// Open a client whose requests wait `timeout` (`None`: the
+    /// transport's default).
+    fn connect(&self, timeout: Option<Duration>) -> anyhow::Result<ProbeClient> {
+        let mut client = match self {
+            Self::Stdio(command) => ProbeClient::Stdio(McpClient::spawn(command)?),
             Self::Http {
                 endpoint,
                 allow_remote,
-            } => Ok(ProbeClient::Http(HttpMcpClient::connect(
-                endpoint,
-                *allow_remote,
-            )?)),
-        }
+            } => ProbeClient::Http(HttpMcpClient::connect(endpoint, *allow_remote)?),
+        };
+        client.set_response_timeout(timeout);
+        Ok(client)
     }
 }
 
 impl ProbeClient {
+    fn set_response_timeout(&mut self, timeout: Option<Duration>) {
+        match self {
+            Self::Stdio(client) => client.set_response_timeout(timeout),
+            Self::Http(client) => client.set_response_timeout(timeout),
+        }
+    }
+
+    /// The response timeout the transport applies when none is set.
+    fn default_timeout(&self) -> Duration {
+        match self {
+            Self::Stdio(_) => crate::mcp_client::DEFAULT_RESPONSE_TIMEOUT,
+            Self::Http(_) => crate::http_client::DEFAULT_IO_TIMEOUT,
+        }
+    }
+
     fn initialize(&mut self) -> anyhow::Result<()> {
         match self {
             Self::Stdio(client) => client.initialize(),
@@ -242,6 +258,13 @@ pub enum FailureReason {
     CompletionValueFlood,
     CompletionArgumentUnknown,
     CompletionStalledRequest,
+    /// The case could not be evaluated: no response within the timeout.
+    TransportTimeout,
+    /// The case could not be evaluated: the server closed the connection.
+    TransportClosed,
+    /// The case could not be evaluated: any other failure while it ran,
+    /// such as a malformed or mismatched response.
+    TransportError,
 }
 
 impl ProbeKind {
@@ -315,6 +338,13 @@ impl FailureReason {
         Self::ResourceUnreadable,
         Self::SubscriptionRejected,
         Self::SubscriptionNotificationMissing,
+        Self::CompletionInvalidRequest,
+        Self::CompletionValueFlood,
+        Self::CompletionArgumentUnknown,
+        Self::CompletionStalledRequest,
+        Self::TransportTimeout,
+        Self::TransportClosed,
+        Self::TransportError,
     ];
 
     pub fn from_report_label(label: &str) -> Option<Self> {
@@ -362,6 +392,9 @@ impl FailureReason {
             "completion-value-flood" => Self::CompletionValueFlood,
             "completion-argument-unknown" => Self::CompletionArgumentUnknown,
             "completion-stalled-request" => Self::CompletionStalledRequest,
+            "transport-timeout" => Self::TransportTimeout,
+            "transport-closed" => Self::TransportClosed,
+            "transport-error" => Self::TransportError,
             _ => return None,
         })
     }
@@ -411,7 +444,19 @@ impl FailureReason {
             Self::CompletionValueFlood => "completion-value-flood",
             Self::CompletionArgumentUnknown => "completion-argument-unknown",
             Self::CompletionStalledRequest => "completion-stalled-request",
+            Self::TransportTimeout => "transport-timeout",
+            Self::TransportClosed => "transport-closed",
+            Self::TransportError => "transport-error",
         }
+    }
+
+    /// Transport reasons mean the case was not evaluated at all; every
+    /// other reason is a verdict on the server.
+    pub fn is_transport(&self) -> bool {
+        matches!(
+            self,
+            Self::TransportTimeout | Self::TransportClosed | Self::TransportError
+        )
     }
 }
 
@@ -457,6 +502,11 @@ pub struct CaseReport {
 impl CaseReport {
     pub fn passed(&self) -> bool {
         self.reason.is_none()
+    }
+
+    /// The case could not be evaluated: its reason is a transport reason.
+    pub fn errored(&self) -> bool {
+        self.reason.is_some_and(|reason| reason.is_transport())
     }
 }
 
@@ -560,6 +610,11 @@ impl ProbeReport {
         self.cases.iter().all(CaseReport::passed)
     }
 
+    /// Some case could not be evaluated, so the run is incomplete.
+    pub fn errored(&self) -> bool {
+        self.cases.iter().any(CaseReport::errored)
+    }
+
     /// Versioned, deterministic JSON document: no timestamps, no session
     /// identifiers, cases in manifest order. Contains only share-safe
     /// fields — server label, case IDs, probe kinds, counts, fixed reason
@@ -621,18 +676,92 @@ impl ProbeReport {
 }
 
 pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeReport> {
+    let manifest = load_manifest(&options).map_err(crate::exit::usage)?;
+    let cases = select_cases(&manifest, &options).map_err(crate::exit::usage)?;
+    let target = ClientTarget::from_options(&options).map_err(crate::exit::usage)?;
+
+    let salt = Salt::load(store.root())?;
+    let session = uuid::Uuid::new_v4().to_string();
+    let mut seq = 0;
+    let timeout = manifest.timeout_ms.map(Duration::from_millis);
+    let mut client = target.connect(timeout)?;
+    client.initialize()?;
+    let catalog = client.list_tools_catalog()?;
+    for case in &cases {
+        if case
+            .required_tools()
+            .iter()
+            .any(|name| !catalog.tools.iter().any(|tool| tool.name == **name))
+        {
+            return Err(crate::exit::usage(anyhow::anyhow!(
+                "probe tool was not declared by the server"
+            )));
+        }
+    }
+    let mut reports = Vec::with_capacity(cases.len());
+    let mut context = RunContext {
+        server: &options.server,
+        session: &session,
+        seq: &mut seq,
+        salt: &salt,
+        client: &mut client,
+        catalog: &catalog,
+        target: &target,
+        timeout,
+        store,
+    };
+    // A failure inside one case costs that case, never the run: it is
+    // reported as errored and the next case starts on a fresh connection,
+    // because the session state after a lost or broken exchange is unknown.
+    // Once the server cannot be reached again, the remaining cases error
+    // with the same reason.
+    let mut unreachable = None;
+    for case in cases {
+        if let Some(reason) = unreachable {
+            reports.push(errored_case(case, reason));
+            continue;
+        }
+        let case_timeout = case_timeout(case, timeout, context.client.default_timeout());
+        context.client.set_response_timeout(case_timeout);
+        match run_case(case, &mut context) {
+            Ok(report) => reports.push(report),
+            Err(error) => {
+                let reason = transport_reason(&error);
+                eprintln!("{} {}: {error:#}", case.id(), reason.as_str());
+                reports.push(errored_case(case, reason));
+                match reconnect(&target, timeout) {
+                    Ok(fresh) => *context.client = fresh,
+                    Err(error) => {
+                        let reason = transport_reason(&error);
+                        eprintln!("reconnecting failed: {error:#}");
+                        unreachable = Some(reason);
+                    }
+                }
+            }
+        }
+    }
+    Ok(ProbeReport { cases: reports })
+}
+
+fn load_manifest(options: &ProbeOptions) -> anyhow::Result<Manifest> {
     if !crate::privacy::valid_server(&options.server) {
         bail!("server label is invalid");
     }
-    let manifest = match &options.manifest_inline {
+    match &options.manifest_inline {
         Some(body) => {
             let manifest: Manifest =
                 serde_json::from_str(body).context("parsing inline manifest structure")?;
             manifest.validate()?;
-            manifest
+            Ok(manifest)
         }
-        None => Manifest::load(&options.manifest_path)?,
-    };
+        None => Manifest::load(&options.manifest_path),
+    }
+}
+
+fn select_cases<'m>(
+    manifest: &'m Manifest,
+    options: &ProbeOptions,
+) -> anyhow::Result<Vec<&'m ProbeCase>> {
     if options.selected_probe.is_some() && options.selected_case.is_some() {
         bail!("select a probe kind or a probe case, not both");
     }
@@ -655,38 +784,53 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     if cases.iter().any(|case| case.access() == Access::Mutating) && !options.allow_mutation {
         bail!("mutating probes require --allow-mutation");
     }
-    let target = ClientTarget::from_options(&options)?;
+    Ok(cases)
+}
 
-    let salt = Salt::load(store.root())?;
-    let session = uuid::Uuid::new_v4().to_string();
-    let mut seq = 0;
-    let mut client = target.connect()?;
+fn reconnect(target: &ClientTarget, timeout: Option<Duration>) -> anyhow::Result<ProbeClient> {
+    let mut client = target.connect(timeout)?;
     client.initialize()?;
-    let catalog = client.list_tools_catalog()?;
-    for case in &cases {
-        if case
-            .required_tools()
-            .iter()
-            .any(|name| !catalog.tools.iter().any(|tool| tool.name == **name))
-        {
-            bail!("probe tool was not declared by the server");
+    Ok(client)
+}
+
+/// A latency budget must never be cut short by the transport timeout: its
+/// calls wait the budget plus the timeout, so a slow call is measured and
+/// judged against the budget instead of erroring.
+fn case_timeout(
+    case: &ProbeCase,
+    timeout: Option<Duration>,
+    transport_default: Duration,
+) -> Option<Duration> {
+    match case {
+        ProbeCase::LatencyBudget { max_latency_ms, .. } => {
+            Some(timeout.unwrap_or(transport_default) + Duration::from_millis(*max_latency_ms))
         }
+        _ => timeout,
     }
-    let mut reports = Vec::with_capacity(cases.len());
-    let mut context = RunContext {
-        server: &options.server,
-        session: &session,
-        seq: &mut seq,
-        salt: &salt,
-        client: &mut client,
-        catalog: &catalog,
-        target: &target,
-        store,
-    };
-    for case in cases {
-        reports.push(run_case(case, &mut context)?);
+}
+
+fn transport_reason(error: &anyhow::Error) -> FailureReason {
+    match TransportFailure::of(error) {
+        Some(TransportFailure::Timeout) => FailureReason::TransportTimeout,
+        Some(TransportFailure::Closed) => FailureReason::TransportClosed,
+        None => FailureReason::TransportError,
     }
-    Ok(ProbeReport { cases: reports })
+}
+
+/// A case that could not be evaluated: no attempt completed.
+fn errored_case(case: &ProbeCase, reason: FailureReason) -> CaseReport {
+    CaseReport {
+        id: case.id().to_owned(),
+        probe: case.kind(),
+        attempts: 0,
+        first_failure: None,
+        reason: Some(reason),
+        tool_count: None,
+        schema_bytes: None,
+        token_usage: None,
+        latency_ms: None,
+        pages: None,
+    }
 }
 
 struct RunContext<'a> {
@@ -697,6 +841,8 @@ struct RunContext<'a> {
     client: &'a mut ProbeClient,
     catalog: &'a ToolCatalog,
     target: &'a ClientTarget,
+    /// The manifest's response timeout, for connections a case opens.
+    timeout: Option<Duration>,
     store: &'a mut Store,
 }
 
@@ -897,13 +1043,14 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
     let tool = case.tool().expect("contention has a tool").to_owned();
     let arguments = case.arguments().expect("contention has arguments").clone();
     let target = context.target.clone();
+    let timeout = context.timeout;
     let barrier = Arc::new(Barrier::new(2));
     let worker_barrier = Arc::clone(&barrier);
     let (ready_tx, ready_rx) = mpsc::sync_channel(0);
     let worker_tool = tool.clone();
     let worker_arguments = arguments.clone();
     let worker = std::thread::spawn(move || -> anyhow::Result<(ToolResponse, u64)> {
-        let mut client = target.connect()?;
+        let mut client = target.connect(timeout)?;
         client.initialize()?;
         let tools = client.list_tools()?;
         if !tools.iter().any(|name| name == &worker_tool) {
@@ -1615,7 +1762,7 @@ fn run_cancellation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::R
             &reason,
             std::time::Duration::from_secs(grace_seconds),
         )
-        .map_err(|error| anyhow::anyhow!("cancellation probe failed: {error}"))?;
+        .context("cancellation probe failed")?;
     let attempts = 2;
     let failure = outcome_had_failure(outcome);
     Ok(CaseReport {
@@ -1773,14 +1920,13 @@ fn run_sampling(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Resul
         // Flood is a distinct defect; other transport failures (including
         // the flood bound) are declared reasons.
         Err(error) => {
-            let message = format!("{error:#}");
-            if message.contains("more sub-requests") {
+            if format!("{error:#}").contains("more sub-requests") {
                 return Ok(failed_case(case, 1, FailureReason::SamplingRequestFlood));
             }
-            if message.contains("timed out") {
+            if TransportFailure::of(&error) == Some(TransportFailure::Timeout) {
                 return Ok(failed_case(case, 1, FailureReason::SamplingStalledCall));
             }
-            return Err(anyhow::anyhow!("sampling probe failed: {message}"));
+            return Err(error.context("sampling probe failed"));
         }
     };
     let _ = server_requests;
@@ -1857,14 +2003,13 @@ fn run_elicitation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Re
     let (response, _server_requests) = match outcome {
         Ok(outcome) => outcome,
         Err(error) => {
-            let message = format!("{error:#}");
-            if message.contains("more sub-requests") {
+            if format!("{error:#}").contains("more sub-requests") {
                 return Ok(failed_case(case, 1, FailureReason::ElicitationRequestFlood));
             }
-            if message.contains("timed out") {
+            if TransportFailure::of(&error) == Some(TransportFailure::Timeout) {
                 return Ok(failed_case(case, 1, FailureReason::ElicitationStalledCall));
             }
-            return Err(anyhow::anyhow!("elicitation probe failed: {message}"));
+            return Err(error.context("elicitation probe failed"));
         }
     };
     let failure = match &response {
@@ -2081,4 +2226,47 @@ fn run_completion(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
         return Ok(failed_case(case, 1, FailureReason::CompletionValueFlood));
     }
     Ok(passed_case(case, 1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failure_reason_all_lists_every_variant_and_labels_round_trip() {
+        let source = include_str!("probe.rs");
+        let body = source
+            .split_once("pub enum FailureReason {")
+            .and_then(|(_, rest)| rest.split_once("\n}"))
+            .map(|(body, _)| body)
+            .unwrap();
+        let declared: Vec<&str> = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.ends_with(',') && !line.starts_with("//"))
+            .map(|line| line.trim_end_matches(','))
+            .collect();
+        let listed: Vec<String> = FailureReason::ALL
+            .iter()
+            .map(|reason| format!("{reason:?}"))
+            .collect();
+        assert_eq!(
+            listed, declared,
+            "FailureReason::ALL must list every variant in order"
+        );
+        for reason in FailureReason::ALL {
+            assert_eq!(
+                FailureReason::from_report_label(reason.as_str()),
+                Some(*reason)
+            );
+        }
+    }
+
+    #[test]
+    fn probe_kind_labels_round_trip() {
+        use clap::ValueEnum;
+        for kind in ProbeKind::value_variants() {
+            assert_eq!(ProbeKind::from_report_label(kind.as_str()), Some(*kind));
+        }
+    }
 }

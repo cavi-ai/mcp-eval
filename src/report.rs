@@ -241,6 +241,11 @@ pub fn render_probe_markdown(
     for case in &report.cases {
         let (result, first_failure, reason) = match case.reason {
             None => ("pass".to_string(), "—".to_string(), "—".to_string()),
+            Some(reason) if reason.is_transport() => (
+                "error".to_string(),
+                "—".to_string(),
+                reason.as_str().to_string(),
+            ),
             Some(reason) => (
                 "fail".to_string(),
                 case.first_failure

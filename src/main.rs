@@ -51,6 +51,12 @@ fn render_probe_text(
                 "{} {probe} pass attempts={}{measurements}",
                 case.id, case.attempts
             );
+        } else if case.errored() {
+            let reason = case.reason.expect("errored case has a reason");
+            println!("{} {probe} error reason={}", case.id, reason.as_str());
+            if !brief {
+                println!("  hint: {}", mcpeval::remediation::hint(reason));
+            }
         } else {
             let reason = case.reason.expect("failed case has a reason");
             println!(
@@ -98,7 +104,24 @@ fn catalog_tokens(report: &mcpeval::probe::ProbeReport) -> Option<u64> {
         .max()
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("Error: {error:?}");
+        std::process::exit(mcpeval::exit::code(&error));
+    }
+}
+
+/// Exit for a report that ran: incomplete runs outrank red verdicts.
+fn exit_for_report(report: &mcpeval::probe::ProbeReport) {
+    if report.errored() {
+        std::process::exit(mcpeval::exit::INFRASTRUCTURE);
+    }
+    if !report.passed() {
+        std::process::exit(mcpeval::exit::VERDICT);
+    }
+}
+
+fn run() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
     match cli.command {
         cli::Command::Shim { server, cmd } => {
@@ -139,7 +162,9 @@ fn main() -> anyhow::Result<()> {
                 },
                 &mut store,
             )?;
-            if full_battery {
+            // A trend point is a complete battery: an errored run would
+            // record the transport, not the server.
+            if full_battery && !report.errored() {
                 if let Err(error) = mcpeval::trends::record(store.root(), &server, &report) {
                     eprintln!("trend recording failed: {error}");
                 }
@@ -170,9 +195,7 @@ fn main() -> anyhow::Result<()> {
                     render_probe_text(&server, &report, brief, corpus.as_ref(), price_per_mtok)
                 }
             }
-            if !report.passed() {
-                std::process::exit(1);
-            }
+            exit_for_report(&report);
             Ok(())
         }
         cli::Command::Init {
@@ -231,7 +254,7 @@ fn main() -> anyhow::Result<()> {
                             eprintln!(
                                 "unknown reason {requested}; run mcpeval explain for the list"
                             );
-                            std::process::exit(2);
+                            std::process::exit(mcpeval::exit::USAGE);
                         }
                     }
                 }
@@ -258,14 +281,17 @@ fn main() -> anyhow::Result<()> {
                     }
                     Ok((label.to_owned(), url.to_owned()))
                 })
-                .collect::<anyhow::Result<Vec<_>>>()?;
+                .collect::<anyhow::Result<Vec<_>>>()
+                .map_err(mcpeval::exit::usage)?;
             let mut labels = std::collections::HashSet::new();
             for (label, _) in &parsed {
                 if !labels.insert(label.clone()) {
-                    anyhow::bail!("endpoint labels must be unique");
+                    return Err(mcpeval::exit::usage(anyhow::anyhow!(
+                        "endpoint labels must be unique"
+                    )));
                 }
             }
-            let output = mcpeval::compare::run(
+            let comparison = mcpeval::compare::run(
                 mcpeval::compare::CompareOptions {
                     server,
                     manifest_path: manifest,
@@ -280,7 +306,10 @@ fn main() -> anyhow::Result<()> {
                     cli::CompareFormat::Json => mcpeval::compare::CompareFormat::Json,
                 },
             )?;
-            print!("{output}");
+            print!("{}", comparison.output);
+            if comparison.errored {
+                std::process::exit(mcpeval::exit::INFRASTRUCTURE);
+            }
             Ok(())
         }
         cli::Command::Diff {
@@ -291,10 +320,13 @@ fn main() -> anyhow::Result<()> {
             format,
         } => {
             let baseline_document = mcpeval::diff::load_document(&baseline)
-                .with_context(|| format!("loading baseline {}", baseline.display()))?;
+                .with_context(|| format!("loading baseline {}", baseline.display()))
+                .map_err(mcpeval::exit::usage)?;
             let current_document = mcpeval::diff::load_document(&current)
-                .with_context(|| format!("loading current {}", current.display()))?;
-            mcpeval::diff::ensure_same_server(&baseline_document, &current_document)?;
+                .with_context(|| format!("loading current {}", current.display()))
+                .map_err(mcpeval::exit::usage)?;
+            mcpeval::diff::ensure_same_server(&baseline_document, &current_document)
+                .map_err(mcpeval::exit::usage)?;
             let outcome = mcpeval::diff::diff(&baseline_document.report, &current_document.report);
             match format {
                 cli::DiffFormat::Json => {
@@ -312,7 +344,7 @@ fn main() -> anyhow::Result<()> {
             }
             if (fail_on_regression && outcome.gated()) || (fail_on_change && outcome.changed() > 0)
             {
-                std::process::exit(1);
+                std::process::exit(mcpeval::exit::VERDICT);
             }
             Ok(())
         }
@@ -360,24 +392,9 @@ fn main() -> anyhow::Result<()> {
             brief,
             price_per_mtok,
         } => {
-            let body = if document.as_os_str() == "-" {
-                use std::io::Read;
-                let mut buffer = String::new();
-                std::io::stdin().read_to_string(&mut buffer)?;
-                buffer
-            } else {
-                std::fs::read_to_string(&document)
-                    .with_context(|| format!("reading {}", document.display()))?
-            };
-            let parsed: serde_json::Value =
-                serde_json::from_str(&body).context("report document is not valid JSON")?;
-            let report = mcpeval::probe::ProbeReport::from_json_document(&parsed)
-                .context("not a usable probe report")?;
-            let server = parsed
-                .get("server")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown")
-                .to_owned();
+            let loaded = mcpeval::diff::load_document(&document).map_err(mcpeval::exit::usage)?;
+            let report = loaded.report;
+            let server = loaded.server.unwrap_or_else(|| "unknown".to_owned());
             match format {
                 cli::ReportFormat::Text => {
                     render_probe_text(&server, &report, brief, None, price_per_mtok)
@@ -390,9 +407,7 @@ fn main() -> anyhow::Result<()> {
                     println!("{}", render_sarif(&server, &report, &manifest));
                 }
             }
-            if !report.passed() {
-                std::process::exit(1);
-            }
+            exit_for_report(&report);
             Ok(())
         }
         cli::Command::Verify {
@@ -404,20 +419,27 @@ fn main() -> anyhow::Result<()> {
             allow_remote_http,
             cmd,
         } => {
-            let declaration = mcpeval::manifest::Manifest::load(&manifest)?;
+            let declaration =
+                mcpeval::manifest::Manifest::load(&manifest).map_err(mcpeval::exit::usage)?;
             let selected = declaration
                 .probes
                 .iter()
                 .find(|candidate| candidate.id() == case)
-                .ok_or_else(|| anyhow::anyhow!("probe case is not declared in the manifest"))?;
+                .ok_or_else(|| {
+                    mcpeval::exit::usage(anyhow::anyhow!(
+                        "probe case is not declared in the manifest"
+                    ))
+                })?;
             let mut store = mcpeval::store::Store::open(None)?;
             let server = mcpeval::lifecycle::prepare(
                 store.root(),
                 &finding,
                 selected.id(),
-                selected
-                    .tool()
-                    .ok_or_else(|| anyhow::anyhow!("finding verification requires a tool probe"))?,
+                selected.tool().ok_or_else(|| {
+                    mcpeval::exit::usage(anyhow::anyhow!(
+                        "finding verification requires a tool probe"
+                    ))
+                })?,
             )?;
             let report = mcpeval::probe::run(
                 mcpeval::probe::ProbeOptions {
@@ -433,6 +455,18 @@ fn main() -> anyhow::Result<()> {
                 },
                 &mut store,
             )?;
+            // A case that could not be evaluated is no evidence either way:
+            // the finding's lifecycle is left untouched.
+            if let Some(reason) = report.cases[0]
+                .reason
+                .filter(|reason| reason.is_transport())
+            {
+                println!(
+                    "{finding} not verified: probe={case} reason={}",
+                    reason.as_str()
+                );
+                std::process::exit(mcpeval::exit::INFRASTRUCTURE);
+            }
             let passed = report.cases[0].passed();
             let status = mcpeval::lifecycle::record(
                 store.root(),
@@ -448,7 +482,7 @@ fn main() -> anyhow::Result<()> {
                 status.consecutive_passes
             );
             if !passed {
-                std::process::exit(1);
+                std::process::exit(mcpeval::exit::VERDICT);
             }
             Ok(())
         }

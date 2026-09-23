@@ -162,6 +162,7 @@ fn scaffold(
 
     let manifest = Manifest {
         version: 1,
+        timeout_ms: None,
         sandboxes: Default::default(),
         probes,
     };

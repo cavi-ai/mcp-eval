@@ -51,6 +51,7 @@ pub fn run(
 
     let manifest = Manifest {
         version: 1,
+        timeout_ms: None,
         sandboxes: BTreeMap::new(),
         probes: vec![ProbeCase::DegradationOverN {
             id: finding_id.to_owned(),

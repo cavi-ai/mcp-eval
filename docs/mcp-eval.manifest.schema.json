@@ -8,6 +8,12 @@
   "required": ["version", "probes"],
   "properties": {
     "version": { "const": 1 },
+    "timeout_ms": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 600000,
+      "description": "Per-request response timeout in milliseconds. Unset, stdio waits 30 s and HTTP 5 s. A latency-budget call waits max_latency_ms plus this timeout. A request past it marks the case transport-timeout."
+    },
     "sandboxes": {
       "type": "object",
       "description": "Named disposable environments referenced by mutating probes.",

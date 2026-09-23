@@ -27,11 +27,26 @@
   `mcpevalCaseId` fingerprint is now `<server>/<case id>`, so existing
   code-scanning alerts re-key once. `mcpeval report` gained `--manifest`
   (default `mcp-eval.manifest.json`) to locate results.
+- Exit codes follow one contract: 0 pass, 1 a failed probe or a fired
+  gate, 2 a usage error (arguments, manifest, or input document), 3 an
+  evaluation that could not complete. Failures other than usage errors
+  previously exited 1, the same as a red verdict.
+- A case that times out, loses its server, or breaks the protocol no
+  longer aborts the run: it is reported with the new
+  `transport-timeout`, `transport-closed`, or `transport-error` reason,
+  the next case starts on a fresh connection, and `probe`, `report`,
+  `verify`, and `compare` emit their output and exit 3. `verify` leaves
+  the finding's lifecycle unchanged and full-battery runs record no
+  trend point for such a run.
 
 ### Fixed
 
 - `--probe` rejected `protocol-negotiation`, `sampling`, `elicitation`,
   and `resource-subscription`; it now accepts every probe kind.
+- A `latency-budget` call slower than the transport timeout (30 s over
+  stdio, 5 s over HTTP) aborted the run instead of failing the budget;
+  its calls now wait `max_latency_ms` plus the timeout.
+- `mcpeval explain` omitted the four `completion-*` reasons.
 - `mcpeval diff` paired a token measurement present on one side only
   with itself and reported no movement; the catalog movement is now
   reported only when both documents carry it.
@@ -42,6 +57,8 @@
 
 ### Added
 
+- Manifest `timeout_ms` (100 to 600000): how long each request waits for
+  its response, over stdio and HTTP.
 - `completion` probe: for a server declaring the `completions` capability,
   one `completion/complete` request for the manifest's reference
   (`ref_type`/`ref_uri`) and argument must answer a well-formed completion

@@ -172,3 +172,48 @@ fn unknown_finding_and_tool_mismatch_fail_before_child_launch() {
     assert!(!output.status.success());
     assert!(!marker.exists());
 }
+
+#[test]
+fn a_verification_that_loses_its_server_leaves_the_lifecycle_untouched() {
+    let (home, id) = promoted_home();
+    let output = Command::new(bin())
+        .args([
+            "verify",
+            "--finding",
+            &id,
+            "--case",
+            "literal-status",
+            "--manifest",
+            MANIFEST,
+            "--",
+            "python3",
+            "tests/fixtures/transport_fault_server.py",
+            "describe_status",
+        ])
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("not verified") && stdout.contains("transport-closed"),
+        "{stdout}"
+    );
+    let db = rusqlite::Connection::open(home.join("index.db")).unwrap();
+    let history: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM probe_history WHERE finding_id=?1",
+            [&id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        history, 0,
+        "an unevaluated case is no verification evidence"
+    );
+}

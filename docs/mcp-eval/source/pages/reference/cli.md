@@ -32,4 +32,15 @@ case IDs, probe names, fixed failure labels, pass state, and numeric
 measurements only; it excludes timestamps, sessions, arguments, response
 bodies, descriptions, schemas, and raw error text.
 
+## Exit codes
+
+| Code | Meaning |
+| --- | --- |
+| `0` | The command succeeded; every selected case passed. |
+| `1` | The evaluation completed and a case failed its probe, or a gate such as `diff --fail-on-regression` fired. |
+| `2` | Usage error: invalid arguments, manifest, or input document. Nothing was evaluated. |
+| `3` | The evaluation could not complete: the server was unreachable, a case lost its transport, or local I/O failed. |
+
+A case that times out, loses its connection, or breaks the protocol mid-exchange is reported with a `transport-timeout`, `transport-closed`, or `transport-error` reason, and the next case starts on a fresh connection. `probe`, `report`, `verify`, and `compare` still emit their output and then exit `3`. Such a case counts as not passed in the readiness score. `verify` leaves the finding's lifecycle unchanged, and full-battery runs with such a case record no trend point. `mcpeval explain` lists every reason.
+
 Use `mcpeval help <COMMAND>` for the binary's exact invocation text.

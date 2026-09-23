@@ -360,7 +360,14 @@ coding agent can query its own friction without touching the store:
 
 ```sh
 mcpeval serve --listen 127.0.0.1:8091
+mcpeval serve --listen 127.0.0.1:8091 --allow-spawn   # also run_probe and scaffold
 ```
+
+`run_probe` and `scaffold` launch the server process the agent names, so
+they are listed only with `--allow-spawn`. Every request must carry a
+loopback `Host`, a loopback `Origin` if any, and `Content-Type:
+application/json`; anything else is refused with 400, 403, or 415, so a web
+page cannot reach the endpoint through the browser.
 
 | Tool | Returns |
 | --- | --- |
@@ -371,7 +378,7 @@ mcpeval serve --listen 127.0.0.1:8091
 | `scaffold` | Introspect a live server's catalog and return a starter manifest JSON, without writing files |
 | `record_annotation` | Record the agent's own observation about a captured call (same fixed kinds and 240-character bounded note as `mcpeval annotate`); the session is hashed before persistence |
 
-With `run_probe`, `scaffold`, and `record_annotation`, the whole loop is
+With `run_probe`, `scaffold` (both behind `--allow-spawn`), and `record_annotation`, the whole loop is
 native MCP: the agent scaffolds a manifest, probes the server it is
 editing, reads structured verdicts and fixes, re-runs, and records what it
 observed along the way — without leaving its tool protocol.

@@ -19,7 +19,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | `promote` | optional `--threshold <THRESHOLD>` | Aggregate indexed failures and promote supported findings. |
 | `generate` | `--finding <FINDING> --output <OUTPUT> --confirm-read-only` | Generate an eligible read-only manifest. `--force` replaces an existing output. |
 | `findings` | optional `--format agent\|md\|json` | Render sanitized findings; default format is `agent`. |
-| `serve` | `--listen <LISTEN>` | Serve findings and trends over a loopback Streamable HTTP MCP endpoint. `--print-config` emits an MCP client config snippet for the endpoint and exits. |
+| `serve` | `--listen <LISTEN>` | Serve findings and trends over a loopback Streamable HTTP MCP endpoint. `--allow-spawn` enables `run_probe` and `scaffold`, which launch the server process an agent names. `--print-config` emits an MCP client config snippet for the endpoint and exits. |
 | `annotate` | `--session <SESSION> --seq <SEQ> --kind <KIND> --note <NOTE>` | Record a bounded agent-authored observation. |
 | `doctor` | optional `--check-redaction` | Run store-hygiene checks. |
 | `share` | `--dir <DIR>` | Package the share-safe envelope: the store records plus a SHARE.md manifest, after a clean redaction sweep. The salt, index databases, and manifests are never copied. Supports `--include-probe-history` and `--force`. |

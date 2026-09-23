@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Security
+
+- `mcpeval serve` validates every request: `Host` must name loopback
+  (403, or 400 when missing or repeated), an `Origin` must be loopback
+  (403), and `Content-Type` must be `application/json` (415). Previously
+  a web page could POST to the loopback endpoint cross-origin, or through
+  DNS rebinding, and have `run_probe` launch an arbitrary command.
+- `run_probe` and `scaffold` launch the server process an agent names, so
+  `serve` lists and runs them only with the new `--allow-spawn` flag.
+  Agent-loop setups that use them must add the flag.
+
+### Fixed
+
+- `mcpeval serve` bounded each header line by the header budget minus
+  the body's `Content-Length`, so a body of 16 KiB or more followed by
+  any further header was refused with 400 before it was read. The limit
+  now counts header bytes only, as the capture proxy does.
+
 ### Added
 
 - `completion` probe: for a server declaring the `completions` capability,

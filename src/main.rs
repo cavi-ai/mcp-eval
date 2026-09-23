@@ -336,6 +336,7 @@ fn main() -> anyhow::Result<()> {
         }
         cli::Command::Serve {
             listen,
+            allow_spawn,
             print_config,
         } => {
             if print_config {
@@ -352,7 +353,7 @@ fn main() -> anyhow::Result<()> {
                 );
                 return Ok(());
             }
-            mcpeval::serve::run(listen)
+            mcpeval::serve::run(listen, allow_spawn)
         }
         cli::Command::Report {
             document,

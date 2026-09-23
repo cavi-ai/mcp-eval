@@ -15,6 +15,14 @@
 
 ### Changed
 
+- `mcpeval --help` orders subcommands battery-first (`init`, `probe`,
+  `report`, `diff`, `compare`, `explain`, `schema`, `trends`, `serve`),
+  then capture (`shim`, `shim-http`, `index`, `promote`, `findings`,
+  `generate`, `verify`, `export-issues`, `annotate`), then hygiene
+  (`doctor`, `share`), and prints a `Start here:` block with the
+  `init` → `probe` → `shim` path. The top-level `about` line now names
+  both the CI probe battery and friction capture, instead of capture
+  alone.
 - The GitHub Action installs the release archive pinned by its
   `distribution/release.json` for the runner's platform, verifying the
   `.sha256` companion's digest and file name, the pinned SHA-256, and the
@@ -123,6 +131,9 @@
 
 ### Fixed
 
+- `docs/mcp-eval/source/pages/reference/evaluation-dimensions.md` said
+  the CLI exposes nine supplemental probes; it exposes fourteen, all
+  already documented there.
 - `mcpeval-demo --broken slow` behaved like the clean demo; under it
   `slow_read` now sleeps 2000 ms.
 - `mcpeval-demo --broken <unknown>` served the clean personality; it now

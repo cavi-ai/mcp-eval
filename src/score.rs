@@ -8,7 +8,7 @@
 //! probes they never declared.
 
 use crate::manifest::ProbeKind;
-use crate::probe::ProbeReport;
+use crate::probe::{CaseReport, ProbeReport};
 
 pub struct CategoryScore {
     pub name: &'static str,
@@ -73,20 +73,34 @@ const WEIGHTS: &[(&str, f64, &[ProbeKind])] = &[
 ];
 
 pub fn readiness(report: &ProbeReport) -> ReadinessScore {
+    score_cases(&report.cases.iter().collect::<Vec<_>>())
+}
+
+/// Readiness over only the cases whose kind is in `kinds`: the score a
+/// report earns on a fixed battery, comparable across manifests that add
+/// other cases. `None` when no case is of those kinds.
+pub fn readiness_over(report: &ProbeReport, kinds: &[ProbeKind]) -> Option<ReadinessScore> {
+    let cases: Vec<&CaseReport> = report
+        .cases
+        .iter()
+        .filter(|case| kinds.contains(&case.probe))
+        .collect();
+    (!cases.is_empty()).then(|| score_cases(&cases))
+}
+
+fn score_cases(cases: &[&CaseReport]) -> ReadinessScore {
     let mut categories = Vec::new();
     let mut weighted = 0.0;
     let mut weights = 0.0;
     for (name, weight, kinds) in WEIGHTS {
-        let total = report
-            .cases
+        let total = cases
             .iter()
             .filter(|case| kinds.contains(&case.probe))
             .count() as u64;
         if total == 0 {
             continue;
         }
-        let passed = report
-            .cases
+        let passed = cases
             .iter()
             .filter(|case| kinds.contains(&case.probe) && case.passed())
             .count() as u64;
@@ -132,6 +146,28 @@ pub fn badge_url(score: u64) -> String {
         _ => "red",
     };
     format!("https://img.shields.io/badge/mcpeval-{score}%2F100-{color}")
+}
+
+/// The catalog-wide token estimate from a token-cost case that reached a
+/// verdict: an over-budget catalog was still measured.
+pub fn catalog_tokens(report: &ProbeReport) -> Option<u64> {
+    report
+        .cases
+        .iter()
+        .filter(|case| !case.errored())
+        .filter_map(|case| case.token_usage.as_ref())
+        .map(|usage| usage.total_tokens)
+        .max()
+}
+
+/// Tools in the listed catalog, from a token-cost or discovery-cost case.
+pub fn catalog_tool_count(report: &ProbeReport) -> Option<u64> {
+    report
+        .cases
+        .iter()
+        .filter(|case| matches!(case.probe, ProbeKind::TokenCost | ProbeKind::DiscoveryCost))
+        .filter_map(|case| case.tool_count)
+        .max()
 }
 
 /// A model-independent estimator feeds the measurement; this is the
@@ -263,6 +299,80 @@ mod tests {
             .overall,
             expected
         );
+    }
+
+    fn report(cases: Vec<CaseReport>) -> ProbeReport {
+        ProbeReport {
+            cases,
+            manifest_sha256: None,
+        }
+    }
+
+    #[test]
+    fn readiness_over_scores_only_the_named_kinds() {
+        let report = report(vec![
+            case(ProbeKind::DiscoveryCost, None),
+            case(ProbeKind::TokenCost, None),
+            case(
+                ProbeKind::LatencyBudget,
+                Some(FailureReason::LatencyBudgetExceeded),
+            ),
+        ]);
+        assert_eq!(readiness(&report).overall, 42);
+        let battery = readiness_over(
+            &report,
+            &[
+                ProbeKind::DiscoveryCost,
+                ProbeKind::TokenCost,
+                ProbeKind::Pagination,
+            ],
+        )
+        .unwrap();
+        assert_eq!(battery.overall, 100);
+        assert_eq!(battery.categories.len(), 1);
+        assert_eq!(battery.categories[0].total, 2);
+        assert_eq!(
+            readiness_over(&report, &[ProbeKind::LatencyBudget])
+                .unwrap()
+                .overall,
+            0
+        );
+    }
+
+    #[test]
+    fn readiness_over_is_none_without_a_matching_case() {
+        let report = report(vec![case(ProbeKind::LatencyBudget, None)]);
+        assert!(readiness_over(&report, &[ProbeKind::DiscoveryCost]).is_none());
+        assert!(readiness_over(&report, &[]).is_none());
+    }
+
+    #[test]
+    fn catalog_measurements_come_from_cases_that_reached_a_verdict() {
+        let usage = |total_tokens| {
+            Some(crate::probe::TokenUsage {
+                total_tokens,
+                per_tool: vec![],
+            })
+        };
+        let mut over_budget = case(
+            ProbeKind::TokenCost,
+            Some(FailureReason::TokenBudgetExceeded),
+        );
+        over_budget.token_usage = usage(566);
+        over_budget.tool_count = Some(12);
+        let mut discovery = case(ProbeKind::DiscoveryCost, None);
+        discovery.tool_count = Some(12);
+        let over_budget = report(vec![discovery, over_budget]);
+        assert_eq!(catalog_tokens(&over_budget), Some(566));
+        assert_eq!(catalog_tool_count(&over_budget), Some(12));
+
+        let mut errored = case(ProbeKind::TokenCost, Some(FailureReason::TransportTimeout));
+        errored.token_usage = usage(9);
+        let mut discovery = case(ProbeKind::DiscoveryCost, None);
+        discovery.tool_count = Some(7);
+        let errored = report(vec![errored, discovery]);
+        assert_eq!(catalog_tokens(&errored), None);
+        assert_eq!(catalog_tool_count(&errored), Some(7));
     }
 
     #[test]

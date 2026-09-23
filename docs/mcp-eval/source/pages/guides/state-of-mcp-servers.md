@@ -4,19 +4,19 @@ How healthy are the MCP servers that agents actually use? This page is produced 
 
 ## The corpus
 
-{{PRODUCT_VERSION}} ships a corpus of **34 public MCP servers** collected across the npm and uvx ecosystems (the reference servers plus the most-downloaded community servers that run without live credentials). Each server was probed with the same generic battery: discovery bounds, token budget, cursor pagination, and declared-surface listing.
+{{PRODUCT_VERSION}} ships a corpus of **33 public MCP servers** collected across the npm and uvx ecosystems (the reference servers plus the most-downloaded community servers that run without live credentials). Each server was probed with the same generic battery: discovery bounds, token budget, cursor pagination, and declared-surface listing.
 
 | Observation | Count |
 | --- | --- |
-| Readiness 100/100 | 33 |
+| Readiness 100/100 | 32 |
 | Readiness below 100 | 1 |
 | Servers that could not complete the battery unaided | many require live credentials or services and are excluded |
 
 ## What the data says
 
-**The catalog tax is universal — and measurable.** Every session pays the full `tools/list` catalog before the first tool call. Measured token budgets across the corpus (deterministic estimate: encoded bytes / 4): the reference `everything` server costs 1,915 tokens per session with 13 tools, `notion` costs 19,057 with 24 tools, `desktop-commander` 15,320 with 26 tools, while `markitdown` costs 68 with one tool. At $3/Mtok, `notion`'s catalog is $0.057 per session — $57 per 1,000 sessions of pure context tax before any useful work happens. `token-cost` is the headline number for anyone running agents at scale.
+**The catalog tax is universal — and measurable.** Every session pays the full `tools/list` catalog before the first tool call. Measured token budgets across the corpus (deterministic estimate: encoded bytes / 4): the reference `everything` server costs 1,915 tokens per session with 13 tools, `notion` costs 19,057 with 24 tools, `desktop-commander` 15,320 with 26 tools, while `markitdown` costs 105 with one tool. The corpus median is 1,186 catalog tokens. At $3/Mtok, `notion`'s catalog is $0.057 per session — $57 per 1,000 sessions of pure context tax before any useful work happens. `token-cost` is the headline number for anyone running agents at scale.
 
-**Perfection is the norm for active servers — which makes the exceptions information-rich.** 33 of 34 servers score 100/100: maintainers who ship coherent schemas, stable error codes, and bounded pagination are already meeting the contract this battery verifies. The single sub-100 score (`postgres`, 75) is the declared-surface defect class: the server advertises surfaces whose listing does not answer — exactly what the `surface-listing` probe exists to catch, and it is invisible to every client that never asks.
+**Perfection is the norm for active servers — which makes the exceptions information-rich.** 32 of 33 servers score 100/100: maintainers who ship coherent schemas, stable error codes, and bounded pagination are already meeting the contract this battery verifies. The single sub-100 score (`postgres`, 75) is the declared-surface defect class: the server advertises surfaces whose listing does not answer — exactly what the `surface-listing` probe exists to catch, and it is invisible to every client that never asks.
 
 **Cursor pagination is where trust breaks.** Servers that paginate tool catalogs must do so without repeating entries and with terminating cursors. The battery treats a re-served page and an unending cursor as distinct, named defects; both were found in the wild while developing the probe.
 
@@ -32,7 +32,7 @@ scripts/corpus/collect.sh          # rebuilds data/readiness-corpus.json
 mcpeval probe --server your-server --format markdown -- your-mcp-server --flags
 ```
 
-Your own score is placed into the same distribution automatically — the corpus ships with the binary, and the readiness line in every report reads *beats N% of observed servers*. Add your server to the corpus by opening a PR with a refreshed `data/readiness-corpus.json` produced by the script above; no special access is required.
+Your own score is placed into the same distribution automatically — the corpus ships with the binary, and every text and markdown report adds a line that scores your cases of the corpus battery and reads *above N, tied with T, below M of K observed servers*. Add your server to the corpus by opening a PR with a refreshed `data/readiness-corpus.json` produced by the script above; no special access is required.
 
 ## Method notes
 

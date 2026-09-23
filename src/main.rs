@@ -78,30 +78,35 @@ fn render_probe_text(
         .map(|category| format!("{}={}/{}", category.name, category.passed, category.total))
         .collect::<Vec<_>>()
         .join(" ");
-    match corpus {
-        Some(corpus) => println!(
-            "{server} readiness {}/100 (beats {}% of observed servers; corpus median {}) {categories}",
-            readiness.overall,
-            corpus.percentile(readiness.overall),
-            corpus.median()
-        ),
-        None => println!("{server} readiness {}/100 {categories}", readiness.overall),
+    println!("{server} readiness {}/100 {categories}", readiness.overall);
+    if let Some(corpus) = corpus {
+        if let Some(battery) = mcpeval::score::readiness_over(report, &corpus.battery) {
+            let placement = corpus.placement(battery.overall);
+            println!(
+                "  corpus battery ({}): {}/100, above {}, tied with {}, below {} of {} observed servers",
+                corpus.battery_label(),
+                battery.overall,
+                placement.above,
+                placement.tied,
+                placement.below,
+                corpus.observations.len()
+            );
+        }
+        if let (Some(tokens), Some(tools)) = (
+            mcpeval::score::catalog_tokens(report),
+            mcpeval::score::catalog_tool_count(report),
+        ) {
+            if let Some(catalog) = corpus.catalog_placement(tokens) {
+                println!(
+                    "  catalog: {tokens} tokens over {tools} tools, lighter than {} of {} observed servers (median {} tokens)",
+                    catalog.lighter_than, catalog.observed, catalog.median_tokens
+                );
+            }
+        }
     }
-    if let (Some(price), Some(usage)) = (price_per_mtok, catalog_tokens(report)) {
+    if let (Some(price), Some(usage)) = (price_per_mtok, mcpeval::score::catalog_tokens(report)) {
         println!("  cost: {}", mcpeval::score::cost_context(usage, price));
     }
-}
-
-/// The catalog-wide token measurement from a token-cost case, when the
-/// battery included one.
-fn catalog_tokens(report: &mcpeval::probe::ProbeReport) -> Option<u64> {
-    report
-        .cases
-        .iter()
-        .filter(|case| case.passed())
-        .filter_map(|case| case.token_usage.as_ref())
-        .map(|usage| usage.total_tokens)
-        .max()
 }
 
 fn main() {

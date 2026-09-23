@@ -15,6 +15,10 @@ fn home() -> std::path::PathBuf {
 }
 
 fn probe(fixture: &str, format: &str) -> std::process::Output {
+    probe_in(&home(), fixture, format)
+}
+
+fn probe_in(home: &std::path::Path, fixture: &str, format: &str) -> std::process::Output {
     Command::new(bin())
         .args([
             "probe",
@@ -26,7 +30,7 @@ fn probe(fixture: &str, format: &str) -> std::process::Output {
             format,
         ])
         .args(["--", "python3", fixture])
-        .env("MCPEVAL_HOME", home())
+        .env("MCPEVAL_HOME", home)
         .output()
         .unwrap()
 }
@@ -41,12 +45,76 @@ fn markdown_report_is_pull_request_ready_and_scored() {
     );
     let body = String::from_utf8(output.stdout).unwrap();
     assert!(body.contains("## mcp-eval report — fixture"));
-    assert!(body.contains("**Readiness: 100/100 —"), "{body}");
-    assert!(body.contains("corpus median 100"), "{body}");
+    assert!(
+        body.contains("**Readiness: 100/100** ![mcpeval]("),
+        "{body}"
+    );
+    assert!(
+        body.contains("\n*Corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100 — above "),
+        "{body}"
+    );
     assert!(body.contains("https://img.shields.io/badge/mcpeval-100%2F100-brightgreen"));
     assert!(body.contains("| literal-status | instruction-fidelity | pass | 1 |"));
     assert!(body.contains("| discovery | 2/2 |"));
     assert!(!body.contains("CANARY"));
+}
+
+#[test]
+fn markdown_report_places_the_battery_and_catalog_against_the_corpus() {
+    let dir = home();
+    std::fs::write(
+        dir.join("corpus.json"),
+        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus",
+            "battery":["discovery-cost","token-cost","pagination","surface-listing"],
+            "observations":[
+                {"server":"a","score":100,"tool_count":3,"catalog_tokens":1},
+                {"server":"b","score":100,"tool_count":90,"catalog_tokens":1000000},
+                {"server":"c","score":75,"tool_count":200,"catalog_tokens":2000000}
+        ]}"#,
+    )
+    .unwrap();
+    let json = probe_in(&dir, CLEAN, "json");
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let token_case = report["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["probe"] == "token-cost")
+        .unwrap();
+    let tokens = token_case["measurements"]["total_tokens"].as_u64().unwrap();
+    let tools = token_case["measurements"]["tool_count"].as_u64().unwrap();
+
+    let output = probe_in(&dir, CLEAN, "markdown");
+    assert!(output.status.success());
+    let body = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        body.contains(
+            "**Readiness: 100/100** ![mcpeval](https://img.shields.io/badge/mcpeval-100%2F100-brightgreen)\n\n\
+             *Corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100 — above 1, tied with 2, below 0 of 3 observed servers.*\n\n"
+        ),
+        "{body}"
+    );
+    assert!(
+        body.contains(&format!(
+            "\n*Catalog: {tokens} tokens over {tools} tools — lighter than 2 of 3 observed servers (median 1000000 tokens).*\n"
+        )),
+        "{body}"
+    );
+
+    // Without measurements in the corpus, the catalog line is omitted.
+    std::fs::write(
+        dir.join("corpus.json"),
+        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus","observations":[
+            {"server":"a","score":100}
+        ]}"#,
+    )
+    .unwrap();
+    let body = String::from_utf8(probe_in(&dir, CLEAN, "markdown").stdout).unwrap();
+    assert!(
+        body.contains("above 0, tied with 1, below 0 of 1 observed servers.*"),
+        "{body}"
+    );
+    assert!(!body.contains("*Catalog:"), "{body}");
 }
 
 #[test]

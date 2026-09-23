@@ -205,25 +205,40 @@ pub fn render_probe_markdown(
     let readiness = crate::score::readiness(report);
     let mut out = String::new();
     out.push_str(&format!("## mcp-eval report — {server}\n\n"));
-    let calibration = corpus.map(|corpus| {
-        format!(
-            " — beats {}% of observed servers (corpus median {})",
-            corpus.percentile(readiness.overall),
-            corpus.median()
-        )
-    });
-    match calibration {
-        Some(context) => out.push_str(&format!(
-            "**Readiness: {}/100{context}** ![mcpeval]({})\n\n",
-            readiness.overall,
-            crate::score::badge_url(readiness.overall)
-        )),
-        None => out.push_str(&format!(
-            "**Readiness: {}/100** ![mcpeval]({})\n\n",
-            readiness.overall,
-            crate::score::badge_url(readiness.overall)
-        )),
-    };
+    out.push_str(&format!(
+        "**Readiness: {}/100** ![mcpeval]({})\n\n",
+        readiness.overall,
+        crate::score::badge_url(readiness.overall)
+    ));
+    if let Some(corpus) = corpus {
+        if let Some(battery) = crate::score::readiness_over(report, &corpus.battery) {
+            let placement = corpus.placement(battery.overall);
+            writeln!(
+                out,
+                "*Corpus battery ({}): {}/100 — above {}, tied with {}, below {} of {} observed servers.*\n",
+                corpus.battery_label(),
+                battery.overall,
+                placement.above,
+                placement.tied,
+                placement.below,
+                corpus.observations.len()
+            )
+            .ok();
+        }
+        if let (Some(tokens), Some(tools)) = (
+            crate::score::catalog_tokens(report),
+            crate::score::catalog_tool_count(report),
+        ) {
+            if let Some(catalog) = corpus.catalog_placement(tokens) {
+                writeln!(
+                    out,
+                    "*Catalog: {tokens} tokens over {tools} tools — lighter than {} of {} observed servers (median {} tokens).*\n",
+                    catalog.lighter_than, catalog.observed, catalog.median_tokens
+                )
+                .ok();
+            }
+        }
+    }
     if !readiness.categories.is_empty() {
         out.push_str("| Category | Passed |\n| --- | --- |\n");
         for category in &readiness.categories {

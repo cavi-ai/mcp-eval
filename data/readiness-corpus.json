@@ -1,142 +1,210 @@
 {
   "schema": "mcpeval.readiness-corpus/v1",
   "source": "readiness battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services are re-run before each release",
+  "battery": [
+    "discovery-cost",
+    "token-cost",
+    "pagination",
+    "surface-listing"
+  ],
   "observations": [
     {
       "server": "postgres",
-      "score": 75
+      "score": 75,
+      "tool_count": 1,
+      "catalog_tokens": 33
     },
     {
       "server": "airbnb",
-      "score": 100
+      "score": 100,
+      "tool_count": 2,
+      "catalog_tokens": 538
     },
     {
       "server": "arxiv",
-      "score": 100
+      "score": 100,
+      "tool_count": 19,
+      "catalog_tokens": 4428
     },
     {
       "server": "browserbase",
-      "score": 100
+      "score": 100,
+      "tool_count": 9,
+      "catalog_tokens": 1334
     },
     {
       "server": "calculator",
-      "score": 100
+      "score": 100,
+      "tool_count": 1,
+      "catalog_tokens": 123
     },
     {
       "server": "context7",
-      "score": 100
+      "score": 100,
+      "tool_count": 2,
+      "catalog_tokens": 1216
     },
     {
       "server": "desktop-commander",
-      "score": 100
+      "score": 100,
+      "tool_count": 26,
+      "catalog_tokens": 15320
     },
     {
       "server": "docker",
-      "score": 100
+      "score": 100,
+      "tool_count": 1,
+      "catalog_tokens": 93
     },
     {
       "server": "docker-mcp",
-      "score": 100
+      "score": 100,
+      "tool_count": 10,
+      "catalog_tokens": 906
     },
     {
       "server": "everything",
-      "score": 100
+      "score": 100,
+      "tool_count": 13,
+      "catalog_tokens": 1915
     },
     {
       "server": "fetch",
-      "score": 100
+      "score": 100,
+      "tool_count": 1,
+      "catalog_tokens": 276
     },
     {
       "server": "filesystem",
-      "score": 100
+      "score": 100,
+      "tool_count": 14,
+      "catalog_tokens": 3246
     },
     {
       "server": "git",
-      "score": 100
+      "score": 100,
+      "tool_count": 12,
+      "catalog_tokens": 1479
     },
     {
       "server": "github",
-      "score": 100
+      "score": 100,
+      "tool_count": 26,
+      "catalog_tokens": 3967
     },
     {
       "server": "kubernetes",
-      "score": 100
+      "score": 100,
+      "tool_count": 23,
+      "catalog_tokens": 5965
     },
     {
       "server": "markitdown",
-      "score": 100
-    },
-    {
-      "server": "mcp-atlassian",
-      "score": 100
+      "score": 100,
+      "tool_count": 1,
+      "catalog_tokens": 105
     },
     {
       "server": "memory",
-      "score": 100
+      "score": 100,
+      "tool_count": 9,
+      "catalog_tokens": 2688
     },
     {
       "server": "mermaid",
-      "score": 100
+      "score": 100,
+      "tool_count": 4,
+      "catalog_tokens": 411
     },
     {
       "server": "notion",
-      "score": 100
+      "score": 100,
+      "tool_count": 24,
+      "catalog_tokens": 19057
     },
     {
       "server": "ollama",
-      "score": 100
+      "score": 100,
+      "tool_count": 9,
+      "catalog_tokens": 775
     },
     {
       "server": "pandoc",
-      "score": 100
+      "score": 100,
+      "tool_count": 1,
+      "catalog_tokens": 1507
     },
     {
       "server": "playwright",
-      "score": 100
+      "score": 100,
+      "tool_count": 33,
+      "catalog_tokens": 3467
     },
     {
       "server": "puppeteer",
-      "score": 100
+      "score": 100,
+      "tool_count": 7,
+      "catalog_tokens": 614
     },
     {
       "server": "searxng",
-      "score": 100
+      "score": 100,
+      "tool_count": 4,
+      "catalog_tokens": 1745
     },
     {
       "server": "sequential-thinking",
-      "score": 100
+      "score": 100,
+      "tool_count": 1,
+      "catalog_tokens": 1160
     },
     {
       "server": "sqlite",
-      "score": 100
+      "score": 100,
+      "tool_count": 10,
+      "catalog_tokens": 1186
     },
     {
       "server": "sqlite-npx",
-      "score": 100
+      "score": 100,
+      "tool_count": 8,
+      "catalog_tokens": 775
     },
     {
       "server": "tavily",
-      "score": 100
+      "score": 100,
+      "tool_count": 5,
+      "catalog_tokens": 1923
     },
     {
       "server": "terraform",
-      "score": 100
+      "score": 100,
+      "tool_count": 10,
+      "catalog_tokens": 1618
     },
     {
       "server": "time",
-      "score": 100
+      "score": 100,
+      "tool_count": 2,
+      "catalog_tokens": 307
     },
     {
       "server": "todoist",
-      "score": 100
+      "score": 100,
+      "tool_count": 5,
+      "catalog_tokens": 408
     },
     {
       "server": "wikipedia-npm",
-      "score": 100
+      "score": 100,
+      "tool_count": 2,
+      "catalog_tokens": 141
     },
     {
       "server": "wikipedia-uvx",
-      "score": 100
+      "score": 100,
+      "tool_count": 7,
+      "catalog_tokens": 1021
     }
   ]
 }

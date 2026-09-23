@@ -55,10 +55,25 @@ or raw error text.
 
 Mutating cases are rejected unless each case names a declared sandbox and the invocation includes `--allow-mutation`. The flag authorizes only manifest-declared cases; it does not turn capture into a mutation capability.
 
-`init` is discovery-only by default: it creates catalog-budget cases without
-calling server tools. Adding `--confirm-read-only` is an operator attestation
-that every candidate empty-argument schema check is read-only; only then can
-`init` call those candidates and add schema-guessability cases.
+`init` writes discovery-cost and token-cost budgets from the measured
+catalog, pagination, protocol negotiation, and surface listing when
+`initialize` declares `resources` or `prompts`. Per-tool cases come from the
+candidates: zero-required tools the server annotates `readOnlyHint: true`,
+plus, with `--confirm-read-only` (an operator attestation that unannotated
+tools are read-only), the unannotated zero-required tools. A tool annotated
+`destructiveHint: true` or `readOnlyHint: false` is never called, with or
+without the attestation. `init` calls up to 20 candidates with `{}` and, for
+each that succeeds, adds schema-guessability, degradation-over-n,
+latency-budget (bound from the measured latency), and output-schema when an
+`outputSchema` is declared, plus one contention and one 1 MB payload-bounds
+case. `--tool <NAME>` (repeatable) restricts the candidates; a name the
+catalog lacks, or one init cannot call (annotated as a writer, required
+arguments, or unattested), is a usage error (exit 2).
+`--dry-run` prints each tool's decision after `initialize` and `tools/list`
+and calls no tool, writes no file, and skips the `--output` existence check. Error honesty, state
+recovery, instruction fidelity, cancellation, sampling, elicitation, resource
+subscription, and completion cases need inputs `init` cannot infer and are
+never scaffolded.
 
 For an eligible promoted finding with empty shaped arguments, `generate` can write a deterministic read-only manifest using the supplemental `degradation-over-n` probe:
 

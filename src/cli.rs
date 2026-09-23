@@ -147,9 +147,19 @@ pub enum Command {
         /// Replace an existing manifest.
         #[arg(long)]
         force: bool,
-        /// Attest that every empty-argument schema check is read-only.
+        /// Attest that every zero-required tool without a readOnlyHint
+        /// annotation is read-only, so it is called and scaffolded too.
+        /// Tools annotated destructiveHint or readOnlyHint=false are never
+        /// called.
         #[arg(long)]
         confirm_read_only: bool,
+        /// Scaffold only this tool; repeat for each tool.
+        #[arg(long = "tool", value_name = "NAME")]
+        tools: Vec<String>,
+        /// Print each tool's decision without calling any tool or writing
+        /// the manifest.
+        #[arg(long)]
+        dry_run: bool,
         /// Streamable HTTP endpoint instead of a stdio command.
         #[arg(long)]
         url: Option<String>,

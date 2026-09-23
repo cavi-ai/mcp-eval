@@ -51,7 +51,8 @@ fn serve(stream: &mut TcpStream, sse: bool, session_required: bool) {
             "serverInfo":{"name":"fixture","version":"1"}
         }),
         "tools/list" => json!({"tools":[{
-            "name":"read_counter","inputSchema":{"type":"object","properties":{}}
+            "name":"read_counter","inputSchema":{"type":"object","properties":{}},
+            "annotations":{"readOnlyHint":true,"destructiveHint":false}
         }]}),
         "tools/call" => json!({"status":"ready","content":[{"type":"text","text":"CANARY raw"}]}),
         _ => json!({}),
@@ -96,7 +97,11 @@ fn exercise(sse: bool) {
     let (endpoint, server) = fixture(sse);
     let mut client = HttpMcpClient::connect(&endpoint, false).unwrap();
     client.initialize().unwrap();
-    assert_eq!(client.list_tools().unwrap(), vec!["read_counter"]);
+    let catalog = client.list_tools_catalog().unwrap();
+    assert_eq!(catalog.tools.len(), 1);
+    assert_eq!(catalog.tools[0].name, "read_counter");
+    assert_eq!(catalog.tools[0].read_only_hint, Some(true));
+    assert_eq!(catalog.tools[0].destructive_hint, Some(false));
     match client.call_tool("read_counter", &json!({})).unwrap() {
         ToolResponse::Success(value) => assert_eq!(value["status"], "ready"),
         ToolResponse::Error { .. } => panic!("fixture returned an error"),

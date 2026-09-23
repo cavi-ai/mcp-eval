@@ -46,7 +46,7 @@ fn init_then_probe_scores_the_demo_server_green() {
     );
     let stdout = String::from_utf8(init.stdout).unwrap();
     assert!(stdout.contains("12 tools"), "{stdout}");
-    assert!(stdout.contains("schema-guessability cases"), "{stdout}");
+    assert!(stdout.contains("schema-guessability 6"), "{stdout}");
 
     let probe = run(
         &dir,

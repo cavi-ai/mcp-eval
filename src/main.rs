@@ -203,27 +203,52 @@ fn run() -> anyhow::Result<()> {
             output,
             force,
             confirm_read_only,
+            tools,
+            dry_run,
             url,
             allow_remote_http,
             cmd,
         } => {
-            let summary = mcpeval::init::run(mcpeval::init::InitOptions {
+            let options = mcpeval::init::InitOptions {
                 server,
                 output,
                 force,
                 confirm_read_only,
+                tools,
                 command: cmd,
                 http_url: url,
                 allow_remote_http,
-            })?;
+            };
+            if dry_run {
+                for (tool, decision) in mcpeval::init::dry_run(&options)? {
+                    println!("{tool}  {}", decision.as_str());
+                }
+                println!("dry run: no tool was called and nothing was written");
+                return Ok(());
+            }
+            let summary = mcpeval::init::run(options)?;
+            let kinds: Vec<String> = summary
+                .kind_counts
+                .iter()
+                .map(|(kind, count)| format!("{} {count}", kind.as_str()))
+                .collect();
+            let skipped = match summary.skipped_by_annotations {
+                0 => String::new(),
+                1 => " (1 tool skipped by annotations)".to_owned(),
+                count => format!(" ({count} tools skipped by annotations)"),
+            };
             println!(
-                "wrote {} ({} tools, {} schema-guessability cases)",
+                "wrote {} ({} tools, {} cases: {}){skipped}",
                 summary.path.display(),
                 summary.tool_count,
-                summary.schema_cases
+                summary.case_count,
+                kinds.join(", ")
             );
             println!(
-                "next: review budgets, add tool-specific fidelity/error probes, then run mcpeval probe"
+                "next: review budgets; add error-honesty, state-recovery, and instruction-fidelity \
+                 cases (they need expected inputs) and cancellation, sampling, elicitation, \
+                 resource-subscription, and completion cases where the server supports them, then \
+                 run mcpeval probe"
             );
             Ok(())
         }

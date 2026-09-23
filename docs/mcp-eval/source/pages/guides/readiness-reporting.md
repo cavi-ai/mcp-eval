@@ -51,7 +51,7 @@ mcpeval explain        # list every fixed reason
     "reason": "discovery-limit-exceeded",
     "hint": "…",
     "detail": {"bound": "max_tools", "limit": 10, "observed": 12},
-    "measurements": {"tool_count": 12, "schema_bytes": 1802}
+    "measurements": {"tool_count": 12, "schema_bytes": 2262}
   }]
 }
 ```

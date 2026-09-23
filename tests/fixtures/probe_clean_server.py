@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 import json
+import os
 import sys
 
 
 mode = sys.argv[1] if len(sys.argv) > 1 else "clean"
+call_log = os.environ.get("PROBE_FIXTURE_CALL_LOG")
 calls = 0
 flaky_calls = 0
 
@@ -31,7 +33,7 @@ for line in sys.stdin:
             "serverInfo": {"name": "probe-fixture", "version": "1"},
         }
     elif method == "tools/list":
-        result = {"tools": [
+        tools = [
             {"name": "read_counter", "description": "read", "inputSchema": {"type": "object", "properties": {}}},
             {"name": "describe_status", "description": "status", "inputSchema": {"type": "object", "properties": {}}},
             {"name": "flaky_read", "description": "retry", "inputSchema": {"type": "object", "properties": {}}},
@@ -39,10 +41,24 @@ for line in sys.stdin:
             {"name": "recover_session", "description": "recover", "inputSchema": {"type": "object", "properties": {}}},
             {"name": "session_status", "description": "validate", "inputSchema": {"type": "object", "properties": {}}},
             {"name": "shared_read", "description": "parallel", "inputSchema": {"type": "object", "properties": {"port": {"type": "integer"}}}},
-        ]}
+        ]
+        if mode == "annotated":
+            hints = {
+                "read_counter": {"readOnlyHint": True},
+                "break_session": {"destructiveHint": True},
+                "recover_session": {"readOnlyHint": False, "destructiveHint": False},
+            }
+            for entry in tools:
+                if entry["name"] in hints:
+                    entry["annotations"] = hints[entry["name"]]
+            tools.append({"name": "lookup", "description": "lookup", "inputSchema": {"type": "object", "properties": {"key": {"type": "string"}}, "required": ["key"]}})
+        result = {"tools": tools}
     elif method == "tools/call":
         calls += 1
         tool = request["params"]["name"]
+        if call_log:
+            with open(call_log, "a") as log:
+                log.write(tool + "\n")
         if tool == "flaky_read":
             flaky_calls += 1
             if flaky_calls <= 2:

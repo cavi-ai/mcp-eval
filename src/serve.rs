@@ -209,12 +209,18 @@ fn run_probe_tool() -> Value {
 fn scaffold_tool() -> Value {
     tool(
         "scaffold",
-        "Introspect a live MCP server's tool catalog and derive a starter \
-         manifest: discovery/token budgets from measured sizes plus \
-         schema-guessability cases for tools observed to answer naive \
-         read-only calls. Returns the manifest JSON; nothing is written to \
-         disk. Pass `confirm_read_only` true to attest the candidate tools \
-         are read-only.",
+        "Introspect a live MCP server and derive a starter manifest: \
+         discovery/token budgets from measured sizes, catalog pagination, \
+         protocol negotiation, and surface listing when resources or \
+         prompts are declared. Zero-required tools annotated readOnlyHint \
+         are candidates; with `confirm_read_only` true (an attestation that \
+         unannotated tools are read-only) unannotated zero-required tools \
+         are too. Tools annotated destructiveHint or readOnlyHint=false are \
+         never called. Every candidate observed to answer a naive `{}` call \
+         gets schema-guessability, degradation-over-n, latency-budget (from \
+         its measured latency), and output-schema when declared, plus one \
+         contention and one payload-bounds case. Returns the manifest JSON; \
+         nothing is written to disk.",
         Some(json!({
             "type": "object",
             "properties": {
@@ -230,7 +236,7 @@ fn scaffold_tool() -> Value {
                 },
                 "confirm_read_only": {
                     "type": "boolean",
-                    "description": "Attest that every empty-argument schema check targets read-only tools."
+                    "description": "Attest that every zero-required tool without a readOnlyHint annotation is read-only, so it is called and scaffolded too."
                 }
             }
         })),

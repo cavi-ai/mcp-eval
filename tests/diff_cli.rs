@@ -31,8 +31,8 @@ fn write_manifest(dir: &std::path::Path) -> String {
         r#"{
           "version": 1,
           "probes": [
-            {"id":"discovery-budget","probe":"discovery-cost","access":"read_only","max_tools":20,"max_schema_bytes":2000},
-            {"id":"token-budget","probe":"token-cost","access":"read_only","max_total_tokens":500},
+            {"id":"discovery-budget","probe":"discovery-cost","access":"read_only","max_tools":20,"max_schema_bytes":4000},
+            {"id":"token-budget","probe":"token-cost","access":"read_only","max_total_tokens":1000},
             {"id":"describe_status-guessable","probe":"schema-guessability","tool":"describe_status","access":"read_only","arguments":{}},
             {"id":"catalog-pagination","probe":"pagination","access":"read_only","max_pages":5}
           ]

@@ -66,12 +66,21 @@ pub struct ToolDefinition {
     /// The tool's declared `outputSchema`, when present. Structural
     /// metadata only; never persisted.
     pub output_schema: Option<Value>,
+    /// The `readOnlyHint` and `destructiveHint` tool annotations, when
+    /// declared as booleans. Structural metadata only; never persisted.
+    pub read_only_hint: Option<bool>,
+    pub destructive_hint: Option<bool>,
 }
 
 impl ToolDefinition {
     pub fn declared_output_schema(&self) -> Option<&Value> {
         self.output_schema.as_ref()
     }
+}
+
+/// A boolean hint from a `tools/list` entry's `annotations` object.
+pub(crate) fn annotation_hint(entry: &Value, hint: &str) -> Option<bool> {
+    entry.get("annotations")?.get(hint)?.as_bool()
 }
 
 #[derive(Debug)]
@@ -328,6 +337,8 @@ impl McpClient {
                         .get("outputSchema")
                         .filter(|schema| schema.is_object())
                         .cloned(),
+                    read_only_hint: annotation_hint(tool, "readOnlyHint"),
+                    destructive_hint: annotation_hint(tool, "destructiveHint"),
                 })
             })
             .collect::<anyhow::Result<Vec<_>>>()?;

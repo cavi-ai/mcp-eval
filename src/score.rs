@@ -249,4 +249,26 @@ mod tests {
         assert!(badge_url(49).ends_with("red"));
         assert!(badge_url(0).ends_with("red"));
     }
+
+    #[test]
+    fn every_probe_kind_is_weighted_in_exactly_one_category() {
+        use clap::ValueEnum;
+        for kind in ProbeKind::value_variants() {
+            let categories: Vec<&str> = WEIGHTS
+                .iter()
+                .filter(|(_, _, kinds)| kinds.contains(kind))
+                .map(|(name, _, _)| *name)
+                .collect();
+            assert_eq!(categories.len(), 1, "{} in {categories:?}", kind.as_str());
+        }
+    }
+
+    #[test]
+    fn cli_probe_names_match_report_labels() {
+        use clap::ValueEnum;
+        for kind in ProbeKind::value_variants() {
+            let value = kind.to_possible_value().unwrap();
+            assert_eq!(value.get_name(), kind.as_str());
+        }
+    }
 }

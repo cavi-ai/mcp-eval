@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "probes": [
+    {"id": "catalog-discovery", "probe": "discovery-cost", "access": "read_only", "max_tools": 50, "max_schema_bytes": 200000},
+    {"id": "catalog-pages", "probe": "pagination", "access": "read_only", "max_pages": 3}
+  ]
+}

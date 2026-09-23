@@ -125,9 +125,10 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
 
 `--format sarif` emits a SARIF 2.1.0 document for GitHub code scanning:
 upload it (`github/codeql-action/upload-sarif` or the `code-scanning` API)
-and every failing case appears as an inline pull-request annotation with its
-fixed reason and remediation hint — the red gate lands on the diff, not in a
-log.
+and every failing case becomes a code-scanning alert on its line in the
+manifest, with its fixed reason and remediation hint. Run it from the
+repository root so the manifest path resolves; each server gets its own
+code-scanning category.
 
 The command exits zero only when every selected case passes. Summaries contain
 case IDs, probe kinds, attempt counts, first-failure positions, and fixed
@@ -258,9 +259,10 @@ the agent loop.
 ## Gating against a baseline
 
 `mcpeval diff` is the time axis that `compare` is the space axis of: it
-compares two committed `mcpeval.probe-report/v1` documents — the baseline
-and the current run — and classifies every case as **regressed**, **fixed**,
-or **unchanged**, matching cases by id and probe kind. Readiness moves with
+compares two committed `mcpeval.probe-report/v1` documents of one server —
+the baseline and the current run — and classifies every case as
+**regressed**, **fixed**, **changed** (still failing, for a different
+reason), or **unchanged**, matching cases by id and probe kind. Readiness moves with
 the verdicts; measurement movement (catalog tokens, slowest latency) is
 reported per case.
 
@@ -268,11 +270,14 @@ reported per case.
 mcpeval diff baseline.json report.json
 # catalog-pagination         REGRESSED pagination-stalled-cursor
 # readiness  100 → 85
-# 1 regressed, 0 fixed, 3 unchanged, 0 removed, 0 added
+# 1 regressed, 0 fixed, 0 changed, 3 unchanged, 0 removed, 0 added
 
 mcpeval diff baseline.json report.json --fail-on-regression
 # exits non-zero when any case regressed; fixes and manifest growth are
 # informational, because adding a case is an improvement, not a drift
+
+mcpeval diff baseline.json report.json --fail-on-change
+# exits non-zero when a failing case now fails for a different reason
 
 mcpeval diff baseline.json report.json --format json
 # versioned, deterministic mcpeval.probe-diff/v1 document — safe to

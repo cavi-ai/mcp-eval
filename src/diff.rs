@@ -1,6 +1,6 @@
 //! Compare two committed `mcpeval.probe-report/v1` documents — the
 //! committed baseline and the current run — and classify every case as
-//! regressed, fixed, or unchanged. Unlike `compare` (the space axis:
+//! regressed, fixed, changed, or unchanged. Unlike `compare` (the space axis:
 //! several servers under one manifest), `diff` is the time axis: it gates
 //! on regressions so a CI job can fail when the battery moves backward.
 //!
@@ -29,7 +29,9 @@ pub enum Verdict {
     Regressed,
     /// Failed in the baseline, passes now.
     Fixed,
-    /// Same verdict in both documents.
+    /// Fails in both documents, for a different reason.
+    Changed,
+    /// Same verdict and reason in both documents.
     Unchanged,
 }
 
@@ -56,8 +58,8 @@ pub struct Diff {
     pub missing: Vec<String>,
     /// Case IDs present only in the current run.
     pub added: Vec<String>,
-    /// Measurement movement for the catalog: (baseline, current) when at
-    /// least one side carries it on a token-cost case.
+    /// Measurement movement for the catalog: (baseline, current) when both
+    /// sides carry it on a token-cost case.
     pub total_tokens: Option<(u64, u64)>,
 }
 
@@ -73,6 +75,20 @@ impl Diff {
         self.cases
             .iter()
             .filter(|case| case.verdict == Verdict::Fixed)
+            .count()
+    }
+
+    pub fn changed(&self) -> usize {
+        self.cases
+            .iter()
+            .filter(|case| case.verdict == Verdict::Changed)
+            .count()
+    }
+
+    pub fn unchanged(&self) -> usize {
+        self.cases
+            .iter()
+            .filter(|case| case.verdict == Verdict::Unchanged)
             .count()
     }
 
@@ -128,16 +144,14 @@ pub fn diff(baseline: &ProbeReport, current: &ProbeReport) -> Diff {
         let verdict = match (baseline_case.reason, current_case.reason) {
             (None, Some(_)) => Verdict::Regressed,
             (Some(_), None) => Verdict::Fixed,
+            (Some(baseline_reason), Some(current_reason)) if baseline_reason != current_reason => {
+                Verdict::Changed
+            }
             (None, None) | (Some(_), Some(_)) => Verdict::Unchanged,
         };
         let tokens = match (token_usage(baseline_case), token_usage(current_case)) {
-            (Some(baseline_usage), Some(current_usage)) => {
-                Some((baseline_usage.total_tokens, current_usage.total_tokens))
-            }
-            (Some(baseline_usage), None) | (None, Some(baseline_usage)) => {
-                Some((baseline_usage.total_tokens, baseline_usage.total_tokens))
-            }
-            (None, None) => None,
+            (Some(b), Some(c)) => Some((b.total_tokens, c.total_tokens)),
+            _ => None,
         };
         if current_case.probe == crate::manifest::ProbeKind::TokenCost {
             total_tokens = tokens;
@@ -150,10 +164,7 @@ pub fn diff(baseline: &ProbeReport, current: &ProbeReport) -> Diff {
                 .reason
                 .map(|reason| reason.as_str().to_owned()),
             current_reason: current_case.reason.map(|reason| reason.as_str().to_owned()),
-            total_tokens: match (token_usage(baseline_case), token_usage(current_case)) {
-                (Some(b), Some(c)) => Some((b.total_tokens, c.total_tokens)),
-                _ => None,
-            },
+            total_tokens: tokens,
             latency_ms: match (baseline_case.latency_ms, current_case.latency_ms) {
                 (Some(b), Some(c)) => Some((b, c)),
                 _ => None,
@@ -188,8 +199,14 @@ pub fn diff(baseline: &ProbeReport, current: &ProbeReport) -> Diff {
     }
 }
 
+/// A loaded report document: the server label it names and its cases.
+pub struct Document {
+    pub server: Option<String>,
+    pub report: ProbeReport,
+}
+
 /// Load a report document from a path or stdin (`-`).
-pub fn load_document(document: &Path) -> anyhow::Result<ProbeReport> {
+pub fn load_document(document: &Path) -> anyhow::Result<Document> {
     let body = if document.as_os_str() == "-" {
         use std::io::Read;
         let mut buffer = String::new();
@@ -201,7 +218,26 @@ pub fn load_document(document: &Path) -> anyhow::Result<ProbeReport> {
     };
     let parsed: serde_json::Value =
         serde_json::from_str(&body).context("report document is not valid JSON")?;
-    ProbeReport::from_json_document(&parsed).context("not a usable probe report")
+    let report = ProbeReport::from_json_document(&parsed).context("not a usable probe report")?;
+    let server = parsed
+        .get("server")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
+    Ok(Document { server, report })
+}
+
+/// A diff is the time axis of one server: reports from two different
+/// servers belong to `compare`, and diffing them would gate on noise.
+pub fn ensure_same_server(baseline: &Document, current: &Document) -> anyhow::Result<()> {
+    if let (Some(baseline), Some(current)) = (&baseline.server, &current.server) {
+        if baseline != current {
+            bail!(
+                "baseline is for server `{baseline}` but current is for server `{current}`; \
+                 diff compares one server over time (use `compare` across servers)"
+            );
+        }
+    }
+    Ok(())
 }
 
 pub fn run(
@@ -211,7 +247,8 @@ pub fn run(
 ) -> anyhow::Result<String> {
     let baseline = load_document(baseline_path)?;
     let current = load_document(current_path)?;
-    let outcome = diff(&baseline, &current);
+    ensure_same_server(&baseline, &current)?;
+    let outcome = diff(&baseline.report, &current.report);
     let rendered = render(&outcome);
     if fail_on_regression && outcome.gated() {
         print!("{rendered}");
@@ -243,6 +280,7 @@ fn verdict_label(verdict: &Verdict) -> &'static str {
     match verdict {
         Verdict::Regressed => "regressed",
         Verdict::Fixed => "fixed",
+        Verdict::Changed => "changed",
         Verdict::Unchanged => "unchanged",
     }
 }
@@ -259,11 +297,8 @@ pub fn to_json(outcome: &Diff) -> serde_json::Value {
         "summary": {
             "regressed": outcome.regressed(),
             "fixed": outcome.fixed(),
-            "unchanged": outcome
-                .cases
-                .iter()
-                .filter(|case| case.verdict == Verdict::Unchanged)
-                .count(),
+            "changed": outcome.changed(),
+            "unchanged": outcome.unchanged(),
             "removed": outcome.missing.len(),
             "added": outcome.added.len(),
         },
@@ -308,6 +343,11 @@ pub fn render(outcome: &Diff) -> String {
                 format!("REGRESSED {reason}")
             }
             Verdict::Fixed => "fixed".to_string(),
+            Verdict::Changed => format!(
+                "CHANGED {} → {}",
+                case.baseline_reason.as_deref().unwrap_or("failed"),
+                case.current_reason.as_deref().unwrap_or("failed")
+            ),
             Verdict::Unchanged => "unchanged".to_string(),
         };
         let measurement = match (&case.total_tokens, &case.latency_ms) {
@@ -339,14 +379,11 @@ pub fn render(outcome: &Diff) -> String {
         outcome.baseline_score, outcome.current_score
     ));
     out.push_str(&format!(
-        "{} regressed, {} fixed, {} unchanged, {} removed, {} added\n",
+        "{} regressed, {} fixed, {} changed, {} unchanged, {} removed, {} added\n",
         outcome.regressed(),
         outcome.fixed(),
-        outcome
-            .cases
-            .iter()
-            .filter(|case| case.verdict == Verdict::Unchanged)
-            .count(),
+        outcome.changed(),
+        outcome.unchanged(),
         outcome.missing.len(),
         outcome.added.len()
     ));
@@ -369,6 +406,7 @@ pub fn render_markdown(outcome: &Diff) -> String {
                 format!("**regressed** (`{reason}`)")
             }
             Verdict::Fixed => "fixed".to_string(),
+            Verdict::Changed => "**changed**".to_string(),
             Verdict::Unchanged => "unchanged".to_string(),
         };
         let baseline_cell = case
@@ -393,9 +431,10 @@ pub fn render_markdown(outcome: &Diff) -> String {
         out.push_str(&format!("| {id} | added | — | pass |\n"));
     }
     out.push_str(&format!(
-        "\n{} regressed, {} fixed, {} removed, {} added. *Deterministic diff of share-safe report documents; no payloads or error prose are included.*\n",
+        "\n{} regressed, {} fixed, {} changed, {} removed, {} added. *Deterministic diff of share-safe report documents; no payloads or error prose are included.*\n",
         outcome.regressed(),
         outcome.fixed(),
+        outcome.changed(),
         outcome.missing.len(),
         outcome.added.len()
     ));
@@ -461,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn same_verdict_with_different_reason_is_unchanged() {
+    fn failing_for_a_different_reason_is_changed_not_regressed() {
         let baseline = ProbeReport {
             cases: vec![case(
                 "a",
@@ -477,8 +516,15 @@ mod tests {
             )],
         };
         let outcome = diff(&baseline, &current);
-        assert_eq!(outcome.cases[0].verdict, Verdict::Unchanged);
+        assert_eq!(outcome.cases[0].verdict, Verdict::Changed);
+        assert_eq!(outcome.changed(), 1);
         assert!(!outcome.gated());
+        assert!(render(&outcome)
+            .contains("CHANGED pagination-duplicate-tool → pagination-stalled-cursor"));
+        assert_eq!(to_json(&outcome)["cases"][0]["verdict"], "changed");
+
+        let same = diff(&baseline, &baseline);
+        assert_eq!(same.cases[0].verdict, Verdict::Unchanged);
     }
 
     #[test]
@@ -537,5 +583,26 @@ mod tests {
         assert_eq!(outcome.total_tokens, Some((100, 260)));
         assert_eq!(outcome.cases[0].total_tokens, Some((100, 260)));
         assert!(render(&outcome).contains("+160"));
+    }
+
+    #[test]
+    fn a_one_sided_token_measurement_reports_no_movement() {
+        let mut baseline_case = case("t", crate::manifest::ProbeKind::TokenCost, None);
+        baseline_case.token_usage = Some(TokenUsage {
+            total_tokens: 100,
+            per_tool: vec![],
+        });
+        let current_case = case("t", crate::manifest::ProbeKind::TokenCost, None);
+        let outcome = diff(
+            &ProbeReport {
+                cases: vec![baseline_case],
+            },
+            &ProbeReport {
+                cases: vec![current_case],
+            },
+        );
+        assert_eq!(outcome.total_tokens, None);
+        assert_eq!(outcome.cases[0].total_tokens, None);
+        assert!(!render(&outcome).contains("tok"));
     }
 }

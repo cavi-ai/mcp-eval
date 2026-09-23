@@ -42,7 +42,7 @@ Gate the current run against the baseline with `mcpeval diff`:
         run: mcpeval diff mcp-eval.baseline.json current.json --fail-on-regression
 ```
 
-The diff classifies every case as regressed, fixed, or unchanged (matched by case id and probe kind), prints the readiness movement, and exits non-zero only for regressions — fixes and added cases are informational, since manifest growth is deliberate. `--format json` emits a deterministic `mcpeval.probe-diff/v1` document; `--format markdown` renders a pull-request-ready table. Without `--fail-on-regression` the diff is informational and always exits zero.
+The diff classifies every case as regressed, fixed, changed (still failing, for a different reason), or unchanged (matched by case id and probe kind), prints the readiness movement, and exits non-zero only for regressions — fixes and added cases are informational, since manifest growth is deliberate. Add `--fail-on-change` to also gate on changed failure reasons. Both documents must name the same server. `--format json` emits a deterministic `mcpeval.probe-diff/v1` document; `--format markdown` renders a pull-request-ready table. Without `--fail-on-regression` the diff is informational and always exits zero.
 
 Regenerate the baseline deliberately and review the diff in a pull request — never regenerate it inside CI, or the gate gates nothing.
 

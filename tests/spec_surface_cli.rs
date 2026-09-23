@@ -266,3 +266,52 @@ fn broken_personalities_fail_the_new_probes_via_the_demo() {
         );
     }
 }
+
+#[test]
+fn probe_flag_selects_each_spec_surface_kind() {
+    let dir = home();
+    let manifest = dir.join("m.json");
+    std::fs::write(
+        &manifest,
+        r#"{"version":1,"probes":[
+            {"id":"negotiates","probe":"protocol-negotiation","access":"read_only","bogus_version":"1999-12-31"},
+            {"id":"samples","probe":"sampling","tool":"sampled_read","access":"read_only","arguments":{},"max_requests":3},
+            {"id":"elicits","probe":"elicitation","tool":"elicited_read","access":"read_only","arguments":{},"max_requests":3,"respond":"decline"},
+            {"id":"subscribes","probe":"resource-subscription","access":"read_only","uri":"demo://status","trigger_tool":"publish_status","trigger_arguments":{},"max_wait_seconds":3}
+        ]}"#,
+    )
+    .unwrap();
+    for (kind, id) in [
+        ("protocol-negotiation", "negotiates"),
+        ("sampling", "samples"),
+        ("elicitation", "elicits"),
+        ("resource-subscription", "subscribes"),
+    ] {
+        let output = Command::new(bin())
+            .args([
+                "probe",
+                "--server",
+                "demo",
+                "--manifest",
+                manifest.to_str().unwrap(),
+                "--probe",
+                kind,
+                "--format",
+                "json",
+            ])
+            .args(["--", demo()])
+            .env("MCPEVAL_HOME", &dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "--probe {kind}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        let cases = report["cases"].as_array().unwrap();
+        assert_eq!(cases.len(), 1, "--probe {kind} ran {cases:?}");
+        assert_eq!(cases[0]["id"], id);
+        assert_eq!(cases[0]["probe"], kind);
+    }
+}

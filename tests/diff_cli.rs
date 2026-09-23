@@ -270,3 +270,87 @@ fn diff_markdown_renders_the_movement_table() {
     );
     assert!(!stdout.contains("CANARY"), "{stdout}");
 }
+
+#[test]
+fn diff_reports_a_changed_failure_mode_and_gates_it_on_request() {
+    let dir = home();
+    let manifest = write_manifest(&dir);
+    let baseline_path = dir.join("duplicate.json");
+    std::fs::write(
+        &baseline_path,
+        probe_json(&dir, &manifest, Some("duplicate-page")),
+    )
+    .unwrap();
+    let current_path = dir.join("stalled.json");
+    std::fs::write(
+        &current_path,
+        probe_json(&dir, &manifest, Some("stalled-cursor")),
+    )
+    .unwrap();
+    let baseline = baseline_path.to_str().unwrap();
+    let current = current_path.to_str().unwrap();
+
+    let informational = run(&dir, &["diff", baseline, current, "--fail-on-regression"]);
+    assert!(informational.status.success());
+    let stdout = String::from_utf8(informational.stdout).unwrap();
+    assert!(
+        stdout.contains("CHANGED pagination-duplicate-tool → pagination-stalled-cursor"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("0 regressed, 0 fixed, 1 changed"),
+        "{stdout}"
+    );
+
+    let gated = run(&dir, &["diff", baseline, current, "--fail-on-change"]);
+    assert!(!gated.status.success());
+
+    let json = run(&dir, &["diff", baseline, current, "--format", "json"]);
+    let document: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    assert_eq!(document["summary"]["changed"], 1);
+    let changed = document["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["id"] == "catalog-pagination")
+        .unwrap();
+    assert_eq!(changed["verdict"], "changed");
+    assert_eq!(changed["baseline_reason"], "pagination-duplicate-tool");
+    assert_eq!(changed["current_reason"], "pagination-stalled-cursor");
+
+    let markdown = run(&dir, &["diff", baseline, current, "--format", "markdown"]);
+    let body = String::from_utf8(markdown.stdout).unwrap();
+    assert!(
+        body.contains("| catalog-pagination | **changed** |"),
+        "{body}"
+    );
+}
+
+#[test]
+fn diff_refuses_reports_from_different_servers() {
+    let dir = home();
+    let manifest = write_manifest(&dir);
+    let baseline_path = dir.join("baseline.json");
+    std::fs::write(&baseline_path, probe_json(&dir, &manifest, None)).unwrap();
+    let mut other: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&baseline_path).unwrap()).unwrap();
+    other["server"] = "staging".into();
+    let other_path = dir.join("other.json");
+    std::fs::write(&other_path, serde_json::to_vec(&other).unwrap()).unwrap();
+
+    let output = run(
+        &dir,
+        &[
+            "diff",
+            baseline_path.to_str().unwrap(),
+            other_path.to_str().unwrap(),
+        ],
+    );
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(
+        stderr.contains("`demo`") && stderr.contains("`staging`"),
+        "{stderr}"
+    );
+}

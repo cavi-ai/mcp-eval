@@ -52,6 +52,94 @@ fn sarif_format_is_emitted_by_the_cli() {
 }
 
 #[test]
+fn sarif_results_are_located_at_the_failing_case_line_of_the_manifest() {
+    let dir = home();
+    std::fs::create_dir_all(dir.join("ci")).unwrap();
+    std::fs::write(
+        dir.join("ci").join("mcp eval.json"),
+        "{\"version\":1,\"probes\":[\n  {\"id\":\"d\",\"probe\":\"discovery-cost\",\"access\":\"read_only\",\"max_tools\":50,\"max_schema_bytes\":200000},\n  {\"id\":\"p\",\"probe\":\"pagination\",\"access\":\"read_only\",\"max_pages\":2}\n]}\n",
+    )
+    .unwrap();
+    let probe = |manifest: &str, format: &str| {
+        Command::new(bin())
+            .args([
+                "probe",
+                "--server",
+                "demo",
+                "--manifest",
+                manifest,
+                "--format",
+                format,
+            ])
+            .args(["--", demo(), "--broken", "stalled-cursor"])
+            .current_dir(&dir)
+            .env("MCPEVAL_HOME", &dir)
+            .output()
+            .unwrap()
+    };
+    let pagination_result = |stdout: &[u8]| {
+        let sarif: serde_json::Value = serde_json::from_slice(stdout).unwrap();
+        let run = &sarif["runs"][0];
+        assert_eq!(run["automationDetails"]["id"], "mcpeval/demo/");
+        run["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|result| result["ruleId"] == "pagination")
+            .cloned()
+            .expect("pagination result")
+    };
+    let assert_located = |result: &serde_json::Value| {
+        let location = &result["locations"][0]["physicalLocation"];
+        assert_eq!(location["artifactLocation"]["uri"], "ci/mcp%20eval.json");
+        assert_eq!(location["region"]["startLine"], 3);
+        assert_eq!(result["partialFingerprints"]["mcpevalCaseId"], "demo/p");
+    };
+
+    let relative = probe("ci/mcp eval.json", "sarif");
+    assert!(!relative.status.success());
+    assert_located(&pagination_result(&relative.stdout));
+
+    let absolute_path = dir.join("ci").join("mcp eval.json");
+    let absolute = probe(absolute_path.to_str().unwrap(), "sarif");
+    assert_located(&pagination_result(&absolute.stdout));
+
+    let json = probe("ci/mcp eval.json", "json");
+    std::fs::write(dir.join("report.json"), &json.stdout).unwrap();
+    let rerendered = Command::new(bin())
+        .args([
+            "report",
+            "report.json",
+            "--format",
+            "sarif",
+            "--manifest",
+            "ci/mcp eval.json",
+        ])
+        .current_dir(&dir)
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(!rerendered.status.success());
+    assert_located(&pagination_result(&rerendered.stdout));
+
+    // Without the manifest on disk the result still names the default
+    // manifest file; only the line region is omitted.
+    let default = Command::new(bin())
+        .args(["report", "report.json", "--format", "sarif"])
+        .current_dir(&dir)
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    let result = pagination_result(&default.stdout);
+    let location = &result["locations"][0]["physicalLocation"];
+    assert_eq!(
+        location["artifactLocation"]["uri"],
+        "mcp-eval.manifest.json"
+    );
+    assert!(location.get("region").is_none(), "{location}");
+}
+
+#[test]
 fn report_rerenders_a_committed_document_without_any_server() {
     let dir = home();
     let manifest = write_manifest(

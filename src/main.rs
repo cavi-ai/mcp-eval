@@ -3,6 +3,24 @@ mod cli;
 use anyhow::Context;
 use clap::Parser;
 
+fn render_sarif(
+    server: &str,
+    report: &mcpeval::probe::ProbeReport,
+    manifest: &std::path::Path,
+) -> String {
+    let cwd = std::env::current_dir().ok();
+    let uri = mcpeval::sarif::manifest_uri(manifest, cwd.as_deref());
+    let text = std::fs::read_to_string(manifest).ok();
+    mcpeval::sarif::render_sarif(
+        server,
+        report,
+        &mcpeval::sarif::ManifestSource {
+            uri: &uri,
+            text: text.as_deref(),
+        },
+    )
+}
+
 fn render_probe_text(
     server: &str,
     report: &mcpeval::probe::ProbeReport,
@@ -96,7 +114,7 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Probe {
             server,
             manifest,
-            probe,
+            probe: selected_probe,
             format,
             brief,
             price_per_mtok,
@@ -105,35 +123,12 @@ fn main() -> anyhow::Result<()> {
             allow_remote_http,
             cmd,
         } => {
-            let selected_probe = probe.map(|probe| match probe {
-                cli::ProbeSelection::Contention => mcpeval::manifest::ProbeKind::Contention,
-                cli::ProbeSelection::ErrorHonesty => mcpeval::manifest::ProbeKind::ErrorHonesty,
-                cli::ProbeSelection::StateRecovery => mcpeval::manifest::ProbeKind::StateRecovery,
-                cli::ProbeSelection::DiscoveryCost => mcpeval::manifest::ProbeKind::DiscoveryCost,
-                cli::ProbeSelection::TokenCost => mcpeval::manifest::ProbeKind::TokenCost,
-                cli::ProbeSelection::SchemaGuessability => {
-                    mcpeval::manifest::ProbeKind::SchemaGuessability
-                }
-                cli::ProbeSelection::DegradationOverN => {
-                    mcpeval::manifest::ProbeKind::DegradationOverN
-                }
-                cli::ProbeSelection::InstructionFidelity => {
-                    mcpeval::manifest::ProbeKind::InstructionFidelity
-                }
-                cli::ProbeSelection::LatencyBudget => mcpeval::manifest::ProbeKind::LatencyBudget,
-                cli::ProbeSelection::Pagination => mcpeval::manifest::ProbeKind::Pagination,
-                cli::ProbeSelection::PayloadBounds => mcpeval::manifest::ProbeKind::PayloadBounds,
-                cli::ProbeSelection::SurfaceListing => mcpeval::manifest::ProbeKind::SurfaceListing,
-                cli::ProbeSelection::OutputSchema => mcpeval::manifest::ProbeKind::OutputSchema,
-                cli::ProbeSelection::Cancellation => mcpeval::manifest::ProbeKind::Cancellation,
-                cli::ProbeSelection::Completion => mcpeval::manifest::ProbeKind::Completion,
-            });
             let full_battery = selected_probe.is_none();
             let mut store = mcpeval::store::Store::open(None)?;
             let report = mcpeval::probe::run(
                 mcpeval::probe::ProbeOptions {
                     server: server.clone(),
-                    manifest_path: manifest,
+                    manifest_path: manifest.clone(),
                     manifest_inline: None,
                     selected_probe,
                     selected_case: None,
@@ -169,7 +164,7 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
                 cli::ProbeFormat::Sarif => {
-                    println!("{}", mcpeval::sarif::render_sarif(&server, &report));
+                    println!("{}", render_sarif(&server, &report, &manifest));
                 }
                 cli::ProbeFormat::Text => {
                     render_probe_text(&server, &report, brief, corpus.as_ref(), price_per_mtok)
@@ -292,13 +287,15 @@ fn main() -> anyhow::Result<()> {
             baseline,
             current,
             fail_on_regression,
+            fail_on_change,
             format,
         } => {
-            let baseline_report = mcpeval::diff::load_document(&baseline)
+            let baseline_document = mcpeval::diff::load_document(&baseline)
                 .with_context(|| format!("loading baseline {}", baseline.display()))?;
-            let current_report = mcpeval::diff::load_document(&current)
+            let current_document = mcpeval::diff::load_document(&current)
                 .with_context(|| format!("loading current {}", current.display()))?;
-            let outcome = mcpeval::diff::diff(&baseline_report, &current_report);
+            mcpeval::diff::ensure_same_server(&baseline_document, &current_document)?;
+            let outcome = mcpeval::diff::diff(&baseline_document.report, &current_document.report);
             match format {
                 cli::DiffFormat::Json => {
                     println!(
@@ -313,7 +310,8 @@ fn main() -> anyhow::Result<()> {
                     print!("{}", mcpeval::diff::render(&outcome));
                 }
             }
-            if fail_on_regression && outcome.gated() {
+            if (fail_on_regression && outcome.gated()) || (fail_on_change && outcome.changed() > 0)
+            {
                 std::process::exit(1);
             }
             Ok(())
@@ -358,6 +356,7 @@ fn main() -> anyhow::Result<()> {
         cli::Command::Report {
             document,
             format,
+            manifest,
             brief,
             price_per_mtok,
         } => {
@@ -388,7 +387,7 @@ fn main() -> anyhow::Result<()> {
                     mcpeval::report::render_probe_markdown(&server, &report, None, price_per_mtok)
                 ),
                 cli::ReportFormat::Sarif => {
-                    println!("{}", mcpeval::sarif::render_sarif(&server, &report));
+                    println!("{}", render_sarif(&server, &report, &manifest));
                 }
             }
             if !report.passed() {

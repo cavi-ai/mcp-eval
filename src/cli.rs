@@ -7,25 +7,6 @@ pub enum FindingsFormat {
     Json,
 }
 
-#[derive(Clone, Copy, Debug, ValueEnum)]
-pub enum ProbeSelection {
-    Contention,
-    ErrorHonesty,
-    StateRecovery,
-    DiscoveryCost,
-    TokenCost,
-    SchemaGuessability,
-    DegradationOverN,
-    InstructionFidelity,
-    LatencyBudget,
-    Pagination,
-    PayloadBounds,
-    SurfaceListing,
-    OutputSchema,
-    Cancellation,
-    Completion,
-}
-
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum ProbeFormat {
     /// Human-readable one-line-per-case summary.
@@ -119,7 +100,7 @@ pub enum Command {
         manifest: std::path::PathBuf,
         /// Run only one probe kind.
         #[arg(long, value_enum)]
-        probe: Option<ProbeSelection>,
+        probe: Option<mcpeval::manifest::ProbeKind>,
         /// Output format for the probe report.
         #[arg(long, value_enum, default_value_t = ProbeFormat::Text)]
         format: ProbeFormat,
@@ -216,6 +197,10 @@ pub enum Command {
         /// Exit non-zero when any case regressed.
         #[arg(long)]
         fail_on_regression: bool,
+        /// Exit non-zero when any case fails for a different reason than in
+        /// the baseline.
+        #[arg(long)]
+        fail_on_change: bool,
         /// Output format for the diff.
         #[arg(long, value_enum, default_value_t = DiffFormat::Text)]
         format: DiffFormat,
@@ -248,6 +233,10 @@ pub enum Command {
         /// Output format for the re-rendered report.
         #[arg(long, value_enum, default_value_t = ReportFormat::Text)]
         format: ReportFormat,
+        /// Manifest the report was produced from; SARIF results are located
+        /// at its failing cases.
+        #[arg(long, default_value = "mcp-eval.manifest.json")]
+        manifest: std::path::PathBuf,
         /// Suppress remediation hints in text output.
         #[arg(long)]
         brief: bool,

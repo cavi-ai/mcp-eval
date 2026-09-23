@@ -1,8 +1,10 @@
 # Installation
 
-MCP Eval {{PRODUCT_VERSION}} is the Cargo package `mcpeval` and installs the `mcpeval` (and `mcpeval-demo`) binaries. Install from crates.io, or download a checksummed prebuilt binary from the release page:
+MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` and `mcpeval-demo` binaries from Homebrew, npm, or crates.io:
 
 ```sh
+brew install cavi-ai/tap/mcpeval
+npm install --global @cavi-ai/mcp-eval
 cargo install mcpeval --locked
 mcpeval --version
 ```
@@ -14,10 +16,9 @@ cargo build --release
 ./target/release/mcpeval --version
 ```
 
-The repository also defines `@cavi-ai/mcp-eval` for npm and
-`cavi-ai/tap/mcpeval` for Homebrew. Both consume the same checksummed GitHub
-release archives; availability is determined by the public npm registry and
-Homebrew tap rather than by the source definition alone.
+Homebrew (macOS and Linux, x64/arm64) and npm (also Windows x64) install the
+prebuilt GitHub release archive after checking its pinned SHA-256. The
+archives and their checksums are also on the release page.
 
 Set `MCPEVAL_HOME` when you want a capture root other than the default:
 

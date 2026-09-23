@@ -11,11 +11,14 @@
   "bugs": "https://github.com/cavi-ai/mcp-eval/issues",
   "type": "module",
   "bin": {
-    "mcpeval": "npm/run.mjs"
+    "mcpeval": "npm/run.mjs",
+    "mcpeval-demo": "npm/demo.mjs"
   },
   "files": [
     "distribution/release.json",
+    "npm/demo.mjs",
     "npm/install.mjs",
+    "npm/launch.mjs",
     "npm/run.mjs",
     "README.md",
     "LICENSE"

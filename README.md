@@ -19,25 +19,28 @@ complementary tracks:
 Both tracks share one privacy boundary: raw payloads, error prose, and
 credentials never persist. Only `<MCPEVAL_HOME>/store/` is share-safe.
 
+Documentation: [cavi-ai.xyz/docs/mcp-eval](https://cavi-ai.xyz/docs/mcp-eval/).
+
 ## Install
 
 ```sh
+brew install cavi-ai/tap/mcpeval
+npm install --global @cavi-ai/mcp-eval
 cargo install mcpeval --locked
 ```
 
-Or grab a prebuilt binary with its SHA256 checksum from the
-[releases page](https://github.com/cavi-ai/mcp-eval/releases) (Linux x64/arm64,
-macOS x64/arm64, Windows x64). Building from a checkout works too:
+Each installs `mcpeval` and the demo server `mcpeval-demo`. Homebrew (macOS
+and Linux, x64/arm64) and npm (also Windows x64) install the prebuilt release
+archive after checking its pinned SHA-256; the archives and their checksums are
+also on the [releases page](https://github.com/cavi-ai/mcp-eval/releases).
+Building from a checkout works too:
 
 ```sh
 cargo build --release
 ```
 
-The binary is `target/release/mcpeval` (`mcpeval.exe` on Windows).
-`npm install --global @cavi-ai/mcp-eval` installs the same release archive
-through a bootstrap that pins its size and SHA-256. The Homebrew formula
-(`Formula/mcpeval.rb`) pins the same archives; publishing it to the
-`cavi-ai/tap` tap is a manual release step, see [RELEASE.md](RELEASE.md).
+The binaries are `target/release/mcpeval` and `target/release/mcpeval-demo`
+(`.exe` on Windows).
 
 ## Quickstart
 
@@ -50,14 +53,13 @@ requests, missing subscription notifications, malformed completions);
 `mcpeval-demo --help` lists every aspect, and an unknown aspect exits 2:
 
 ```sh
-cargo build --release
-./target/release/mcpeval init --server demo --confirm-read-only \
-  --output demo.manifest.json -- ./target/release/mcpeval-demo
-./target/release/mcpeval probe --server demo \
-  --manifest demo.manifest.json -- ./target/release/mcpeval-demo
+mcpeval init --server demo --confirm-read-only \
+  --output demo.manifest.json -- mcpeval-demo
+mcpeval probe --server demo \
+  --manifest demo.manifest.json -- mcpeval-demo
 # readiness 100/100
-./target/release/mcpeval probe --server demo --manifest demo.manifest.json \
-  -- ./target/release/mcpeval-demo --broken stalled-cursor
+mcpeval probe --server demo --manifest demo.manifest.json \
+  -- mcpeval-demo --broken stalled-cursor
 # pagination-stalled-cursor
 ```
 
@@ -281,10 +283,10 @@ mcpeval compare --server demo \
   --endpoint vendor=https://vendor.example/mcp \
   --format markdown
 
-# a hosted endpoint against the local stdio build
+# a hosted endpoint against the local stdio demo server
 mcpeval compare --server demo \
   --endpoint staging=https://staging.example/mcp \
-  -- ./target/release/mcpeval-demo
+  -- mcpeval-demo
 ```
 
 Comparison endpoints are loopback-only unless `--allow-remote-http` is
@@ -521,7 +523,7 @@ must-not-share reminder every time it runs.
 
 `mcpeval share` turns that boundary into a produced artifact instead of a
 hand-picked file list. It runs the redaction sweep first and **refuses to
-package a store the sweep flags**, then assembles a directory containing the
+package a store the sweep flags** (exit 1), then assembles a directory containing the
 store records, a `SHARE.md` manifest of what is inside and what was
 deliberately excluded (salt, `index.db`, manifests), and a loud warning when
 annotation notes need manual review:

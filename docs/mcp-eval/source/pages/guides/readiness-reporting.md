@@ -139,5 +139,5 @@ mcpeval compare --server demo \
 
 mcpeval compare --server demo \
   --endpoint staging=http://127.0.0.1:8081/mcp \
-  -- ./target/release/mcpeval-demo
+  -- mcpeval-demo
 ```

@@ -144,6 +144,32 @@ fn share_refuses_an_empty_store() {
     assert!(String::from_utf8_lossy(&denied.stderr).contains("nothing to share"));
 }
 
+#[test]
+fn share_refuses_a_flagged_store_with_a_verdict_exit() {
+    let dir = home();
+    std::fs::create_dir_all(dir.join("store")).unwrap();
+    std::fs::write(
+        dir.join("store").join("calls-2026-08-04.jsonl"),
+        "{\"ts\":\"2026-08-04T00:00:00Z\",\"note\":\"mail me at someone@example.com\"}\n",
+    )
+    .unwrap();
+    let out = dir.join("envelope");
+    let refused = Command::new(bin())
+        .args(["share", "--dir"])
+        .arg(&out)
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert_eq!(refused.status.code(), Some(1), "{stderr}");
+    assert!(
+        stderr.contains("redaction sweep flagged 1 file(s)"),
+        "{stderr}"
+    );
+    assert!(!out.join("store").exists());
+    assert!(!out.join("SHARE.md").exists());
+}
+
 fn collect_files(root: &std::path::Path) -> Vec<std::path::PathBuf> {
     let mut files = Vec::new();
     for entry in std::fs::read_dir(root).unwrap().flatten() {

@@ -1,4 +1,4 @@
 #!/usr/bin/env node
 import { launch } from "./launch.mjs";
 
-launch("mcpeval");
+launch("mcpeval-demo");

@@ -22,7 +22,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | `serve` | `--listen <LISTEN>` | Serve findings and trends over a loopback Streamable HTTP MCP endpoint. `--allow-spawn` enables `run_probe` and `scaffold`, which launch the server process an agent names. `--print-config` emits an MCP client config snippet for the endpoint and exits. |
 | `annotate` | `--session <SESSION> --seq <SEQ> --kind <KIND> --note <NOTE>` | Record a bounded agent-authored observation. |
 | `doctor` | optional `--check-redaction` | Run store-hygiene checks. |
-| `share` | `--dir <DIR>` | Package the share-safe envelope: the store records plus a SHARE.md manifest, after a clean redaction sweep. The salt, index databases, and manifests are never copied. Supports `--include-probe-history` and `--force`. |
+| `share` | `--dir <DIR>` | Package the share-safe envelope: the store records plus a SHARE.md manifest, after a clean redaction sweep; a flagged sweep packages nothing and exits `1`. The salt, index databases, and manifests are never copied. Supports `--include-probe-history` and `--force`. |
 
 The default manifest path for `probe`, `verify`, and `report` is `mcp-eval.manifest.json`. The five headline evaluation dimension values for `--probe` are `contention`, `error-honesty`, `state-recovery`, `discovery-cost`, and `schema-guessability`. The CLI also accepts the supplemental probes `token-cost`, `degradation-over-n`, `instruction-fidelity`, `latency-budget`, `pagination`, `payload-bounds`, `surface-listing`, `output-schema`, `cancellation`, `protocol-negotiation`, `sampling`, `elicitation`, `resource-subscription`, and `completion`; they are not additional headline dimensions in version {{PRODUCT_VERSION}}.
 
@@ -42,7 +42,7 @@ fields.
 | Code | Meaning |
 | --- | --- |
 | `0` | The command succeeded; every selected case passed. |
-| `1` | The evaluation completed and a case failed its probe, or a gate such as `diff --fail-on-regression` fired. |
+| `1` | The evaluation completed and a case failed its probe, or a gate such as `diff --fail-on-regression` or the `share` redaction sweep fired. |
 | `2` | Usage error: invalid arguments, manifest, or input document. Nothing was evaluated. |
 | `3` | The evaluation could not complete: the server was unreachable, a case lost its transport, or local I/O failed. |
 

@@ -289,7 +289,11 @@ mcpeval compare --server demo \
 
 Comparison endpoints are loopback-only unless `--allow-remote-http` is
 passed, and remote endpoints require HTTPS. See [the CI guide](docs/ci.md)
-for gating recipes, including the composite GitHub Action — which is
+for gating recipes, including the composite GitHub Action. The action
+installs the checksum-verified release pinned by `distribution/release.json`
+(or a preinstalled `mcpeval`), writes the report to the job summary, exposes
+`passed`, `readiness`, `report`, and `exit-code` outputs, and optionally
+gates on a committed `baseline` and uploads SARIF to code scanning. It is
 self-tested in this repository on every push, consuming itself exactly as a
 downstream repository would.
 

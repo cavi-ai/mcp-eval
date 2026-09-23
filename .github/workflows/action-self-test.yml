@@ -11,6 +11,8 @@ on:
     branches: [main]
     paths:
       - "action.yml"
+      - "scripts/action/**"
+      - "distribution/release.json"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -19,6 +21,8 @@ on:
   pull_request:
     paths:
       - "action.yml"
+      - "scripts/action/**"
+      - "distribution/release.json"
       - "src/**"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -42,7 +46,7 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.x"
-      # The action installs mcpeval from crates.io when the binary is not
+      # The action installs the pinned release when the binary is not
       # preinstalled. Build the local checkout first so `mcpeval` is on PATH
       # and the action under test runs this commit, not the last release.
       - uses: dtolnay/rust-toolchain@stable
@@ -53,10 +57,108 @@ jobs:
         run: |
           mcpeval init --server demo --confirm-read-only \
             --output mcp-eval.manifest.json -- ./target/release/mcpeval-demo
-      - uses: ./
+      - id: probe
+        uses: ./
         with:
           server: demo
           command: ./target/release/mcpeval-demo
+      - name: assert the outputs and the job summary
+        env:
+          PASSED: ${{ steps.probe.outputs.passed }}
+          READINESS: ${{ steps.probe.outputs.readiness }}
+          REPORT: ${{ steps.probe.outputs.report }}
+          MARKDOWN: ${{ steps.probe.outputs.markdown }}
+        run: |
+          test "$PASSED" = true
+          test "$READINESS" = 100
+          test "$(jq -r .schema "$REPORT")" = mcpeval.probe-report/v1
+          grep -q -x -F '## mcp-eval report — demo' "$MARKDOWN"
+
+  action-scripts:
+    name: self-test install and run scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.1
+      - run: cargo build --release --locked --bins
+      - run: npm run test:action
+
+  baseline-gate:
+    name: self-test baseline (regression must fail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install --path . --locked
+      - name: scaffold the manifest
+        run: |
+          mcpeval init --server demo --confirm-read-only \
+            --output mcp-eval.manifest.json -- ./target/release/mcpeval-demo
+      - id: clean
+        uses: ./
+        with:
+          server: demo
+          command: ./target/release/mcpeval-demo
+      - name: commit the clean report as the baseline
+        env:
+          REPORT: ${{ steps.clean.outputs.report }}
+        run: cp "$REPORT" mcp-eval.baseline.json
+      - id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          server: demo
+          command: ./target/release/mcpeval-demo --broken stalled-cursor
+          baseline: mcp-eval.baseline.json
+      - name: assert the baseline gate went red on the regression
+        env:
+          OUTCOME: ${{ steps.gate.outcome }}
+          DIFF_EXIT_CODE: ${{ steps.gate.outputs.diff-exit-code }}
+          MARKDOWN: ${{ steps.gate.outputs.markdown }}
+        run: |
+          test "$OUTCOME" = failure
+          test "$DIFF_EXIT_CODE" = 1
+          grep -q -x -F '## mcp-eval baseline diff' "$MARKDOWN"
+
+  install-from-release:
+    name: self-test install from the pinned release (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # No Rust toolchain and no cargo install: the action must download,
+      # verify, and run the archive pinned by distribution/release.json,
+      # including the mcpeval-demo it ships.
+      - id: probe
+        uses: ./
+        with:
+          server: demo
+          manifest: tests/fixtures/action-sarif.manifest.json
+          command: mcpeval-demo
+      - name: assert the pinned release ran
+        env:
+          PASSED: ${{ steps.probe.outputs.passed }}
+        run: |
+          test "$PASSED" = true
+          expected="mcpeval $(jq -r .version distribution/release.json)"
+          actual="$(mcpeval --version)"
+          echo "installed: $actual"
+          test "$actual" = "$expected"
 
   stdio-broken-gates-red:
     name: self-test stdio (broken must fail)
@@ -165,3 +267,21 @@ jobs:
             > located.txt
           cat located.txt
           grep -qx "$MANIFEST:5" located.txt
+      # The action's own SARIF path, against the clean demo under its own
+      # category so it adds no alert: renders, then uploads when the token
+      # can write.
+      - id: action-sarif
+        uses: ./
+        with:
+          server: demo-action
+          manifest: ${{ env.MANIFEST }}
+          command: ./target/release/mcpeval-demo
+          sarif: ${{ env.UPLOAD }}
+      - name: assert the action rendered SARIF
+        if: env.UPLOAD == 'true'
+        env:
+          SARIF: ${{ steps.action-sarif.outputs.sarif }}
+        run: |
+          test "$SARIF" = mcpeval.sarif
+          test "$(jq -r '.runs[0].automationDetails.id' "$SARIF")" = mcpeval/demo-action/
+          test "$(jq '.runs[0].results | length' "$SARIF")" = 0

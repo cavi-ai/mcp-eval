@@ -4,7 +4,7 @@ The probe battery is built for CI gating: deterministic verdicts, fixed failure 
 
 ## GitHub Actions
 
-A composite action wraps installation and the battery for downstream repositories:
+A composite action installs mcpeval and runs the battery for downstream repositories:
 
 ```yaml
 name: mcp-eval
@@ -15,14 +15,31 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
       - uses: cavi-ai/mcp-eval@main
         with:
           server: my-server
           command: python3 scripts/launch-mcp-server.py --stdio
 ```
 
-`cargo install mcpeval` is skipped when `mcpeval` is already on `PATH`. For a Streamable HTTP server, pass `url: http://127.0.0.1:8080/mcp` instead of `command`. Mutating manifests additionally require `allow-mutation: "true"`.
+The action installs the release pinned by its own `distribution/release.json`: it downloads the archive for the runner (`linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`) and its `.sha256` companion, checks the companion's digest and file name, the pinned SHA-256, and the size, and adds `mcpeval` and `mcpeval-demo` to `PATH`. Any mismatch fails the step. `version: 0.2.0` installs that release instead, verified against that release's own `release.json` rather than the action's. A `mcpeval` already on `PATH` is used as is.
+
+`command` takes whitespace-separated words, with no quoting, or a JSON array of strings for arguments that contain spaces, such as `'["python3", "my server.py", "--stdio"]'`. For a Streamable HTTP server, pass `url: http://127.0.0.1:8080/mcp` instead of `command`; set exactly one of the two. Mutating manifests additionally require `allow-mutation: "true"`, and a remote HTTPS `url` requires `allow-remote-http: "true"`. Inputs reach the scripts through environment variables, never interpolated into shell code.
+
+The report is rendered as markdown into the job summary and written as JSON to `report-path` (default `mcpeval.report.json`). The step exposes these outputs:
+
+| Output | Meaning |
+| --- | --- |
+| `passed` | `true` when every selected case passed |
+| `readiness` | Readiness score |
+| `report` | Path to the JSON report |
+| `markdown` | Path to the rendered markdown report |
+| `exit-code` | `mcpeval probe` exit code |
+| `diff-exit-code` | `mcpeval diff` exit code, when `baseline` is set |
+| `sarif` | Path to the SARIF document, when `sarif` is `true` |
+
+With `baseline: mcp-eval.baseline.json`, the action runs `mcpeval diff --fail-on-regression` against the committed report (plus `--fail-on-change` with `fail-on-change: "true"`) and appends its markdown table to the job summary and the `markdown` output. With `sarif: "true"`, it renders `mcpeval.sarif` located at the manifest's failing cases and uploads it through `github/codeql-action/upload-sarif`, also when the probe fails; the job needs `security-events: write`. The step exits with the probe's code, or with the diff's when the probe passed and the diff failed.
+
+`baseline` and `sarif` need `mcpeval` 0.3.0 or later (`diff` and `report --manifest`). The pinned release moves when `distribution/release.json` is updated at release time; until then, set `version: '0.3.0'` or later, or the step fails fast with a usage error naming the installed version.
 
 ## Committed baselines
 

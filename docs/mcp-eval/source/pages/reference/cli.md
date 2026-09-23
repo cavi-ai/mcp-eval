@@ -17,7 +17,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | `verify` | `--finding <FINDING> --case <CASE>` plus a target | Run one manifest case and update the finding lifecycle. Supports the same manifest and authorization flags as `probe`. |
 | `index` | no options | Load JSONL records and derive failure windows. |
 | `promote` | optional `--threshold <THRESHOLD>` | Aggregate indexed failures and promote supported findings. |
-| `generate` | `--finding <FINDING> --output <OUTPUT> --confirm-read-only` | Generate an eligible read-only manifest. `--force` replaces an existing output. |
+| `generate` | `--finding <FINDING> --output <OUTPUT> --confirm-read-only` | Generate a one-case read-only manifest: a `degradation-over-n` case whose attempts are sized from the observed failure rate to catch the defect with 95% probability (3 for a deterministic error, up to 100), with arguments rebuilt from the recorded shape and each placeholder printed as `fill: <path> (<shape>)`. `--force` replaces an existing output. |
 | `findings` | optional `--format agent\|md\|json` | Render sanitized findings; default format is `agent`. |
 | `serve` | `--listen <LISTEN>` | Serve findings and trends over a loopback Streamable HTTP MCP endpoint. `--allow-spawn` enables `run_probe` and `scaffold`, which launch the server process an agent names. `--print-config` emits an MCP client config snippet for the endpoint and exits. |
 | `annotate` | `--session <SESSION> --seq <SEQ> --kind <KIND> --note <NOTE>` | Record a bounded agent-authored observation. |

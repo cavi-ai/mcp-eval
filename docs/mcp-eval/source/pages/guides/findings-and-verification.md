@@ -25,7 +25,7 @@ Finding IDs from earlier releases, which included the error code, re-key once on
 
 Use `--threshold <number>` for a one-run promotion threshold override. It takes precedence over `promotion_threshold` in `<MCPEVAL_HOME>/config.json`; thresholds must be finite and non-negative. An issue still needs evidence from two distinct sessions before promotion.
 
-`findings` supports `agent`, `md`, and `json`. Every format contains sanitized identifiers, aggregate metrics, the defect class and fix hint, and already-shaped arguments—not raw error templates, annotation notes, sessions, salt, or raw argument values.
+`findings` supports `agent`, `md`, and `json`. Every format contains sanitized identifiers, aggregate metrics, the defect class and fix hint, and already-shaped arguments—not raw error templates, annotation notes, sessions, salt, or raw argument values. `json` also carries `retryable`: `true` when every failure of the group was retryable, `false` when none was, and `null` when mixed or unreported.
 
 Add a bounded human observation to a captured call with:
 
@@ -44,7 +44,9 @@ mcpeval verify --finding finding-0123456789abcdef \
   -- your-mcp-server --flags
 ```
 
-The first green result moves an open finding to `verifying`; the third consecutive green closes it. A red result resets the streak and reopens a verifying or closed finding. Findings without an attached probe remain open, require manual closure, and are capped at medium severity.
+`mcpeval generate --finding <id> --confirm-read-only --output <file>` writes a one-case manifest for the finding, with the finding ID as the case ID: a `degradation-over-n` case whose attempts are sized from the observed failure rate to catch the defect with 95% probability (3 for a deterministic error, up to 100), so the probe passes once the call succeeds. Fill every placeholder it lists before verifying.
+
+The first green result moves an open finding to `verifying`; the third consecutive green closes it. A red result resets the streak and reopens a verifying or closed finding; its line ends with `reason=<reason>`, followed by an indented `hint:` line with the remediation. Findings without an attached probe remain open, require manual closure, and are capped at medium severity.
 
 ## Serving findings and the agent loop
 

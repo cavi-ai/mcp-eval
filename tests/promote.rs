@@ -558,6 +558,75 @@ fn promotion_classifies_each_issue_from_codes_annotations_and_retries() {
 }
 
 #[test]
+fn promotion_records_whether_every_failure_was_retryable_and_findings_json_carries_it() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let mut unknown = coded("u2", 1, "unknown", -32000, true, "uuuuuuuuuuuuuuuu");
+    unknown.error.as_mut().unwrap().retryable = None;
+    for record in [
+        coded("r1", 1, "retry", -32000, true, "rrrrrrrrrrrrrrrr"),
+        coded("r2", 1, "retry", -32000, true, "rrrrrrrrrrrrrrrr"),
+        coded("n1", 1, "never", -32000, false, "nnnnnnnnnnnnnnnn"),
+        coded("n2", 1, "never", -32000, false, "nnnnnnnnnnnnnnnn"),
+        coded("m1", 1, "mixed", -32000, true, "mmmmmmmmmmmmmmmm"),
+        coded("m2", 1, "mixed", -32000, false, "mmmmmmmmmmmmmmmm"),
+        coded("u1", 1, "unknown", -32000, true, "uuuuuuuuuuuuuuuu"),
+        unknown,
+    ] {
+        store.append(&record).unwrap();
+    }
+    index::build(&dir).unwrap();
+    promote(&dir, at(0)).unwrap();
+
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let stored: Vec<(String, Option<i64>)> = db
+        .prepare("SELECT tool, retryable FROM issues ORDER BY tool")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        stored,
+        [
+            ("mixed", None),
+            ("never", Some(0)),
+            ("retry", Some(1)),
+            ("unknown", None)
+        ]
+        .map(|(tool, flag)| (tool.to_owned(), flag))
+    );
+
+    let findings = mcpeval::report::render(
+        &mcpeval::report::load_findings(&dir).unwrap(),
+        mcpeval::report::ReportFormat::Json,
+    )
+    .unwrap();
+    let mut exposed: Vec<(String, serde_json::Value)> =
+        serde_json::from_str::<Vec<serde_json::Value>>(&findings)
+            .unwrap()
+            .into_iter()
+            .map(|row| {
+                (
+                    row["tool"].as_str().unwrap().to_owned(),
+                    row["retryable"].clone(),
+                )
+            })
+            .collect();
+    exposed.sort_by(|left, right| left.0.cmp(&right.0));
+    assert_eq!(
+        exposed,
+        [
+            ("mixed", json!(null)),
+            ("never", json!(false)),
+            ("retry", json!(true)),
+            ("unknown", json!(null))
+        ]
+        .map(|(tool, flag)| (tool.to_owned(), flag))
+    );
+}
+
+#[test]
 fn promotion_counts_why_issues_stayed_below_findings() {
     let dir = tempdir();
     let mut store = Store::open(Some(dir.clone())).unwrap();

@@ -101,6 +101,18 @@
 - `mcpeval promote` appends why issues were not promoted:
   `promoted 0 of 2 issues (1 seen in one session only, 1 below threshold
   0.800000)`; zero counts are omitted.
+- `mcpeval generate` writes a `degradation-over-n` case whose
+  `max_attempts` is sized from the finding's observed failure rate to
+  catch the defect with 95% probability (3 for a deterministic error, up
+  to 100; was always 3), so the probe passes once the call succeeds. It
+  prints `probe=<kind> max_attempts=<n>` after the probe ID.
+- `mcpeval generate` accepts findings with non-empty shaped arguments
+  (was refused with `finding arguments must be exactly {}`): enum
+  members, numbers, booleans, and nulls are kept, strings and UUIDs
+  become placeholders, arrays become `[]`, and each placeholder is
+  printed as `fill: <path> (<shape>)`.
+- A red `mcpeval verify` appends `reason=<reason>` to its line and
+  prints the remediation hint on the next line.
 
 ### Fixed
 
@@ -126,6 +138,9 @@
 
 ### Added
 
+- `mcpeval findings --format json` and `serve`'s finding tools carry
+  `retryable`: `true` when every failure of the group was retryable,
+  `false` when none was, `null` when mixed or unreported.
 - `mcpeval init --tool <NAME>` (repeatable) restricts the candidates to the
   named tools; a name the catalog lacks, or one init cannot call (annotated
   as a writer, required arguments, or unattested), exits 2.

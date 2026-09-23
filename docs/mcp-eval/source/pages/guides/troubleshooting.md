@@ -32,4 +32,4 @@ The command exits non-zero when a non-note JSONL field looks unredacted and prin
 
 ## Generation is refused
 
-`generate` accepts only a current promoted finding with a valid tool and exactly empty shaped arguments. It also requires `--confirm-read-only`. By default it creates a new file; use `--force` to replace an existing output.
+`generate` accepts only a current promoted finding with a valid tool whose recorded arguments are a shape written by capture (`finding arguments are not a recorded argument shape` otherwise). It also requires `--confirm-read-only`. By default it creates a new file; use `--force` to replace an existing output.

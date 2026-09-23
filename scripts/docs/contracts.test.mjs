@@ -213,10 +213,11 @@ test("documentation publishes from the release chain and is gated in CI", async 
 
 test("the documentation site renders every released version and deploys via Pages", async () => {
   const workflow = await readFile(path.join(ROOT, ".github/workflows/publish-docs.yml"), "utf8");
+  // Pages actions are asserted by name; their majors move with Dependabot.
+  for (const action of ["actions/configure-pages", "actions/upload-pages-artifact", "actions/deploy-pages"]) {
+    assert.match(workflow, new RegExp(`uses: ${action}@v\\d+\\s`), action);
+  }
   for (const phrase of [
-    "actions/deploy-pages@v4",
-    "actions/upload-pages-artifact@v3",
-    "actions/configure-pages@v5",
     "node scripts/docs/render-site.mjs",
     "needs: docs",
     "id-token: write",

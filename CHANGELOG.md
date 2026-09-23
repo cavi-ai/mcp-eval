@@ -100,14 +100,14 @@
   "reproducible by anyone" stays an enforced property rather than a claim.
   Agreement tests pin the drift check's launch commands to the collector's
   arrays.
-- Corpus grew from 19 to 34 observations: `data/readiness-corpus.json` now
-  holds 34 public servers collected with `scripts/corpus/collect.sh` —
+- Corpus grew from 19 to 33 observations: `data/readiness-corpus.json` now
+  holds 33 public servers collected with `scripts/corpus/collect.sh` —
   fifteen additional credential-free servers across the npm and uvx
   ecosystems (airbnb, sqlite, docker, mermaid, terraform, tavily, ollama,
-  calculator, wikipedia, searxng, git, arxiv). Every prior observation
-  reproduced byte-identically on re-run. `mcp-atlassian` was dropped because
-  it lists no tools without credentials; the corpus now holds 33
-  observations with catalog measurements.
+  calculator, wikipedia, searxng, git, arxiv), minus `mcp-atlassian`, which
+  lists no tools without credentials. Every prior observation reproduced
+  byte-identically on re-run; every observation now carries catalog
+  measurements.
 - `mcpeval.readiness-corpus/v1` gains optional fields: top-level
   `battery` (the probe kinds every observation was scored on; defaults to
   `discovery-cost`, `token-cost`, `pagination`, `surface-listing`; an empty

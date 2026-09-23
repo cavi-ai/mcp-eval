@@ -58,4 +58,4 @@ mcpeval verify --finding finding-0123456789abcdef \
 
 ## Other CI systems
 
-Any runner with a Rust toolchain works — the battery is a single static binary with no network services. `mcpeval probe` exits non-zero when any selected case fails, so it drops into `make check`, pre-merge hooks, or any pipeline unchanged.
+Any runner with a Rust toolchain works — the battery is a single static binary with no network services. `mcpeval probe` exits non-zero when any selected case fails, so it drops into `make check`, pre-merge hooks, or any pipeline unchanged. Exit 1 is a red verdict, 2 a usage error, and 3 a run that could not complete (the report is still written), so a pipeline can retry infrastructure failures without retrying red servers.

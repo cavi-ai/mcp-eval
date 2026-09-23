@@ -130,7 +130,10 @@ manifest, with its fixed reason and remediation hint. Run it from the
 repository root so the manifest path resolves; each server gets its own
 code-scanning category.
 
-The command exits zero only when every selected case passes. Summaries contain
+The command exits zero only when every selected case passes, 1 when a case
+fails its probe, 2 on a usage error, and 3 when the evaluation could not
+complete (a case that timed out or lost its server is reported as
+`transport-*` and the report is still written). Summaries contain
 case IDs, probe kinds, attempt counts, first-failure positions, and fixed
 reason labels — never actual arguments, responses, or errors. Every failing
 case prints a **remediation hint**: the concrete server-side fix for that
@@ -228,8 +231,8 @@ side — useful when selecting between vendor servers or checking a deployment
 against your local build. Targets are `--endpoint LABEL=URL` Streamable HTTP
 endpoints, optionally plus one stdio command after `--` (its column is labeled
 `stdio`); two or more targets are required. Comparison is informational: it
-never exits non-zero for probe failures, so it complements rather than
-replaces the `probe` gate.
+never exits non-zero for probe failures (only 3 when a case could not be
+evaluated), so it complements rather than replaces the `probe` gate.
 
 ```sh
 mcpeval compare --server demo \

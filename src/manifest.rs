@@ -11,6 +11,10 @@ use crate::privacy;
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub version: u64,
+    /// Per-request response timeout in milliseconds, 100..=600000. Unset,
+    /// each transport keeps its own default (30 s stdio, 5 s HTTP).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub sandboxes: BTreeMap<String, Sandbox>,
     pub probes: Vec<ProbeCase>,
@@ -511,6 +515,12 @@ impl Manifest {
     pub fn validate(&self) -> anyhow::Result<()> {
         if self.version != 1 {
             bail!("manifest version must be 1");
+        }
+        if self
+            .timeout_ms
+            .is_some_and(|timeout_ms| !(100..=600_000).contains(&timeout_ms))
+        {
+            bail!("manifest timeout_ms must be between 100 and 600000");
         }
         for (name, sandbox) in &self.sandboxes {
             if !privacy::valid_identifier(name) {

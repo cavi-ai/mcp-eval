@@ -233,7 +233,11 @@ fn report_rerenders_a_committed_document_without_any_server() {
         .env("MCPEVAL_HOME", &dir)
         .output()
         .unwrap();
-    assert!(!rejected.status.success());
+    assert_eq!(
+        rejected.status.code(),
+        Some(2),
+        "a bad document is a usage error"
+    );
     assert!(String::from_utf8_lossy(&rejected.stderr).contains("probe-report/v1"));
 }
 

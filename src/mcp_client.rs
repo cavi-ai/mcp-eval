@@ -14,7 +14,41 @@ use crate::privacy;
 // hung server still fails; it just takes longer to be declared dead.
 // The HTTP transport's five-second network timeouts are separate and
 // deliberately stay tight — they bound network I/O, not process startup.
-const RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+// A manifest's `timeout_ms` replaces both.
+pub const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// A transport failure: the server stopped answering or went away. Both
+/// clients put it in the error chain so probes can tell a lost server
+/// from a protocol defect without matching message text.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum TransportFailure {
+    /// No response within the response timeout.
+    Timeout,
+    /// The server closed the stream or the connection, or was unreachable.
+    Closed,
+}
+
+impl std::fmt::Display for TransportFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Timeout => "MCP response timed out",
+            Self::Closed => "MCP server closed the connection",
+        })
+    }
+}
+
+impl std::error::Error for TransportFailure {}
+
+impl TransportFailure {
+    /// The transport failure in `error`, as its root or as a context layer.
+    pub fn of(error: &anyhow::Error) -> Option<Self> {
+        error.downcast_ref::<Self>().copied()
+    }
+}
+
+fn closed_stdout() -> anyhow::Error {
+    anyhow::Error::new(TransportFailure::Closed).context("MCP server closed stdout")
+}
 
 #[derive(Debug)]
 pub enum ToolResponse {
@@ -66,6 +100,10 @@ pub struct McpClient {
     stdin: Option<ChildStdin>,
     lines: Receiver<std::io::Result<Vec<u8>>>,
     next_id: u64,
+    response_timeout: Duration,
+    /// Requests given up on at their timeout. A late response to one of
+    /// them is discarded instead of being mistaken for a misrouted reply.
+    abandoned: std::collections::HashSet<u64>,
     /// The server's advertised capabilities from `initialize`.
     capabilities: Option<Value>,
     /// The protocol version the server answered the handshake with.
@@ -118,6 +156,8 @@ impl McpClient {
             stdin: Some(stdin),
             lines,
             next_id: 1,
+            response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+            abandoned: std::collections::HashSet::new(),
             capabilities: None,
             protocol_version: None,
             notifications: Vec::new(),
@@ -127,6 +167,12 @@ impl McpClient {
     /// The protocol version the server answered `initialize` with.
     pub fn protocol_version(&self) -> Option<String> {
         self.protocol_version.clone()
+    }
+
+    /// How long a request waits for its response; `None` restores
+    /// [`DEFAULT_RESPONSE_TIMEOUT`].
+    pub fn set_response_timeout(&mut self, timeout: Option<Duration>) {
+        self.response_timeout = timeout.unwrap_or(DEFAULT_RESPONSE_TIMEOUT);
     }
 
     /// Run one full `initialize` handshake with the given protocol version
@@ -168,17 +214,13 @@ impl McpClient {
         }))?;
         let mut server_requests = 0u64;
         loop {
-            let raw =
-                self.lines
-                    .recv_timeout(RESPONSE_TIMEOUT)
-                    .map_err(|error| match error {
-                        mpsc::RecvTimeoutError::Timeout => {
-                            anyhow::anyhow!("MCP response timed out")
-                        }
-                        mpsc::RecvTimeoutError::Disconnected => {
-                            anyhow::anyhow!("MCP server closed stdout")
-                        }
-                    })??;
+            let raw = match self.lines.recv_timeout(self.response_timeout) {
+                Ok(Ok(raw)) => raw,
+                Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(closed_stdout())
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => return Err(self.abandon(id)),
+            };
             let frame: Value = match serde_json::from_slice(&raw) {
                 Ok(value) => value,
                 Err(_) => continue,
@@ -189,6 +231,9 @@ impl McpClient {
             let is_response = object.contains_key("id")
                 && (object.contains_key("result") || object.contains_key("error"));
             if is_response {
+                if self.is_abandoned_reply(object) {
+                    continue;
+                }
                 if object.get("id").and_then(Value::as_u64) != Some(id) {
                     bail!("MCP response id does not match request");
                 }
@@ -336,12 +381,12 @@ impl McpClient {
                 return Ok(CancellationOutcome::Honored);
             }
             let raw = match self.lines.recv_timeout(remaining) {
-                Ok(raw) => raw,
+                Ok(Ok(raw)) => raw,
                 Err(mpsc::RecvTimeoutError::Timeout) => return Ok(CancellationOutcome::Honored),
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    bail!("MCP server closed stdout")
+                Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(closed_stdout())
                 }
-            }?;
+            };
             let response: Value = match serde_json::from_slice(&raw) {
                 Ok(value) => value,
                 Err(_) => continue,
@@ -461,20 +506,18 @@ impl McpClient {
         let id = self.next_id;
         self.next_id += 1;
         self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
-        let deadline = Instant::now() + RESPONSE_TIMEOUT;
+        let deadline = Instant::now() + self.response_timeout;
         loop {
             let raw = match self
                 .lines
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             {
-                Ok(raw) => raw,
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    bail!("MCP response timed out")
+                Ok(Ok(raw)) => raw,
+                Err(mpsc::RecvTimeoutError::Timeout) => return Err(self.abandon(id)),
+                Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(closed_stdout())
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    bail!("MCP server closed stdout")
-                }
-            }?;
+            };
             // Real servers print human-readable banners on stdout and
             // interleave unsolicited notifications. Neither is a response:
             // unparseable lines are skipped; notifications are buffered
@@ -496,6 +539,9 @@ impl McpClient {
                 }
                 continue;
             }
+            if self.is_abandoned_reply(object) {
+                continue;
+            }
             // The client is strictly sequential, so a frame that carries an
             // id other than the outstanding request's is a server defect —
             // stale, duplicated, or misrouted. Fail fast with a content-free
@@ -510,12 +556,33 @@ impl McpClient {
         }
     }
 
+    /// Give up on request `id` at its timeout.
+    fn abandon(&mut self, id: u64) -> anyhow::Error {
+        self.abandoned.insert(id);
+        TransportFailure::Timeout.into()
+    }
+
+    /// Whether `frame` is the late response to an abandoned request; the
+    /// id is forgotten once its reply has been discarded.
+    fn is_abandoned_reply(&mut self, frame: &serde_json::Map<String, Value>) -> bool {
+        frame
+            .get("id")
+            .and_then(Value::as_u64)
+            .is_some_and(|id| self.abandoned.remove(&id))
+    }
+
     fn write(&mut self, value: &Value) -> anyhow::Result<()> {
-        let stdin = self.stdin.as_mut().context("MCP server stdin is closed")?;
-        serde_json::to_writer(&mut *stdin, value)?;
-        stdin.write_all(b"\n")?;
-        stdin.flush()?;
-        Ok(())
+        let stdin = self.stdin.as_mut().ok_or_else(closed_stdout)?;
+        let mut frame = serde_json::to_vec(value)?;
+        frame.push(b'\n');
+        stdin
+            .write_all(&frame)
+            .and_then(|()| stdin.flush())
+            .map_err(|error| {
+                anyhow::Error::new(error)
+                    .context(TransportFailure::Closed)
+                    .context("writing to the MCP server")
+            })
     }
 }
 

@@ -1,11 +1,12 @@
 //! Run one manifest against several Streamable HTTP endpoints and render a
 //! side-by-side diff. Comparison is read-oriented: it reports verdicts and
 //! scores but never exits non-zero for probe failures — gating stays the
-//! job of `mcpeval probe`.
+//! job of `mcpeval probe`. A case that could not be evaluated still makes
+//! the comparison incomplete, which the CLI reports with exit 3.
 
 use std::path::PathBuf;
 
-use anyhow::bail;
+use anyhow::Context;
 
 use crate::probe::{self, ProbeOptions, ProbeReport};
 use crate::store::Store;
@@ -44,9 +45,17 @@ pub enum CompareFormat {
     Json,
 }
 
-pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<String> {
+/// A rendered comparison and whether any column holds an errored case.
+pub struct Comparison {
+    pub output: String,
+    pub errored: bool,
+}
+
+pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Comparison> {
     if !crate::privacy::valid_server(&options.server) {
-        bail!("server label is invalid");
+        return Err(crate::exit::usage(anyhow::anyhow!(
+            "server label is invalid"
+        )));
     }
     let mut targets: Vec<CompareTarget> = options
         .endpoints
@@ -62,7 +71,9 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Str
         });
     }
     if targets.len() < 2 {
-        bail!("comparison needs at least two targets (--endpoint twice, or --endpoint plus a stdio command)");
+        return Err(crate::exit::usage(anyhow::anyhow!(
+            "comparison needs at least two targets (--endpoint twice, or --endpoint plus a stdio command)"
+        )));
     }
     let mut store = Store::open(None)?;
     let mut results = Vec::with_capacity(targets.len());
@@ -85,13 +96,17 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Str
             },
             &mut store,
         )
-        .map_err(|error| anyhow::anyhow!("endpoint {}: {error}", label))?;
+        .with_context(|| format!("endpoint {label}"))?;
         results.push((label, report));
     }
-    Ok(match format {
+    let output = match format {
         CompareFormat::Text => render_text(&results),
         CompareFormat::Markdown => render_markdown(&options.server, &results),
         CompareFormat::Json => render_json(&options.server, &results),
+    };
+    Ok(Comparison {
+        output,
+        errored: results.iter().any(|(_, report)| report.errored()),
     })
 }
 
@@ -99,6 +114,7 @@ fn cell(report: &ProbeReport, index: usize) -> String {
     let case = &report.cases[index];
     match case.reason {
         None => "pass".into(),
+        Some(reason) if reason.is_transport() => format!("error({})", reason.as_str()),
         Some(reason) => format!("fail({})", reason.as_str()),
     }
 }

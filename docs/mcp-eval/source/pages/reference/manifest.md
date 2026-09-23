@@ -27,7 +27,7 @@ Probe manifests are strict JSON documents. Unknown fields are rejected.
 }
 ```
 
-Top-level `version` must be `1`, `probes` must contain at least one case, and case IDs must be unique valid identifiers. `sandboxes` defaults to an empty object. Sandbox descriptions are bounded to 240 characters and cannot contain control characters.
+Top-level `version` must be `1`, `probes` must contain at least one case, and case IDs must be unique valid identifiers. `sandboxes` defaults to an empty object. The optional `timeout_ms` (100 to 600000) is how long each request waits for its response. Without it, stdio waits 30 seconds and HTTP 5 seconds. A `latency-budget` call waits `max_latency_ms` plus that timeout, so a slow call is measured against its budget instead of timing out. A request past its timeout marks the case `transport-timeout`. Sandbox descriptions are bounded to 240 characters and cannot contain control characters.
 
 Every case declares `access` as `read_only` or `mutating`. A read-only case must not name a sandbox. A mutating case must name a key declared in `sandboxes` and still requires `--allow-mutation` at execution time.
 

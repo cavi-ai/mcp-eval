@@ -346,7 +346,11 @@ fn diff_refuses_reports_from_different_servers() {
             other_path.to_str().unwrap(),
         ],
     );
-    assert!(!output.status.success());
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a server mismatch is a usage error"
+    );
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(

@@ -4,6 +4,7 @@ pub mod correlate;
 pub mod diff;
 pub mod doctor;
 pub mod errtemplate;
+pub mod exit;
 pub mod fingerprint;
 pub mod frame;
 pub mod generate;

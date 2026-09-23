@@ -220,5 +220,20 @@ pub fn hint(reason: FailureReason) -> &'static str {
              every request for a capability it declares — return an empty values \
              array rather than hanging when nothing matches"
         }
+        FailureReason::TransportTimeout => {
+            "the server did not answer within the transport timeout (the manifest's \
+             `timeout_ms`; 30 s over stdio and 5 s over HTTP by default), so the case \
+             was not evaluated; answer every request, and raise `timeout_ms` if the \
+             server is slow by design"
+        }
+        FailureReason::TransportClosed => {
+            "the server closed the connection or exited while the case ran, so the \
+             case was not evaluated; no request may crash or disconnect the server"
+        }
+        FailureReason::TransportError => {
+            "the server broke the protocol while the case ran (a malformed, mismatched, \
+             or non-200 response), so the case was not evaluated; answer each request \
+             once, with its own id, as one well-formed JSON-RPC response"
+        }
     }
 }

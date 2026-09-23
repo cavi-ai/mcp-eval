@@ -96,7 +96,10 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json -- your-mcp-server
 ```
 
 The command exits non-zero when any selected case fails, so it drops into
-`make check`, pre-merge hooks, or any pipeline unchanged.
+`make check`, pre-merge hooks, or any pipeline unchanged. Exit 1 is a red
+verdict, 2 a usage error, and 3 a run that could not complete (the report
+is still written), so a pipeline can retry infrastructure failures without
+retrying red servers.
 
 ## Verifying findings in CI
 

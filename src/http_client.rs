@@ -5,17 +5,25 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
 
-use crate::mcp_client::{CancellationOutcome, ToolCatalog, ToolDefinition, ToolResponse};
+use crate::mcp_client::{
+    CancellationOutcome, ToolCatalog, ToolDefinition, ToolResponse, TransportFailure,
+};
 use crate::privacy;
 
 pub(crate) const PROTOCOL_VERSION: &str = "2025-06-18";
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// Connect, read, and write timeout when the manifest sets no `timeout_ms`.
+pub const DEFAULT_IO_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct HttpMcpClient {
     agent: ureq::Agent,
     endpoint: String,
     session_id: Option<String>,
     next_id: u64,
+    /// Whole-request deadline for each POST; `None` keeps the agent's
+    /// five-second connect, read, and write timeouts.
+    response_timeout: Option<Duration>,
     /// The server's advertised capabilities from `initialize`.
     capabilities: Option<Value>,
     /// The protocol version the server answered the handshake with.
@@ -46,13 +54,14 @@ impl HttpMcpClient {
         Ok(Self {
             agent: ureq::AgentBuilder::new()
                 .redirects(0)
-                .timeout_connect(Duration::from_secs(5))
-                .timeout_read(Duration::from_secs(5))
-                .timeout_write(Duration::from_secs(5))
+                .timeout_connect(DEFAULT_IO_TIMEOUT)
+                .timeout_read(DEFAULT_IO_TIMEOUT)
+                .timeout_write(DEFAULT_IO_TIMEOUT)
                 .build(),
             endpoint,
             session_id: None,
             next_id: 1,
+            response_timeout: None,
             capabilities: None,
             protocol_version: None,
         })
@@ -61,6 +70,13 @@ impl HttpMcpClient {
     /// The protocol version the server answered `initialize` with.
     pub fn protocol_version(&self) -> Option<String> {
         self.protocol_version.clone()
+    }
+
+    /// Bound each request, response body included, by `timeout`; `None`
+    /// restores the agent's per-operation timeouts
+    /// ([`DEFAULT_IO_TIMEOUT`]).
+    pub fn set_response_timeout(&mut self, timeout: Option<Duration>) {
+        self.response_timeout = timeout;
     }
 
     /// Run one `initialize` handshake with the given protocol version and
@@ -490,6 +506,9 @@ impl HttpMcpClient {
         if let Some(session_id) = &self.session_id {
             request = request.set("Mcp-Session-Id", session_id);
         }
+        if let Some(timeout) = self.response_timeout {
+            request = request.timeout(timeout);
+        }
         if let Ok(authorization) = std::env::var("MCPEVAL_HTTP_AUTHORIZATION") {
             if authorization.is_empty()
                 || authorization.len() > 8192
@@ -503,7 +522,14 @@ impl HttpMcpClient {
             ureq::Error::Status(status, _) => {
                 anyhow::anyhow!("MCP HTTP request failed with status {status}")
             }
-            other => anyhow::anyhow!("MCP HTTP request failed: {other}"),
+            other => {
+                let failure = if request_timed_out(&other) {
+                    TransportFailure::Timeout
+                } else {
+                    TransportFailure::Closed
+                };
+                anyhow::Error::new(failure).context(format!("MCP HTTP request failed: {other}"))
+            }
         })
     }
 }
@@ -539,7 +565,17 @@ fn read_bounded(mut reader: impl Read) -> anyhow::Result<Vec<u8>> {
     reader
         .by_ref()
         .take((MAX_RESPONSE_BYTES + 1) as u64)
-        .read_to_end(&mut body)?;
+        .read_to_end(&mut body)
+        .map_err(|error| {
+            let failure = if error.kind() == std::io::ErrorKind::TimedOut {
+                TransportFailure::Timeout
+            } else {
+                TransportFailure::Closed
+            };
+            anyhow::Error::new(error)
+                .context(failure)
+                .context("reading the MCP HTTP response")
+        })?;
     if body.len() > MAX_RESPONSE_BYTES {
         bail!("MCP HTTP response exceeded the size limit");
     }

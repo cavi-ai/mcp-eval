@@ -239,18 +239,20 @@ Every full-battery run appends a content-free score record to
 per-server history with score deltas between runs of the same manifest and
 `manifest changed` where the manifest differs.
 
+Five probes are this release's headline evaluation dimensions — discovery-cost, schema-guessability, error-honesty, state-recovery, and contention; the other fourteen are supplemental checks that score in the same four categories.
+
 The deterministic battery:
 
 | Probe | What it checks |
 | --- | --- |
-| `discovery-cost` | Tool count and encoded `tools/list` catalog size stay within declared bounds |
+| **`discovery-cost`** | Tool count and encoded `tools/list` catalog size stay within declared bounds |
 | `token-cost` | Estimated context cost of the catalog — total and optional per-tool token budgets, using a deterministic model-independent estimator |
-| `schema-guessability` | The selected tool exposes a coherent object schema; every required field is declared, supplied by the naive call, and the call succeeds |
+| **`schema-guessability`** | The selected tool exposes a coherent object schema; every required field is declared, supplied by the naive call, and the call succeeds |
 | `instruction-fidelity` | Declared machine-readable result fields, scalar values, outcomes, and error codes match — deterministic and structural, never sent to an external LLM |
 | `degradation-over-n` | A read-only call keeps succeeding over N attempts, with the first-failure position reported |
-| `error-honesty` | Stable error codes, truthful retryability metadata, recovery within a declared bound |
-| `state-recovery` | An explicit failure → recovery → validation sequence, with both later calls succeeding |
-| `contention` | Two synchronized independent MCP clients both succeed against the same declared tool |
+| **`error-honesty`** | Stable error codes, truthful retryability metadata, recovery within a declared bound |
+| **`state-recovery`** | An explicit failure → recovery → validation sequence, with both later calls succeeding |
+| **`contention`** | Two synchronized independent MCP clients both succeed against the same declared tool |
 | `latency-budget` | A read-only call stays within a declared `max_latency_ms` budget across N attempts; the slowest observed latency is reported |
 | `pagination` | `tools/list` cursor pagination completes within `max_pages` with unique, schema-valid entries on every page |
 | `payload-bounds` | A declared-oversize argument never crashes or hangs the server; `expect_handled` decides whether a clean rejection also counts as failure |

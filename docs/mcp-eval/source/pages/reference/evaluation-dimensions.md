@@ -1,6 +1,6 @@
 # Evaluation dimensions
 
-MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes nine supplemental probes, documented separately below.
+MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes fourteen supplemental probes, documented separately below.
 
 ## Headline evaluation dimensions
 

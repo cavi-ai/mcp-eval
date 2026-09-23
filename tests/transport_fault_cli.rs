@@ -335,3 +335,29 @@ fn a_stalled_call_judged_as_a_verdict_does_not_poison_the_next_case() {
         ]
     );
 }
+
+#[test]
+fn an_errored_case_still_reports_when_stderr_is_closed() {
+    let dir = home();
+    let path = dir.join("m.json");
+    std::fs::write(
+        &path,
+        json!({"version": 1, "probes": [case("crashes", "crash", json!({}), 600_000)]}).to_string(),
+    )
+    .unwrap();
+    let mut child = Command::new(bin())
+        .args(["probe", "--server", "fault", "--manifest"])
+        .arg(&path)
+        .args(["--format", "json"])
+        .args(stdio())
+        .env("MCPEVAL_HOME", &dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stderr.take());
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(3));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(reasons(&report), vec![json!("transport-closed")]);
+}

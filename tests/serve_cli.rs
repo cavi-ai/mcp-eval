@@ -84,30 +84,73 @@ fn raw_call(endpoint: &str, message: &Value) -> (u16, Value) {
     (status, parsed)
 }
 
-/// Start `mcpeval serve` on a free loopback port and wait for its listener.
-fn start_serve(dir: &std::path::Path, extra: &[&str]) -> (std::process::Child, u16) {
-    let port = std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port();
-    let mut server = Command::new(bin())
-        .args(["serve", "--listen", &format!("127.0.0.1:{port}")])
-        .args(extra)
-        .env("MCPEVAL_HOME", dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
-    for _ in 0..50 {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+/// A running `mcpeval serve`, killed when dropped so a failing assertion
+/// never leaks the process.
+struct Serve(std::process::Child);
+
+impl Drop for Serve {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+impl std::ops::Deref for Serve {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl std::ops::DerefMut for Serve {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+/// Start `mcpeval serve` on a free loopback port. The port is released
+/// before serve binds it, so a parallel test can take it first: wait for
+/// this child's own bind announcement, and retry on a fresh port when it
+/// exits instead.
+fn start_serve(dir: &std::path::Path, extra: &[&str]) -> (Serve, u16) {
+    for _ in 0..5 {
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let mut server = Serve(
+            Command::new(bin())
+                .args(["serve", "--listen", &format!("127.0.0.1:{port}")])
+                .args(extra)
+                .env("MCPEVAL_HOME", dir)
+                .stdout(Stdio::null())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap(),
+        );
+        if announced(&mut server, port) {
             return (server, port);
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    server.kill().ok();
-    let _ = server.wait();
-    panic!("serve listener never came up");
+    panic!("serve could not bind a free loopback port in five attempts");
+}
+
+/// Whether serve announced its listener on `port` (false: it exited first).
+/// The rest of stderr is drained so serve never blocks on a full pipe.
+fn announced(server: &mut Serve, port: u16) -> bool {
+    let stderr = server.stderr.take().unwrap();
+    let listening = format!("http://127.0.0.1:{port}/mcp");
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut lines = BufReader::new(stderr).lines();
+        let first = lines.next().and_then(Result::ok).unwrap_or_default();
+        let _ = sender.send(first.contains(&listening));
+        lines.for_each(drop);
+    });
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(30))
+        .expect("serve never announced its listener")
 }
 
 /// One POST carrying exactly `headers` (each line CRLF-terminated) plus

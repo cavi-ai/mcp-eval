@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Barrier};
 use std::time::{Duration, Instant};
@@ -786,13 +787,19 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
             }
             Err(error) => {
                 let reason = transport_reason(&error);
-                eprintln!("{} {}: {error:#}", case.id(), reason.as_str());
+                // Diagnostics only: a closed stderr must not end the run.
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "{} {}: {error:#}",
+                    case.id(),
+                    reason.as_str()
+                );
                 reports.push(errored_case(case, reason));
                 match reconnect(&target, timeout) {
                     Ok(fresh) => *context.client = fresh,
                     Err(error) => {
                         let reason = transport_reason(&error);
-                        eprintln!("reconnecting failed: {error:#}");
+                        let _ = writeln!(std::io::stderr(), "reconnecting failed: {error:#}");
                         unreachable = Some(reason);
                     }
                 }

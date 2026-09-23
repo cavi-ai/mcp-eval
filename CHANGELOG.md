@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-09-23
+
 ### Security
 
 - `mcpeval serve` validates every request: `Host` must name loopback
@@ -17,6 +19,92 @@
   missing or repeated), an `Origin` must be loopback (403), and a POST's
   `Content-Type` must be `application/json` (415). Previously it
   forwarded any request, its `Origin` included, to the upstream server.
+
+### Added
+
+- `mcpeval findings --format json` and `serve`'s finding tools carry
+  `retryable`: `true` when every failure of the group was retryable,
+  `false` when none was, `null` when mixed or unreported.
+- GitHub Action outputs `passed`, `readiness`, `report`, `exit-code`,
+  `diff-exit-code`, and `sarif`.
+- The GitHub Action renders the report as markdown into the job summary.
+- GitHub Action `baseline` input runs `mcpeval diff --fail-on-regression`
+  against a committed report (`fail-on-change: 'true'` adds
+  `--fail-on-change`) and appends the diff to the job summary; the step
+  fails with the diff's exit code when the probe passed.
+- GitHub Action `sarif: 'true'` renders `mcpeval.sarif` and uploads it
+  through `github/codeql-action/upload-sarif@v4`, also when the probe fails.
+- GitHub Action `report-path` input sets where the JSON report is written
+  (default `mcpeval.report.json`).
+- `mcpeval init --tool <NAME>` (repeatable) restricts the candidates to the
+  named tools; a name the catalog lacks, or one init cannot call (annotated
+  as a writer, required arguments, or unattested), exits 2.
+- `mcpeval init --dry-run` prints each catalog tool's decision; it calls no
+  tool, writes no file, and skips the `--output` existence check.
+- `mcpeval.probe-report/v1` gains optional fields: `generator` (name and
+  version), `manifest_sha256` (SHA-256 of the manifest bytes the run
+  parsed), and per case `tool`, `hint` (the remediation for its reason), and
+  `detail` (the declared bound a bound-based failure exceeded, with its
+  limit and the observed value).
+- Published JSON Schemas for the report and diff documents:
+  `docs/mcp-eval.probe-report.schema.json` and
+  `docs/mcp-eval.probe-diff.schema.json`, printed by `mcpeval schema report`
+  and `mcpeval schema diff` (`mcpeval schema` still prints the manifest
+  schema).
+- Manifest `timeout_ms` (100 to 600000): how long each request waits for
+  its response, over stdio and HTTP.
+- `completion` probe: for a server declaring the `completions` capability,
+  one `completion/complete` request for the manifest's reference
+  (`ref_type`/`ref_uri`) and argument must answer a well-formed completion
+  — `completion.values`, an array of strings — within `max_values`
+  (1..=100). A structured error naming the argument is
+  `completion-argument-unknown` (the completion surface out of sync with
+  the prompt's own declarations); a malformed envelope is
+  `completion-invalid-request`; more than `max_values` is
+  `completion-value-flood`; a transport failure is
+  `completion-stalled-request`. Undeclared support passes trivially.
+  Scores under the contract category. The demo server gained a
+  `--broken completion` personality (non-string completion values) and
+  its `welcome` prompt now declares a `language` argument served by
+  `completion/complete`. Manifest JSON schema, remediation hints, and
+  official docs cover the probe.
+- Corpus drift check: `node scripts/corpus/verify.mjs` re-probes every
+  observation in `data/readiness-corpus.json` with the current binary and
+  exits non-zero on any score that moved; a `corpus-drift` workflow runs it
+  weekly and on pull requests touching the corpus or the probe battery, so
+  "reproducible by anyone" stays an enforced property rather than a claim.
+  Agreement tests pin the drift check's launch commands to the collector's
+  arrays.
+- Corpus grew from 19 to 33 observations: `data/readiness-corpus.json` now
+  holds 33 public servers collected with `scripts/corpus/collect.sh` —
+  fifteen additional credential-free servers across the npm and uvx
+  ecosystems (airbnb, sqlite, docker, mermaid, terraform, tavily, ollama,
+  calculator, wikipedia, searxng, git, arxiv), minus `mcp-atlassian`, which
+  lists no tools without credentials. Every prior observation reproduced
+  byte-identically on re-run; every observation now carries catalog
+  measurements.
+- `mcpeval.readiness-corpus/v1` gains optional fields: top-level
+  `battery` (the probe kinds every observation was scored on; defaults to
+  `discovery-cost`, `token-cost`, `pagination`, `surface-listing`; an empty
+  list is rejected) and per observation `tool_count` and `catalog_tokens`.
+  `scripts/corpus/collect.sh` keeps each server's JSON report and writes all
+  three; `scripts/corpus/verify.mjs` still compares scores only. An agreement
+  test pins the collector's battery to the drift check's manifest.
+- Catalog placement line in text and markdown reports when the corpus
+  carries `catalog_tokens` and the report has a token-cost measurement:
+  `catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed
+  servers (median 1186 tokens)`.
+- Findings carry `class` (`unstable-error-code`, `false-success`,
+  `blocked-optimal-path`, `recovers-on-retry`, `retry-did-not-recover`,
+  `recurring-error`), a one-line `hint`, and `err_codes` (every distinct
+  code, sorted). `findings --format agent` adds `class=` and a `hint:`
+  line, and `codes=[…]` on the cause line when there are several; `md`
+  adds `Class`, `Hint`, and `Error codes`; `export-issues` adds a
+  `Diagnosis` section; `serve`'s `list_findings` adds `class=` and
+  `get_finding` adds the hint.
+- `mcpeval findings` with no promoted findings prints `no promoted
+  findings; run mcpeval promote --threshold 0 to see every issue` to
+  stderr and exits 0.
 
 ### Changed
 
@@ -146,6 +234,24 @@
 - A red `mcpeval verify` appends `reason=<reason>` to its line and
   prints the remediation hint on the next line.
 
+
+- `record_annotation` MCP tool on `mcpeval serve`: the write-side agent
+  tool. Records an agent-authored observation about a captured call,
+  identified by `(session, seq)`, through the identical build → validate →
+  `append_annotation` path the `mcpeval annotate` command uses — fixed
+  kind set, 240-character bounded control-character-free note, session
+  hashed before persistence. The agent loop is now fully native: scaffold,
+  probe, read verdicts, record observations, re-run.
+- `mcpeval diff <BASELINE> <CURRENT>`: native baseline gating. Compares two
+  committed `mcpeval.probe-report/v1` documents, matches cases by id and
+  probe kind, and classifies every case as regressed, fixed, or unchanged.
+  `--fail-on-regression` exits non-zero only for regressions — fixes and
+  manifest growth (removed/added cases) are informational. Readiness
+  movement is printed alongside per-case measurement movement (catalog
+  tokens, slowest latency). `--format json` emits a deterministic,
+  versioned `mcpeval.probe-diff/v1` document; `--format markdown` renders a
+  pull-request-ready movement table; either path accepts `-` for stdin.
+
 ### Fixed
 
 - HTTP endpoints on the IPv6 loopback address, such as
@@ -173,111 +279,6 @@
   the body's `Content-Length`, so a body of 16 KiB or more followed by
   any further header was refused with 400 before it was read. The limit
   now counts header bytes only, as the capture proxy does.
-
-### Added
-
-- `mcpeval findings --format json` and `serve`'s finding tools carry
-  `retryable`: `true` when every failure of the group was retryable,
-  `false` when none was, `null` when mixed or unreported.
-- GitHub Action outputs `passed`, `readiness`, `report`, `exit-code`,
-  `diff-exit-code`, and `sarif`.
-- The GitHub Action renders the report as markdown into the job summary.
-- GitHub Action `baseline` input runs `mcpeval diff --fail-on-regression`
-  against a committed report (`fail-on-change: 'true'` adds
-  `--fail-on-change`) and appends the diff to the job summary; the step
-  fails with the diff's exit code when the probe passed.
-- GitHub Action `sarif: 'true'` renders `mcpeval.sarif` and uploads it
-  through `github/codeql-action/upload-sarif@v4`, also when the probe fails.
-- GitHub Action `report-path` input sets where the JSON report is written
-  (default `mcpeval.report.json`).
-- `mcpeval init --tool <NAME>` (repeatable) restricts the candidates to the
-  named tools; a name the catalog lacks, or one init cannot call (annotated
-  as a writer, required arguments, or unattested), exits 2.
-- `mcpeval init --dry-run` prints each catalog tool's decision; it calls no
-  tool, writes no file, and skips the `--output` existence check.
-- `mcpeval.probe-report/v1` gains optional fields: `generator` (name and
-  version), `manifest_sha256` (SHA-256 of the manifest bytes the run
-  parsed), and per case `tool`, `hint` (the remediation for its reason), and
-  `detail` (the declared bound a bound-based failure exceeded, with its
-  limit and the observed value).
-- Published JSON Schemas for the report and diff documents:
-  `docs/mcp-eval.probe-report.schema.json` and
-  `docs/mcp-eval.probe-diff.schema.json`, printed by `mcpeval schema report`
-  and `mcpeval schema diff` (`mcpeval schema` still prints the manifest
-  schema).
-- Manifest `timeout_ms` (100 to 600000): how long each request waits for
-  its response, over stdio and HTTP.
-- `completion` probe: for a server declaring the `completions` capability,
-  one `completion/complete` request for the manifest's reference
-  (`ref_type`/`ref_uri`) and argument must answer a well-formed completion
-  — `completion.values`, an array of strings — within `max_values`
-  (1..=100). A structured error naming the argument is
-  `completion-argument-unknown` (the completion surface out of sync with
-  the prompt's own declarations); a malformed envelope is
-  `completion-invalid-request`; more than `max_values` is
-  `completion-value-flood`; a transport failure is
-  `completion-stalled-request`. Undeclared support passes trivially.
-  Scores under the contract category. The demo server gained a
-  `--broken completion` personality (non-string completion values) and
-  its `welcome` prompt now declares a `language` argument served by
-  `completion/complete`. Manifest JSON schema, remediation hints, and
-  official docs cover the probe.
-- Corpus drift check: `node scripts/corpus/verify.mjs` re-probes every
-  observation in `data/readiness-corpus.json` with the current binary and
-  exits non-zero on any score that moved; a `corpus-drift` workflow runs it
-  weekly and on pull requests touching the corpus or the probe battery, so
-  "reproducible by anyone" stays an enforced property rather than a claim.
-  Agreement tests pin the drift check's launch commands to the collector's
-  arrays.
-- Corpus grew from 19 to 33 observations: `data/readiness-corpus.json` now
-  holds 33 public servers collected with `scripts/corpus/collect.sh` —
-  fifteen additional credential-free servers across the npm and uvx
-  ecosystems (airbnb, sqlite, docker, mermaid, terraform, tavily, ollama,
-  calculator, wikipedia, searxng, git, arxiv), minus `mcp-atlassian`, which
-  lists no tools without credentials. Every prior observation reproduced
-  byte-identically on re-run; every observation now carries catalog
-  measurements.
-- `mcpeval.readiness-corpus/v1` gains optional fields: top-level
-  `battery` (the probe kinds every observation was scored on; defaults to
-  `discovery-cost`, `token-cost`, `pagination`, `surface-listing`; an empty
-  list is rejected) and per observation `tool_count` and `catalog_tokens`.
-  `scripts/corpus/collect.sh` keeps each server's JSON report and writes all
-  three; `scripts/corpus/verify.mjs` still compares scores only. An agreement
-  test pins the collector's battery to the drift check's manifest.
-- Catalog placement line in text and markdown reports when the corpus
-  carries `catalog_tokens` and the report has a token-cost measurement:
-  `catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed
-  servers (median 1186 tokens)`.
-- Findings carry `class` (`unstable-error-code`, `false-success`,
-  `blocked-optimal-path`, `recovers-on-retry`, `retry-did-not-recover`,
-  `recurring-error`), a one-line `hint`, and `err_codes` (every distinct
-  code, sorted). `findings --format agent` adds `class=` and a `hint:`
-  line, and `codes=[…]` on the cause line when there are several; `md`
-  adds `Class`, `Hint`, and `Error codes`; `export-issues` adds a
-  `Diagnosis` section; `serve`'s `list_findings` adds `class=` and
-  `get_finding` adds the hint.
-- `mcpeval findings` with no promoted findings prints `no promoted
-  findings; run mcpeval promote --threshold 0 to see every issue` to
-  stderr and exits 0.
-
-### Changed
-
-- `record_annotation` MCP tool on `mcpeval serve`: the write-side agent
-  tool. Records an agent-authored observation about a captured call,
-  identified by `(session, seq)`, through the identical build → validate →
-  `append_annotation` path the `mcpeval annotate` command uses — fixed
-  kind set, 240-character bounded control-character-free note, session
-  hashed before persistence. The agent loop is now fully native: scaffold,
-  probe, read verdicts, record observations, re-run.
-- `mcpeval diff <BASELINE> <CURRENT>`: native baseline gating. Compares two
-  committed `mcpeval.probe-report/v1` documents, matches cases by id and
-  probe kind, and classifies every case as regressed, fixed, or unchanged.
-  `--fail-on-regression` exits non-zero only for regressions — fixes and
-  manifest growth (removed/added cases) are informational. Readiness
-  movement is printed alongside per-case measurement movement (catalog
-  tokens, slowest latency). `--format json` emits a deterministic,
-  versioned `mcpeval.probe-diff/v1` document; `--format markdown` renders a
-  pull-request-ready movement table; either path accepts `-` for stdin.
 
 ## 0.2.0 - 2026-09-10
 

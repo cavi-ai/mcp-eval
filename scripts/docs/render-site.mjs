@@ -25,10 +25,7 @@ import {
   parseOptions,
 } from "./lib.mjs";
 
-const DEFAULT_DOCS_ROOT = path.join(
-  REPO_ROOT,
-  `docs/${PRODUCT_ID}/v0.2.0`,
-).replace(/v0\.2\.0$/u, "");
+const DEFAULT_DOCS_ROOT = path.join(REPO_ROOT, `docs/${PRODUCT_ID}`);
 
 function escapeHtml(text) {
   return text

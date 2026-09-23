@@ -2,7 +2,8 @@ use anyhow::bail;
 use chrono::{DateTime, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
-use std::collections::{HashMap, HashSet};
+use serde_json::Value;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 const WILSON_Z: f64 = 1.959_963_984_540_054;
@@ -121,6 +122,28 @@ pub struct PromotionConfig {
 pub struct PromotionStats {
     pub issues: usize,
     pub findings: usize,
+    pub single_session: usize,
+    pub below_threshold: usize,
+}
+
+impl PromotionStats {
+    pub fn summary(&self, threshold: f64) -> String {
+        let mut reasons = Vec::new();
+        if self.single_session > 0 {
+            reasons.push(format!("{} seen in one session only", self.single_session));
+        }
+        if self.below_threshold > 0 {
+            reasons.push(format!(
+                "{} below threshold {threshold:.6}",
+                self.below_threshold
+            ));
+        }
+        let mut line = format!("promoted {} of {} issues", self.findings, self.issues);
+        if !reasons.is_empty() {
+            line.push_str(&format!(" ({})", reasons.join(", ")));
+        }
+        line
+    }
 }
 
 #[derive(Deserialize)]
@@ -151,7 +174,6 @@ pub fn resolve_threshold(root: &Path, explicit: Option<f64>) -> anyhow::Result<f
 struct IssueKey {
     server: String,
     tool: Option<String>,
-    err_code: Option<String>,
     err_template_id: Option<String>,
 }
 
@@ -161,6 +183,8 @@ struct Failure {
     session: String,
     ts: String,
     args: Option<String>,
+    err_code: Option<String>,
+    retryable: Option<i64>,
 }
 
 const DERIVED_SCHEMA: &str = "
@@ -168,7 +192,8 @@ DROP TABLE IF EXISTS findings;
 DROP TABLE IF EXISTS issues;
 CREATE TABLE issues (
   id INTEGER PRIMARY KEY, finding_id TEXT NOT NULL UNIQUE,
-  server TEXT NOT NULL, tool TEXT, err_code TEXT, err_template_id TEXT,
+  server TEXT NOT NULL, tool TEXT, err_code TEXT, err_codes TEXT NOT NULL,
+  err_template_id TEXT, class TEXT NOT NULL,
   failures INTEGER NOT NULL, calls INTEGER NOT NULL, sessions INTEGER NOT NULL,
   last_seen TEXT NOT NULL, cost REAL NOT NULL, blast INTEGER NOT NULL,
   rate REAL NOT NULL, confidence REAL NOT NULL, recency REAL NOT NULL,
@@ -193,15 +218,14 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
     let mut grouped: HashMap<IssueKey, Vec<Failure>> = HashMap::new();
     {
         let mut statement = db.prepare(
-            "SELECT id, session, ts, server, tool, err_code, err_template_id, args
-             FROM calls WHERE outcome='error' AND method='tools/call'",
+            "SELECT id, session, ts, server, tool, err_code, err_template_id, args, err_retryable
+             FROM calls WHERE outcome='error' AND method='tools/call' AND kind='real'",
         )?;
         let rows = statement.query_map([], |row| {
             Ok((
                 IssueKey {
                     server: row.get(3)?,
                     tool: row.get(4)?,
-                    err_code: row.get(5)?,
                     err_template_id: row.get(6)?,
                 },
                 Failure {
@@ -209,6 +233,8 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
                     session: row.get(1)?,
                     ts: row.get(2)?,
                     args: row.get(7)?,
+                    err_code: row.get(5)?,
+                    retryable: row.get(8)?,
                 },
             ))
         })?;
@@ -222,10 +248,12 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
     transaction.execute_batch(crate::lifecycle::SCHEMA)?;
     transaction.execute_batch(DERIVED_SCHEMA)?;
     let mut findings = 0usize;
+    let mut single_session = 0usize;
+    let mut below_threshold = 0usize;
     for (key, failures) in grouped {
         let calls: u64 = transaction.query_row(
             "SELECT COUNT(*) FROM calls
-             WHERE method='tools/call' AND server=?1 AND tool IS ?2",
+             WHERE method='tools/call' AND kind='real' AND server=?1 AND tool IS ?2",
             params![key.server, key.tool],
             |row| row.get::<_, i64>(0),
         )? as u64;
@@ -255,7 +283,10 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         if let Some(tool) = key.tool.as_ref() {
             tools.insert(tool.clone());
         }
-        let mut uplift = false;
+        let mut evidence = crate::diagnosis::Evidence {
+            all_retryable: failures.iter().all(|failure| failure.retryable == Some(1)),
+            ..Default::default()
+        };
         for failure in &failures {
             let real_neighbours: u64 = transaction.query_row(
                 "SELECT COUNT(DISTINCT c.id) FROM windows w
@@ -273,18 +304,51 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
             for tool in tool_statement.query_map([failure.id], |row| row.get::<_, String>(0))? {
                 tools.insert(tool?);
             }
-            uplift |= transaction
-                .query_row(
-                    "SELECT 1 FROM calls c JOIN annotations a
-                     ON a.session=c.session AND a.seq=c.seq
-                     WHERE c.id=?1 AND a.kind IN ('false-success','blocked-optimal-path')
-                     LIMIT 1",
-                    [failure.id],
-                    |_| Ok(true),
-                )
-                .optional()?
-                .unwrap_or(false);
+            let mut annotation_statement = transaction.prepare(
+                "SELECT DISTINCT a.kind FROM calls c JOIN annotations a
+                 ON a.session=c.session AND a.seq=c.seq
+                 WHERE c.id=?1 AND a.kind IN ('false-success','blocked-optimal-path')",
+            )?;
+            for kind in
+                annotation_statement.query_map([failure.id], |row| row.get::<_, String>(0))?
+            {
+                match kind?.as_str() {
+                    "false-success" => evidence.false_success = true,
+                    _ => evidence.blocked_optimal_path = true,
+                }
+            }
+            if evidence.all_retryable && !evidence.recovered {
+                evidence.recovered = transaction
+                    .query_row(
+                        "SELECT 1 FROM windows w JOIN calls c ON c.id=w.neighbour_id
+                         WHERE w.failure_id=?1 AND w.offset>0 AND c.tool IS ?2 AND c.outcome='ok'
+                         LIMIT 1",
+                        params![failure.id, key.tool],
+                        |_| Ok(true),
+                    )
+                    .optional()?
+                    .unwrap_or(false);
+            }
         }
+        let mut code_counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for code in failures
+            .iter()
+            .filter_map(|failure| failure.err_code.as_deref())
+        {
+            *code_counts.entry(code).or_default() += 1;
+        }
+        let err_code = code_counts
+            .iter()
+            .max_by(|left, right| left.1.cmp(right.1).then(right.0.cmp(left.0)))
+            .map(|(code, _)| *code);
+        let err_codes = serde_json::to_string(
+            &code_counts
+                .keys()
+                .map(|code| serde_json::from_str::<Value>(code))
+                .collect::<Result<Vec<_>, _>>()?,
+        )?;
+        evidence.distinct_codes = code_counts.len();
+        let class = crate::diagnosis::FindingClass::classify(evidence);
         costs.sort_by(f64::total_cmp);
         let cost = if costs.len() % 2 == 1 {
             costs[costs.len() / 2]
@@ -303,9 +367,10 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         let finding_id = crate::lifecycle::finding_id(
             &key.server,
             key.tool.as_deref(),
-            key.err_code.as_deref(),
+            None,
             key.err_template_id.as_deref(),
         );
+        migrate_lifecycle(&transaction, &key, &finding_id)?;
         let has_probe: bool = transaction
             .query_row(
                 "SELECT probe_id IS NOT NULL FROM finding_lifecycle WHERE finding_id=?1",
@@ -321,7 +386,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         } else {
             0
         };
-        if uplift {
+        if evidence.false_success || evidence.blocked_optimal_path {
             severity_rank = (severity_rank + 1).min(2);
         }
         if !has_probe {
@@ -331,15 +396,17 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         let args = failures.iter().find_map(|failure| failure.args.as_deref());
         transaction.execute(
             "INSERT INTO issues
-             (finding_id,server,tool,err_code,err_template_id,failures,calls,sessions,last_seen,
-              cost,blast,rate,confidence,recency,score,threshold,severity,args)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+             (finding_id,server,tool,err_code,err_codes,err_template_id,class,failures,calls,
+              sessions,last_seen,cost,blast,rate,confidence,recency,score,threshold,severity,args)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
             params![
                 finding_id,
                 key.server,
                 key.tool,
-                key.err_code,
+                err_code,
+                err_codes,
                 key.err_template_id,
+                class.as_str(),
                 failures.len() as i64,
                 calls as i64,
                 sessions as i64,
@@ -355,7 +422,11 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
                 args,
             ],
         )?;
-        if sessions >= 2 && parts.score >= config.threshold {
+        if sessions < 2 {
+            single_session += 1;
+        } else if parts.score < config.threshold {
+            below_threshold += 1;
+        } else {
             let issue_id = transaction.last_insert_rowid();
             transaction.execute(
                 "INSERT INTO findings(issue_id,finding_id) VALUES (?1,?2)",
@@ -370,7 +441,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
                     finding_id,
                     key.server,
                     key.tool,
-                    key.err_code,
+                    err_code,
                     key.err_template_id,
                     config.now.to_rfc3339_opts(SecondsFormat::Millis, true),
                 ],
@@ -382,7 +453,50 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         row.get::<_, i64>(0)
     })? as usize;
     transaction.commit()?;
-    Ok(PromotionStats { issues, findings })
+    Ok(PromotionStats {
+        issues,
+        findings,
+        single_session,
+        below_threshold,
+    })
+}
+
+/// Moves the most recently updated lifecycle row recorded for this
+/// server, tool, and template under an earlier finding ID onto `finding_id`,
+/// with its probe history, and drops the rest.
+fn migrate_lifecycle(
+    transaction: &rusqlite::Transaction<'_>,
+    key: &IssueKey,
+    finding_id: &str,
+) -> anyhow::Result<()> {
+    let ids = transaction
+        .prepare(
+            "SELECT finding_id FROM finding_lifecycle
+             WHERE server=?1 AND tool IS ?2 AND err_template_id IS ?3
+             ORDER BY updated_at DESC, finding_id",
+        )?
+        .query_map(params![key.server, key.tool, key.err_template_id], |row| {
+            row.get::<_, String>(0)
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if ids.iter().all(|id| id == finding_id) {
+        return Ok(());
+    }
+    for stale in &ids[1..] {
+        transaction.execute("DELETE FROM probe_history WHERE finding_id=?1", [stale])?;
+        transaction.execute("DELETE FROM finding_lifecycle WHERE finding_id=?1", [stale])?;
+    }
+    if ids[0] != finding_id {
+        transaction.execute(
+            "UPDATE finding_lifecycle SET finding_id=?2 WHERE finding_id=?1",
+            params![ids[0], finding_id],
+        )?;
+        transaction.execute(
+            "UPDATE probe_history SET finding_id=?2 WHERE finding_id=?1",
+            params![ids[0], finding_id],
+        )?;
+    }
+    Ok(())
 }
 
 fn ensure_index_schema(db: &Connection) -> anyhow::Result<()> {

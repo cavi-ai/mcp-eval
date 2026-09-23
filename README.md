@@ -370,9 +370,16 @@ or fragments; redirects are disabled. Optional authorization is read from
 `MCPEVAL_HTTP_AUTHORIZATION`, validated, and never persisted or printed.
 Responses are bounded to 8 MiB with five-second network timeouts.
 
-Promotion groups failures by server, tool, error code, and salted template
-identifier. Its score combines the 95% Wilson lower bound of the observed
-rate, fourteen-day recency decay, median failure-window turns, and
+Promotion counts captured calls only, never `mcpeval probe` calls, and
+groups failures by server, tool, and salted template identifier. A finding
+keeps every distinct error code of its group in `err_codes` and the most
+frequent in `err_code`, and carries a defect class (`unstable-error-code`,
+`false-success`, `blocked-optimal-path`, `recovers-on-retry`,
+`retry-did-not-recover`, or `recurring-error`) with a one-line server-side
+fix hint. Finding IDs from earlier releases, which included the error code,
+re-key once on the next `mcpeval promote`; the most recently updated
+lifecycle state and its probe history move to the new ID. The promotion
+score combines the 95% Wilson lower bound of the observed rate, fourteen-day recency decay, median failure-window turns, and
 distinct-tool blast radius. An issue never becomes a finding until it appears
 in two distinct sessions, even with a zero threshold. The default threshold is
 calibrated from the checked-in synthetic seed corpus; override it with

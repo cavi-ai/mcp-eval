@@ -71,6 +71,17 @@
   servers`); a report with no case of the battery prints none.
 - The text `--price-per-mtok` cost line also appears when the token-cost
   case failed its budget, as the markdown report's already did.
+- `mcpeval promote` groups failures by server, tool, and template
+  identifier; the error code is no longer part of the key, so one template
+  returned with several codes is one issue.
+- Finding IDs no longer include the error code. The next `mcpeval promote`
+  moves the most recently updated lifecycle row for the same server, tool,
+  and template, with its probe history, to the new ID and drops the rest.
+- Promotion counts only `kind: real` calls and failures; `mcpeval probe`
+  calls no longer create issues or inflate call counts.
+- `mcpeval promote` appends why issues were not promoted:
+  `promoted 0 of 2 issues (1 seen in one session only, 1 below threshold
+  0.800000)`; zero counts are omitted.
 
 ### Fixed
 
@@ -150,6 +161,17 @@
   carries `catalog_tokens` and the report has a token-cost measurement:
   `catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed
   servers (median 1186 tokens)`.
+- Findings carry `class` (`unstable-error-code`, `false-success`,
+  `blocked-optimal-path`, `recovers-on-retry`, `retry-did-not-recover`,
+  `recurring-error`), a one-line `hint`, and `err_codes` (every distinct
+  code, sorted). `findings --format agent` adds `class=` and a `hint:`
+  line, and `codes=[…]` on the cause line when there are several; `md`
+  adds `Class`, `Hint`, and `Error codes`; `export-issues` adds a
+  `Diagnosis` section; `serve`'s `list_findings` adds `class=` and
+  `get_finding` adds the hint.
+- `mcpeval findings` with no promoted findings prints `no promoted
+  findings; run mcpeval promote --threshold 0 to see every issue` to
+  stderr and exits 0.
 
 ### Changed
 

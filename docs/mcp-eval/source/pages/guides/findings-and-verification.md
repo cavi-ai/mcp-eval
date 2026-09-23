@@ -1,6 +1,6 @@
 # Findings and verification
 
-Indexing reads JSONL capture records into SQLite and derives failure windows. Promotion groups recurring failures by server, tool, error code, and salted template identifier:
+Indexing reads JSONL capture records into SQLite and derives failure windows. Promotion groups recurring failures from captured calls (never `mcpeval probe` calls) by server, tool, and salted template identifier:
 
 ```sh
 mcpeval index
@@ -8,9 +8,24 @@ mcpeval promote
 mcpeval findings --format md
 ```
 
+A finding keeps every distinct error code of its group in `err_codes` and the most frequent in `err_code`. Each finding carries a defect class and a one-line server-side fix hint; when several classes apply, the first in this order wins:
+
+| Class | Evidence |
+| --- | --- |
+| `unstable-error-code` | the group returned more than one error code |
+| `false-success` | a failure carries a `false-success` annotation |
+| `blocked-optimal-path` | a failure carries a `blocked-optimal-path` annotation |
+| `recovers-on-retry` | every failure is retryable and, after at least one, a call to the same tool within the next three calls of the session succeeded |
+| `retry-did-not-recover` | every failure is retryable and no such recovery was captured |
+| `recurring-error` | none of the above |
+
+Finding IDs from earlier releases, which included the error code, re-key once on the next `mcpeval promote`: the most recently updated lifecycle state and its probe history move to the new ID, and older duplicates are dropped.
+
+`mcpeval promote` prints `promoted F of I issues`, followed by how many issues were seen in one session only and how many scored below the threshold when either count is nonzero. When there are no promoted findings, `mcpeval findings` writes a one-line explanation to stderr and exits 0.
+
 Use `--threshold <number>` for a one-run promotion threshold override. It takes precedence over `promotion_threshold` in `<MCPEVAL_HOME>/config.json`; thresholds must be finite and non-negative. An issue still needs evidence from two distinct sessions before promotion.
 
-`findings` supports `agent`, `md`, and `json`. Every format contains sanitized identifiers, aggregate metrics, and already-shaped arguments—not raw error templates, annotation notes, sessions, salt, or raw argument values.
+`findings` supports `agent`, `md`, and `json`. Every format contains sanitized identifiers, aggregate metrics, the defect class and fix hint, and already-shaped arguments—not raw error templates, annotation notes, sessions, salt, or raw argument values.
 
 Add a bounded human observation to a captured call with:
 

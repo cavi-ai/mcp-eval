@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cavi-ai/mcp-eval/main/docs/mcp-eval.probe-diff.schema.json",
+  "title": "mcpeval.probe-diff/v1",
+  "description": "Deterministic diff of two mcpeval.probe-report/v1 documents of one server, emitted by `mcpeval diff --format json`. Version 1 grows only by optional fields, so unknown properties are allowed. Retrieve with: mcpeval schema diff",
+  "type": "object",
+  "required": [
+    "schema",
+    "readiness",
+    "summary",
+    "cases",
+    "removed",
+    "added"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mcpeval.probe-diff/v1"
+    },
+    "readiness": {
+      "type": "object",
+      "required": [
+        "baseline",
+        "current"
+      ],
+      "properties": {
+        "baseline": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "current": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "regressed",
+        "fixed",
+        "changed",
+        "unchanged",
+        "removed",
+        "added"
+      ],
+      "properties": {
+        "regressed": {
+          "$ref": "#/$defs/count"
+        },
+        "fixed": {
+          "$ref": "#/$defs/count"
+        },
+        "changed": {
+          "$ref": "#/$defs/count"
+        },
+        "unchanged": {
+          "$ref": "#/$defs/count"
+        },
+        "removed": {
+          "$ref": "#/$defs/count"
+        },
+        "added": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    },
+    "removed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Case ids present only in the baseline."
+    },
+    "added": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Case ids present only in the current report."
+    }
+  },
+  "$defs": {
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reason": {
+      "oneOf": [
+        {
+          "enum": [
+            "unexpected-outcome",
+            "missing-field",
+            "value-mismatch",
+            "error-code-mismatch",
+            "discovery-limit-exceeded",
+            "token-budget-exceeded",
+            "invalid-schema",
+            "missing-required-argument",
+            "expected-error",
+            "unstable-error-code",
+            "retryability-mismatch",
+            "retry-did-not-recover",
+            "failure-not-observed",
+            "recovery-failed",
+            "validation-failed",
+            "contended-client-failed",
+            "latency-budget-exceeded",
+            "pagination-invalid-entry",
+            "pagination-duplicate-tool",
+            "pagination-stalled-cursor",
+            "payload-unhandled",
+            "surface-invalid-envelope",
+            "surface-stalled-cursor",
+            "output-schema-declared-but-missing",
+            "output-schema-field-missing",
+            "cancellation-ignored",
+            "cancellation-errored",
+            "negotiation-echoed-unknown",
+            "negotiation-invalid-version",
+            "negotiation-inconsistent-support",
+            "sampling-invalid-request",
+            "sampling-request-flood",
+            "sampling-stalled-call",
+            "elicitation-invalid-request",
+            "elicitation-request-flood",
+            "elicitation-stalled-call",
+            "resource-unreadable",
+            "subscription-rejected",
+            "subscription-notification-missing",
+            "completion-invalid-request",
+            "completion-value-flood",
+            "completion-argument-unknown",
+            "completion-stalled-request",
+            "transport-timeout",
+            "transport-closed",
+            "transport-error"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pair": {
+      "type": "object",
+      "required": [
+        "baseline",
+        "current"
+      ],
+      "properties": {
+        "baseline": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "current": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "id",
+        "probe",
+        "verdict",
+        "baseline_reason",
+        "current_reason",
+        "measurements"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "probe": {
+          "enum": [
+            "contention",
+            "error-honesty",
+            "state-recovery",
+            "discovery-cost",
+            "token-cost",
+            "schema-guessability",
+            "degradation-over-n",
+            "instruction-fidelity",
+            "latency-budget",
+            "pagination",
+            "payload-bounds",
+            "surface-listing",
+            "output-schema",
+            "cancellation",
+            "protocol-negotiation",
+            "sampling",
+            "elicitation",
+            "resource-subscription",
+            "completion"
+          ]
+        },
+        "verdict": {
+          "enum": [
+            "regressed",
+            "fixed",
+            "changed",
+            "unchanged"
+          ]
+        },
+        "baseline_reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "current_reason": {
+          "$ref": "#/$defs/reason"
+        },
+        "measurements": {
+          "type": "object",
+          "properties": {
+            "total_tokens": {
+              "$ref": "#/$defs/pair"
+            },
+            "latency_ms": {
+              "$ref": "#/$defs/pair"
+            }
+          }
+        }
+      }
+    }
+  }
+}

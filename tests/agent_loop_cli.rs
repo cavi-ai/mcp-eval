@@ -88,19 +88,20 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
         ])
         .env("MCPEVAL_HOME", &dir)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let http = format!("http://127.0.0.1:{port}/mcp");
-    let mut up = false;
-    for _ in 0..50 {
-        if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
-            up = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-    assert!(up, "serve listener never came up");
+    // Wait for this child's own bind announcement, not merely an open port;
+    // keep draining stderr so serve never writes into a closed pipe.
+    let mut stderr = BufReader::new(server.stderr.take().unwrap());
+    let mut announcement = String::new();
+    stderr.read_line(&mut announcement).unwrap();
+    assert!(
+        announcement.contains(&http),
+        "serve did not start: {announcement}"
+    );
+    std::thread::spawn(move || stderr.lines().for_each(drop));
 
     // tools/list advertises the agent-loop surface.
     let (_, listed) = raw_call(

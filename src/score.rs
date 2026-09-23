@@ -157,6 +157,8 @@ mod tests {
         CaseReport {
             id: format!("{}-case", probe.as_str()),
             probe,
+            tool: None,
+            detail: None,
             attempts: 1,
             first_failure: reason.map(|_| 1),
             reason,
@@ -170,7 +172,10 @@ mod tests {
 
     #[test]
     fn empty_report_scores_zero() {
-        let score = readiness(&ProbeReport { cases: vec![] });
+        let score = readiness(&ProbeReport {
+            cases: vec![],
+            manifest_sha256: None,
+        });
         assert_eq!(score.overall, 0);
         assert!(score.categories.is_empty());
     }
@@ -191,7 +196,10 @@ mod tests {
         ]
         .map(|probe| case(probe, None))
         .into();
-        let score = readiness(&ProbeReport { cases });
+        let score = readiness(&ProbeReport {
+            cases,
+            manifest_sha256: None,
+        });
         assert_eq!(score.overall, 100);
         assert_eq!(score.categories.len(), 4);
         assert!(score.to_json()["badge"]
@@ -209,7 +217,14 @@ mod tests {
         ]
         .map(|probe| case(probe, None))
         .into();
-        assert_eq!(readiness(&ProbeReport { cases }).overall, 100);
+        assert_eq!(
+            readiness(&ProbeReport {
+                cases,
+                manifest_sha256: None,
+            })
+            .overall,
+            100
+        );
 
         // One failing discovery case out of one: discovery is half of its
         // category pair... a single failing case drags only its category.
@@ -217,7 +232,10 @@ mod tests {
             ProbeKind::TokenCost,
             Some(FailureReason::UnexpectedOutcome),
         )];
-        let score = readiness(&ProbeReport { cases });
+        let score = readiness(&ProbeReport {
+            cases,
+            manifest_sha256: None,
+        });
         assert_eq!(score.overall, 0);
         assert_eq!(score.categories[0].total, 1);
     }
@@ -237,7 +255,14 @@ mod tests {
             ),
         ];
         let expected = ((0.3 * 0.5_f64 + 0.35 + 0.125) / 0.9 * 100.0).round() as u64;
-        assert_eq!(readiness(&ProbeReport { cases }).overall, expected);
+        assert_eq!(
+            readiness(&ProbeReport {
+                cases,
+                manifest_sha256: None,
+            })
+            .overall,
+            expected
+        );
     }
 
     #[test]

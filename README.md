@@ -149,10 +149,12 @@ mcpeval explain   # list every fixed reason
 ```
 
 `--format json` emits a versioned, deterministic document
-(`mcpeval.probe-report/v1`): server label, per-case verdicts, fixed reason
-labels, measurement numbers, and the readiness score — no timestamps,
-sessions, or payloads, so it is safe to commit as a baseline or attach to CI
-artifacts.
+(`mcpeval.probe-report/v1`): generator version, server label, manifest
+SHA-256, per-case verdicts, tool names, fixed reason labels with their
+remediation hints and the declared bound that failed, measurement numbers,
+and the readiness score — no timestamps, sessions, or payloads, so it is safe
+to commit as a baseline or attach to CI artifacts. `mcpeval schema report`
+and `mcpeval schema diff` print its JSON Schema and the diff document's.
 
 ```sh
 mcpeval probe --server demo --manifest mcp-eval.manifest.json \

@@ -1,0 +1,316 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/cavi-ai/mcp-eval/main/docs/mcp-eval.probe-report.schema.json",
+  "title": "mcpeval.probe-report/v1",
+  "description": "Deterministic, share-safe probe report emitted by `mcpeval probe --format json`. Version 1 grows only by optional fields, so unknown properties are allowed. Retrieve with: mcpeval schema report",
+  "type": "object",
+  "required": [
+    "schema",
+    "server",
+    "passed",
+    "readiness",
+    "cases"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mcpeval.probe-report/v1"
+    },
+    "generator": {
+      "type": "object",
+      "description": "The mcpeval build that produced the report.",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "mcpeval"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "server": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The validated server label."
+    },
+    "manifest_sha256": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "SHA-256 of the manifest bytes the run parsed."
+    },
+    "passed": {
+      "type": "boolean",
+      "description": "Every case passed."
+    },
+    "readiness": {
+      "$ref": "#/$defs/readiness"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "$defs": {
+    "count": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reason": {
+      "enum": [
+        "unexpected-outcome",
+        "missing-field",
+        "value-mismatch",
+        "error-code-mismatch",
+        "discovery-limit-exceeded",
+        "token-budget-exceeded",
+        "invalid-schema",
+        "missing-required-argument",
+        "expected-error",
+        "unstable-error-code",
+        "retryability-mismatch",
+        "retry-did-not-recover",
+        "failure-not-observed",
+        "recovery-failed",
+        "validation-failed",
+        "contended-client-failed",
+        "latency-budget-exceeded",
+        "pagination-invalid-entry",
+        "pagination-duplicate-tool",
+        "pagination-stalled-cursor",
+        "payload-unhandled",
+        "surface-invalid-envelope",
+        "surface-stalled-cursor",
+        "output-schema-declared-but-missing",
+        "output-schema-field-missing",
+        "cancellation-ignored",
+        "cancellation-errored",
+        "negotiation-echoed-unknown",
+        "negotiation-invalid-version",
+        "negotiation-inconsistent-support",
+        "sampling-invalid-request",
+        "sampling-request-flood",
+        "sampling-stalled-call",
+        "elicitation-invalid-request",
+        "elicitation-request-flood",
+        "elicitation-stalled-call",
+        "resource-unreadable",
+        "subscription-rejected",
+        "subscription-notification-missing",
+        "completion-invalid-request",
+        "completion-value-flood",
+        "completion-argument-unknown",
+        "completion-stalled-request",
+        "transport-timeout",
+        "transport-closed",
+        "transport-error"
+      ],
+      "description": "Fixed failure label; transport-* means the case could not be evaluated. `mcpeval explain <reason>` prints the fix."
+    },
+    "readiness": {
+      "type": "object",
+      "required": [
+        "score",
+        "categories",
+        "badge"
+      ],
+      "properties": {
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "passed",
+              "total"
+            ],
+            "properties": {
+              "name": {
+                "enum": [
+                  "discovery",
+                  "reliability",
+                  "contract",
+                  "concurrency"
+                ]
+              },
+              "passed": {
+                "$ref": "#/$defs/count"
+              },
+              "total": {
+                "$ref": "#/$defs/count"
+              }
+            }
+          }
+        },
+        "badge": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "id",
+        "probe",
+        "passed",
+        "attempts",
+        "first_failure",
+        "reason",
+        "measurements"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,63}$"
+        },
+        "probe": {
+          "enum": [
+            "contention",
+            "error-honesty",
+            "state-recovery",
+            "discovery-cost",
+            "token-cost",
+            "schema-guessability",
+            "degradation-over-n",
+            "instruction-fidelity",
+            "latency-budget",
+            "pagination",
+            "payload-bounds",
+            "surface-listing",
+            "output-schema",
+            "cancellation",
+            "protocol-negotiation",
+            "sampling",
+            "elicitation",
+            "resource-subscription",
+            "completion"
+          ]
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The tool the case calls, when it calls one."
+        },
+        "passed": {
+          "type": "boolean"
+        },
+        "attempts": {
+          "$ref": "#/$defs/count"
+        },
+        "first_failure": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "reason": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/reason"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hint": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "The server-side remediation for the reason."
+        },
+        "detail": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "bound",
+                "limit",
+                "observed"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "bound": {
+                  "enum": [
+                    "max_tools",
+                    "max_schema_bytes",
+                    "max_total_tokens",
+                    "max_tool_tokens",
+                    "max_latency_ms",
+                    "max_pages"
+                  ]
+                },
+                "limit": {
+                  "$ref": "#/$defs/count"
+                },
+                "observed": {
+                  "$ref": "#/$defs/count"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The manifest bound a bound-based failure exceeded, beside the observed value."
+        },
+        "measurements": {
+          "type": "object",
+          "properties": {
+            "tool_count": {
+              "$ref": "#/$defs/count"
+            },
+            "schema_bytes": {
+              "$ref": "#/$defs/count"
+            },
+            "total_tokens": {
+              "$ref": "#/$defs/count"
+            },
+            "per_tool": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "tool",
+                  "tokens"
+                ],
+                "properties": {
+                  "tool": {
+                    "type": "string"
+                  },
+                  "tokens": {
+                    "$ref": "#/$defs/count"
+                  }
+                }
+              }
+            },
+            "latency_ms": {
+              "$ref": "#/$defs/count"
+            },
+            "pages": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        }
+      }
+    }
+  }
+}

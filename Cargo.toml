@@ -31,6 +31,7 @@ nix = { version = "0.31", features = ["poll"] }
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_IO"] }
 
 [dev-dependencies]
+jsonschema = { version = "0.56", default-features = false }
 uuid = { version = "1", features = ["v4"] }
 
 [lib]

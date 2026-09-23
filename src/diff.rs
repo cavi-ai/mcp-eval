@@ -455,6 +455,8 @@ mod tests {
         CaseReport {
             id: id.to_owned(),
             probe,
+            tool: None,
+            detail: None,
             attempts: 1,
             first_failure: reason.map(|_| 1),
             reason,
@@ -478,6 +480,7 @@ mod tests {
                 ),
                 case("c", crate::manifest::ProbeKind::Contention, None),
             ],
+            manifest_sha256: None,
         };
         let current = ProbeReport {
             cases: vec![
@@ -489,6 +492,7 @@ mod tests {
                 case("b", crate::manifest::ProbeKind::ErrorHonesty, None),
                 case("c", crate::manifest::ProbeKind::Contention, None),
             ],
+            manifest_sha256: None,
         };
         let outcome = diff(&baseline, &current);
         assert_eq!(outcome.regressed(), 1);
@@ -507,6 +511,7 @@ mod tests {
                 crate::manifest::ProbeKind::Pagination,
                 Some(FailureReason::PaginationDuplicateTool),
             )],
+            manifest_sha256: None,
         };
         let current = ProbeReport {
             cases: vec![case(
@@ -514,6 +519,7 @@ mod tests {
                 crate::manifest::ProbeKind::Pagination,
                 Some(FailureReason::PaginationStalledCursor),
             )],
+            manifest_sha256: None,
         };
         let outcome = diff(&baseline, &current);
         assert_eq!(outcome.cases[0].verdict, Verdict::Changed);
@@ -531,9 +537,11 @@ mod tests {
     fn added_and_removed_cases_are_informational_only() {
         let baseline = ProbeReport {
             cases: vec![case("old", crate::manifest::ProbeKind::DiscoveryCost, None)],
+            manifest_sha256: None,
         };
         let current = ProbeReport {
             cases: vec![case("new", crate::manifest::ProbeKind::DiscoveryCost, None)],
+            manifest_sha256: None,
         };
         let outcome = diff(&baseline, &current);
         assert_eq!(outcome.missing, vec!["old".to_owned()]);
@@ -546,6 +554,7 @@ mod tests {
     fn readiness_movement_is_reported() {
         let baseline = ProbeReport {
             cases: vec![case("a", crate::manifest::ProbeKind::DiscoveryCost, None)],
+            manifest_sha256: None,
         };
         let current = ProbeReport {
             cases: vec![case(
@@ -553,6 +562,7 @@ mod tests {
                 crate::manifest::ProbeKind::DiscoveryCost,
                 Some(FailureReason::UnexpectedOutcome),
             )],
+            manifest_sha256: None,
         };
         let outcome = diff(&baseline, &current);
         assert_eq!(outcome.baseline_score, readiness(&baseline).overall);
@@ -575,9 +585,11 @@ mod tests {
         let outcome = diff(
             &ProbeReport {
                 cases: vec![baseline_case],
+                manifest_sha256: None,
             },
             &ProbeReport {
                 cases: vec![current_case],
+                manifest_sha256: None,
             },
         );
         assert_eq!(outcome.total_tokens, Some((100, 260)));
@@ -596,9 +608,11 @@ mod tests {
         let outcome = diff(
             &ProbeReport {
                 cases: vec![baseline_case],
+                manifest_sha256: None,
             },
             &ProbeReport {
                 cases: vec![current_case],
+                manifest_sha256: None,
             },
         );
         assert_eq!(outcome.total_tokens, None);

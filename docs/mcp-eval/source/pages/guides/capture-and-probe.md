@@ -46,10 +46,12 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
   --format json --probe token-cost -- your-mcp-server --flags
 ```
 
-The JSON schema is `mcpeval.probe-report/v1`. It contains only the validated
-server label, case and probe identifiers, fixed failure labels, pass state,
-and numeric measurements. It has no timestamps, sessions, arguments,
-responses, descriptions, schemas, or raw error text.
+The JSON schema is `mcpeval.probe-report/v1` (`mcpeval schema report`). It
+contains only the generator, the validated server label, the manifest's
+SHA-256, case, probe, and tool identifiers, fixed failure labels with their
+remediation hints and declared bounds, pass state, and numeric measurements.
+It has no timestamps, sessions, arguments, responses, descriptions, schemas,
+or raw error text.
 
 Mutating cases are rejected unless each case names a declared sandbox and the invocation includes `--allow-mutation`. The flag authorizes only manifest-declared cases; it does not turn capture into a mutation capability.
 

@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Barrier};
 use std::time::{Duration, Instant};
@@ -483,13 +484,27 @@ pub struct TokenUsage {
     pub per_tool: Vec<ToolTokenUsage>,
 }
 
+/// The manifest bound a failing case exceeded, beside the observed value:
+/// share-safe numbers only.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoundDetail {
+    /// The manifest field that set the limit, such as `max_tools`.
+    pub bound: &'static str,
+    pub limit: u64,
+    pub observed: u64,
+}
+
 #[derive(Debug)]
 pub struct CaseReport {
     pub id: String,
     pub probe: ProbeKind,
+    /// The tool the case calls, when it calls one.
+    pub tool: Option<String>,
     pub attempts: u64,
     pub first_failure: Option<u64>,
     pub reason: Option<FailureReason>,
+    /// The bound behind a bound-based failure.
+    pub detail: Option<BoundDetail>,
     pub tool_count: Option<u64>,
     pub schema_bytes: Option<u64>,
     pub token_usage: Option<TokenUsage>,
@@ -500,6 +515,24 @@ pub struct CaseReport {
 }
 
 impl CaseReport {
+    /// A report for `case` with no attempts, verdict, or measurements yet.
+    fn for_case(case: &ProbeCase) -> Self {
+        Self {
+            id: case.id().to_owned(),
+            probe: case.kind(),
+            tool: case.tool().map(str::to_owned),
+            attempts: 0,
+            first_failure: None,
+            reason: None,
+            detail: None,
+            tool_count: None,
+            schema_bytes: None,
+            token_usage: None,
+            latency_ms: None,
+            pages: None,
+        }
+    }
+
     pub fn passed(&self) -> bool {
         self.reason.is_none()
     }
@@ -513,6 +546,8 @@ impl CaseReport {
 #[derive(Debug)]
 pub struct ProbeReport {
     pub cases: Vec<CaseReport>,
+    /// Lowercase hex SHA-256 of the manifest bytes the run parsed.
+    pub manifest_sha256: Option<String>,
 }
 
 impl ProbeReport {
@@ -580,6 +615,10 @@ impl ProbeReport {
                     .context("case is missing an id")?
                     .to_owned(),
                 probe,
+                tool: case
+                    .get("tool")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::to_owned),
                 attempts: case
                     .get("attempts")
                     .and_then(serde_json::Value::as_u64)
@@ -588,6 +627,7 @@ impl ProbeReport {
                     .get("first_failure")
                     .and_then(serde_json::Value::as_u64),
                 reason,
+                detail: None,
                 tool_count: measurements
                     .get("tool_count")
                     .and_then(serde_json::Value::as_u64),
@@ -603,7 +643,13 @@ impl ProbeReport {
                     .and_then(serde_json::Value::as_u64),
             });
         }
-        Ok(Self { cases: parsed })
+        Ok(Self {
+            cases: parsed,
+            manifest_sha256: document
+                .get("manifest_sha256")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned),
+        })
     }
 
     pub fn passed(&self) -> bool {
@@ -617,9 +663,11 @@ impl ProbeReport {
 
     /// Versioned, deterministic JSON document: no timestamps, no session
     /// identifiers, cases in manifest order. Contains only share-safe
-    /// fields — server label, case IDs, probe kinds, counts, fixed reason
-    /// labels, measurement numbers, and the readiness score. Suitable for
-    /// CI artifacts and committed baselines.
+    /// fields — the generator, server label, manifest hash, case IDs, probe
+    /// kinds, tool names, counts, fixed reason labels with their static
+    /// remediation hints, declared bounds, measurement numbers, and the
+    /// readiness score. Suitable for CI artifacts and committed baselines.
+    /// `docs/mcp-eval.probe-report.schema.json` describes it.
     pub fn to_json(&self, server: &str) -> serde_json::Value {
         let cases: Vec<serde_json::Value> = self
             .cases
@@ -656,10 +704,17 @@ impl ProbeReport {
                 serde_json::json!({
                     "id": case.id,
                     "probe": case.probe.as_str(),
+                    "tool": case.tool,
                     "passed": case.passed(),
                     "attempts": case.attempts,
                     "first_failure": case.first_failure,
                     "reason": case.reason.map(|reason| reason.as_str()),
+                    "hint": case.reason.map(crate::remediation::hint),
+                    "detail": case.detail.map(|detail| serde_json::json!({
+                        "bound": detail.bound,
+                        "limit": detail.limit,
+                        "observed": detail.observed,
+                    })),
                     "measurements": serde_json::Value::Object(measurements),
                 })
             })
@@ -667,7 +722,9 @@ impl ProbeReport {
         let readiness = crate::score::readiness(self);
         serde_json::json!({
             "schema": "mcpeval.probe-report/v1",
+            "generator": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")},
             "server": server,
+            "manifest_sha256": self.manifest_sha256,
             "passed": self.passed(),
             "readiness": readiness.to_json(),
             "cases": cases,
@@ -676,7 +733,7 @@ impl ProbeReport {
 }
 
 pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeReport> {
-    let manifest = load_manifest(&options).map_err(crate::exit::usage)?;
+    let (manifest, manifest_sha256) = load_manifest(&options).map_err(crate::exit::usage)?;
     let cases = select_cases(&manifest, &options).map_err(crate::exit::usage)?;
     let target = ClientTarget::from_options(&options).map_err(crate::exit::usage)?;
 
@@ -724,26 +781,40 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
         let case_timeout = case_timeout(case, timeout, context.client.default_timeout());
         context.client.set_response_timeout(case_timeout);
         match run_case(case, &mut context) {
-            Ok(report) => reports.push(report),
+            Ok(mut report) => {
+                report.detail = bound_detail(case, &report);
+                reports.push(report);
+            }
             Err(error) => {
                 let reason = transport_reason(&error);
-                eprintln!("{} {}: {error:#}", case.id(), reason.as_str());
+                // Diagnostics only: a closed stderr must not end the run.
+                let _ = writeln!(
+                    std::io::stderr(),
+                    "{} {}: {error:#}",
+                    case.id(),
+                    reason.as_str()
+                );
                 reports.push(errored_case(case, reason));
                 match reconnect(&target, timeout) {
                     Ok(fresh) => *context.client = fresh,
                     Err(error) => {
                         let reason = transport_reason(&error);
-                        eprintln!("reconnecting failed: {error:#}");
+                        let _ = writeln!(std::io::stderr(), "reconnecting failed: {error:#}");
                         unreachable = Some(reason);
                     }
                 }
             }
         }
     }
-    Ok(ProbeReport { cases: reports })
+    Ok(ProbeReport {
+        cases: reports,
+        manifest_sha256: Some(manifest_sha256),
+    })
 }
 
-fn load_manifest(options: &ProbeOptions) -> anyhow::Result<Manifest> {
+/// The validated manifest and the SHA-256 of the exact bytes it was parsed
+/// from.
+fn load_manifest(options: &ProbeOptions) -> anyhow::Result<(Manifest, String)> {
     if !crate::privacy::valid_server(&options.server) {
         bail!("server label is invalid");
     }
@@ -752,10 +823,21 @@ fn load_manifest(options: &ProbeOptions) -> anyhow::Result<Manifest> {
             let manifest: Manifest =
                 serde_json::from_str(body).context("parsing inline manifest structure")?;
             manifest.validate()?;
-            Ok(manifest)
+            Ok((manifest, sha256_hex(body.as_bytes())))
         }
-        None => Manifest::load(&options.manifest_path),
+        None => {
+            let body = std::fs::read(&options.manifest_path).context("reading manifest")?;
+            Ok((Manifest::parse(&body)?, sha256_hex(&body)))
+        }
     }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn select_cases<'m>(
@@ -785,6 +867,62 @@ fn select_cases<'m>(
         bail!("mutating probes require --allow-mutation");
     }
     Ok(cases)
+}
+
+/// The manifest bound behind a bound-based failure: the case's declared
+/// limit beside the measurement the report already carries.
+fn bound_detail(case: &ProbeCase, report: &CaseReport) -> Option<BoundDetail> {
+    let detail = |bound: &'static str, limit: u64, observed: u64| {
+        Some(BoundDetail {
+            bound,
+            limit,
+            observed,
+        })
+    };
+    match (case, report.reason?) {
+        (
+            ProbeCase::DiscoveryCost {
+                max_tools,
+                max_schema_bytes,
+                ..
+            },
+            FailureReason::DiscoveryLimitExceeded,
+        ) => {
+            let tools = report.tool_count?;
+            if tools > *max_tools {
+                detail("max_tools", *max_tools, tools)
+            } else {
+                detail("max_schema_bytes", *max_schema_bytes, report.schema_bytes?)
+            }
+        }
+        (
+            ProbeCase::TokenCost {
+                max_total_tokens,
+                max_tool_tokens,
+                ..
+            },
+            FailureReason::TokenBudgetExceeded,
+        ) => {
+            let usage = report.token_usage.as_ref()?;
+            if usage.total_tokens > *max_total_tokens {
+                detail("max_total_tokens", *max_total_tokens, usage.total_tokens)
+            } else {
+                detail(
+                    "max_tool_tokens",
+                    (*max_tool_tokens)?,
+                    usage.per_tool.first()?.tokens,
+                )
+            }
+        }
+        (ProbeCase::LatencyBudget { max_latency_ms, .. }, FailureReason::LatencyBudgetExceeded) => {
+            detail("max_latency_ms", *max_latency_ms, report.latency_ms?)
+        }
+        (ProbeCase::Pagination { max_pages, .. }, FailureReason::PaginationStalledCursor)
+        | (ProbeCase::SurfaceListing { max_pages, .. }, FailureReason::SurfaceStalledCursor) => {
+            detail("max_pages", *max_pages, report.pages?)
+        }
+        _ => None,
+    }
 }
 
 fn reconnect(target: &ClientTarget, timeout: Option<Duration>) -> anyhow::Result<ProbeClient> {
@@ -820,16 +958,8 @@ fn transport_reason(error: &anyhow::Error) -> FailureReason {
 /// A case that could not be evaluated: no attempt completed.
 fn errored_case(case: &ProbeCase, reason: FailureReason) -> CaseReport {
     CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
-        attempts: 0,
-        first_failure: None,
         reason: Some(reason),
-        tool_count: None,
-        schema_bytes: None,
-        token_usage: None,
-        latency_ms: None,
-        pages: None,
+        ..CaseReport::for_case(case)
     }
 }
 
@@ -884,16 +1014,12 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
             let reason = (tool_count > *max_tools || schema_bytes > *max_schema_bytes)
                 .then_some(FailureReason::DiscoveryLimitExceeded);
             Ok(CaseReport {
-                id: case.id().to_owned(),
-                probe: case.kind(),
                 attempts: 1,
                 first_failure: reason.map(|_| 1),
                 reason,
                 tool_count: Some(tool_count),
                 schema_bytes: Some(schema_bytes),
-                token_usage: None,
-                latency_ms: None,
-                pages: None,
+                ..CaseReport::for_case(case)
             })
         }
         ProbeCase::TokenCost {
@@ -917,19 +1043,15 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 .is_some_and(|limit| per_tool.iter().any(|tool| tool.tokens > limit));
             let reason = (over_total || over_tool).then_some(FailureReason::TokenBudgetExceeded);
             Ok(CaseReport {
-                id: case.id().to_owned(),
-                probe: case.kind(),
                 attempts: 1,
                 first_failure: reason.map(|_| 1),
                 reason,
                 tool_count: Some(context.catalog.tools.len() as u64),
-                schema_bytes: None,
                 token_usage: Some(TokenUsage {
                     total_tokens,
                     per_tool,
                 }),
-                latency_ms: None,
-                pages: None,
+                ..CaseReport::for_case(case)
             })
         }
         ProbeCase::SchemaGuessability { .. } => {
@@ -950,16 +1072,10 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 }
             };
             Ok(CaseReport {
-                id: case.id().to_owned(),
-                probe: case.kind(),
                 attempts: u64::from(preflight.is_none()),
                 first_failure: reason.map(|_| 1),
                 reason,
-                tool_count: None,
-                schema_bytes: None,
-                token_usage: None,
-                latency_ms: None,
-                pages: None,
+                ..CaseReport::for_case(case)
             })
         }
         ProbeCase::DegradationOverN { .. } => {
@@ -968,30 +1084,18 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 let response = call_and_record(case, context)?;
                 if matches!(response, ToolResponse::Error { .. }) {
                     return Ok(CaseReport {
-                        id: case.id().to_owned(),
-                        probe: case.kind(),
                         attempts: attempt,
                         first_failure: Some(attempt),
                         reason: Some(FailureReason::UnexpectedOutcome),
-                        tool_count: None,
-                        schema_bytes: None,
-                        token_usage: None,
-                        latency_ms: None,
-                        pages: None,
+                        ..CaseReport::for_case(case)
                     });
                 }
             }
             Ok(CaseReport {
-                id: case.id().to_owned(),
-                probe: case.kind(),
                 attempts: limit,
                 first_failure: None,
                 reason: None,
-                tool_count: None,
-                schema_bytes: None,
-                token_usage: None,
-                latency_ms: None,
-                pages: None,
+                ..CaseReport::for_case(case)
             })
         }
         ProbeCase::InstructionFidelity { .. } => {
@@ -1001,16 +1105,10 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
                 &response,
             );
             Ok(CaseReport {
-                id: case.id().to_owned(),
-                probe: case.kind(),
                 attempts: 1,
                 first_failure: reason.map(|_| 1),
                 reason,
-                tool_count: None,
-                schema_bytes: None,
-                token_usage: None,
-                latency_ms: None,
-                pages: None,
+                ..CaseReport::for_case(case)
             })
         }
         ProbeCase::LatencyBudget { max_latency_ms, .. } => {
@@ -1174,44 +1272,29 @@ fn run_latency_budget(
         slowest_ms = slowest_ms.max(latency_ms);
         if matches!(response, ToolResponse::Error { .. }) {
             return Ok(CaseReport {
-                id: case.id().to_owned(),
-                probe: case.kind(),
                 attempts: attempt,
                 first_failure: Some(attempt),
                 reason: Some(FailureReason::UnexpectedOutcome),
-                tool_count: None,
-                schema_bytes: None,
-                token_usage: None,
                 latency_ms: Some(slowest_ms),
-                pages: None,
+                ..CaseReport::for_case(case)
             });
         }
         if latency_ms > max_latency_ms {
             return Ok(CaseReport {
-                id: case.id().to_owned(),
-                probe: case.kind(),
                 attempts: attempt,
                 first_failure: Some(attempt),
                 reason: Some(FailureReason::LatencyBudgetExceeded),
-                tool_count: None,
-                schema_bytes: None,
-                token_usage: None,
                 latency_ms: Some(slowest_ms),
-                pages: None,
+                ..CaseReport::for_case(case)
             });
         }
     }
     Ok(CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts,
         first_failure: None,
         reason: None,
-        tool_count: None,
-        schema_bytes: None,
-        token_usage: None,
         latency_ms: Some(slowest_ms),
-        pages: None,
+        ..CaseReport::for_case(case)
     })
 }
 
@@ -1226,16 +1309,12 @@ fn run_pagination(
     loop {
         if pages >= max_pages {
             return Ok(CaseReport {
-                id: case.id().to_owned(),
-                probe: case.kind(),
                 attempts: pages + 1,
                 first_failure: Some(pages + 1),
                 reason: Some(FailureReason::PaginationStalledCursor),
                 tool_count: Some(seen.len() as u64),
-                schema_bytes: None,
-                token_usage: None,
-                latency_ms: None,
                 pages: Some(pages + 1),
+                ..CaseReport::for_case(case)
             });
         }
         pages += 1;
@@ -1277,16 +1356,12 @@ fn run_pagination(
             let name = entry["name"].as_str().expect("validated above").to_owned();
             if seen.contains(&name) {
                 return Ok(CaseReport {
-                    id: case.id().to_owned(),
-                    probe: case.kind(),
                     attempts: pages,
                     first_failure: Some(pages),
                     reason: Some(FailureReason::PaginationDuplicateTool),
                     tool_count: Some(seen.len() as u64),
-                    schema_bytes: None,
-                    token_usage: None,
-                    latency_ms: None,
                     pages: Some(pages),
+                    ..CaseReport::for_case(case)
                 });
             }
             seen.push(name);
@@ -1302,46 +1377,28 @@ fn run_pagination(
         }
     }
     Ok(CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts: pages,
         first_failure: None,
         reason: None,
         tool_count: Some(seen.len() as u64),
-        schema_bytes: None,
-        token_usage: None,
-        latency_ms: None,
         pages: Some(pages),
+        ..CaseReport::for_case(case)
     })
 }
 
 fn passed_case(case: &ProbeCase, attempts: u64) -> CaseReport {
     CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts,
-        first_failure: None,
-        reason: None,
-        tool_count: None,
-        schema_bytes: None,
-        token_usage: None,
-        latency_ms: None,
-        pages: None,
+        ..CaseReport::for_case(case)
     }
 }
 
 fn failed_case(case: &ProbeCase, attempt: u64, reason: FailureReason) -> CaseReport {
     CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts: attempt,
         first_failure: Some(attempt),
         reason: Some(reason),
-        tool_count: None,
-        schema_bytes: None,
-        token_usage: None,
-        latency_ms: None,
-        pages: None,
+        ..CaseReport::for_case(case)
     }
 }
 
@@ -1535,16 +1592,11 @@ fn run_payload_bounds(
     let attempts = 1;
     if let Some(reason) = reason {
         return Ok(CaseReport {
-            id: case.id().to_owned(),
-            probe: case.kind(),
             attempts,
             first_failure: Some(attempts),
             reason: Some(reason),
-            tool_count: None,
-            schema_bytes: None,
-            token_usage: None,
             latency_ms: Some(latency_ms),
-            pages: None,
+            ..CaseReport::for_case(case)
         });
     }
     record_response(
@@ -1555,16 +1607,11 @@ fn run_payload_bounds(
         context,
     )?;
     Ok(CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts,
         first_failure: None,
         reason: None,
-        tool_count: None,
-        schema_bytes: None,
-        token_usage: None,
         latency_ms: Some(latency_ms),
-        pages: None,
+        ..CaseReport::for_case(case)
     })
 }
 
@@ -1592,16 +1639,11 @@ fn run_surface_listing(
         loop {
             if pages >= max_pages {
                 return Ok(CaseReport {
-                    id: case.id().to_owned(),
-                    probe: case.kind(),
                     attempts: pages + 1,
                     first_failure: Some(pages + 1),
                     reason: Some(FailureReason::SurfaceStalledCursor),
-                    tool_count: None,
-                    schema_bytes: None,
-                    token_usage: None,
-                    latency_ms: None,
                     pages: Some(pages + 1),
+                    ..CaseReport::for_case(case)
                 });
             }
             pages += 1;
@@ -1656,16 +1698,11 @@ fn run_surface_listing(
         }
     }
     Ok(CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts: 1,
         first_failure: None,
         reason: None,
         tool_count: Some(total_items),
-        schema_bytes: None,
-        token_usage: None,
-        latency_ms: None,
-        pages: None,
+        ..CaseReport::for_case(case)
     })
 }
 
@@ -1701,30 +1738,18 @@ fn run_output_schema(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::
     };
     let Some(structured) = structured else {
         return Ok(CaseReport {
-            id: case.id().to_owned(),
-            probe: case.kind(),
             attempts: 1,
             first_failure: Some(1),
             reason: Some(FailureReason::OutputSchemaDeclaredButMissing),
-            tool_count: None,
-            schema_bytes: None,
-            token_usage: None,
-            latency_ms: None,
-            pages: None,
+            ..CaseReport::for_case(case)
         });
     };
     let missing = required.iter().any(|field| structured.get(field).is_none());
     Ok(CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts: 1,
         first_failure: missing.then_some(1),
         reason: missing.then_some(FailureReason::OutputSchemaFieldMissing),
-        tool_count: None,
-        schema_bytes: None,
-        token_usage: None,
-        latency_ms: None,
-        pages: None,
+        ..CaseReport::for_case(case)
     })
 }
 
@@ -1766,16 +1791,10 @@ fn run_cancellation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::R
     let attempts = 2;
     let failure = outcome_had_failure(outcome);
     Ok(CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts,
         first_failure: failure.map(|_| attempts),
         reason: failure,
-        tool_count: None,
-        schema_bytes: None,
-        token_usage: None,
-        latency_ms: None,
-        pages: None,
+        ..CaseReport::for_case(case)
     })
 }
 
@@ -1945,16 +1964,10 @@ fn run_sampling(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Resul
     };
     record_response(&tool, &arguments, 0, &response, context)?;
     Ok(CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts: 1,
         first_failure: failure.map(|_| 1),
         reason: failure,
-        tool_count: None,
-        schema_bytes: None,
-        token_usage: None,
-        latency_ms: None,
-        pages: None,
+        ..CaseReport::for_case(case)
     })
 }
 
@@ -2021,16 +2034,10 @@ fn run_elicitation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Re
     };
     record_response(&tool, &arguments, 0, &response, context)?;
     Ok(CaseReport {
-        id: case.id().to_owned(),
-        probe: case.kind(),
         attempts: 1,
         first_failure: failure.map(|_| 1),
         reason: failure,
-        tool_count: None,
-        schema_bytes: None,
-        token_usage: None,
-        latency_ms: None,
-        pages: None,
+        ..CaseReport::for_case(case)
     })
 }
 
@@ -2114,16 +2121,10 @@ fn run_resource_subscription(
         .unwrap_or(false);
     if !notified {
         return Ok(CaseReport {
-            id: case.id().to_owned(),
-            probe: case.kind(),
             attempts,
             first_failure: Some(attempts),
             reason: Some(FailureReason::SubscriptionNotificationMissing),
-            tool_count: None,
-            schema_bytes: None,
-            token_usage: None,
-            latency_ms: None,
-            pages: None,
+            ..CaseReport::for_case(case)
         });
     }
     if !unsubscribed {
@@ -2260,6 +2261,45 @@ mod tests {
                 Some(*reason)
             );
         }
+    }
+
+    #[test]
+    fn the_published_schemas_list_every_reason_and_probe_kind() {
+        use clap::ValueEnum;
+        let labels = |values: &Value| -> Vec<String> {
+            values
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| value.as_str().unwrap().to_owned())
+                .collect()
+        };
+        let reasons: Vec<String> = FailureReason::ALL
+            .iter()
+            .map(|reason| reason.as_str().to_owned())
+            .collect();
+        let kinds: Vec<String> = ProbeKind::value_variants()
+            .iter()
+            .map(|kind| kind.as_str().to_owned())
+            .collect();
+        let report: Value =
+            serde_json::from_str(include_str!("../docs/mcp-eval.probe-report.schema.json"))
+                .unwrap();
+        assert_eq!(labels(&report["$defs"]["reason"]["enum"]), reasons);
+        assert_eq!(
+            labels(&report["$defs"]["case"]["properties"]["probe"]["enum"]),
+            kinds
+        );
+        let diff: Value =
+            serde_json::from_str(include_str!("../docs/mcp-eval.probe-diff.schema.json")).unwrap();
+        assert_eq!(
+            labels(&diff["$defs"]["reason"]["oneOf"][0]["enum"]),
+            reasons
+        );
+        assert_eq!(
+            labels(&diff["$defs"]["case"]["properties"]["probe"]["enum"]),
+            kinds
+        );
     }
 
     #[test]

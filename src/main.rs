@@ -227,8 +227,20 @@ fn run() -> anyhow::Result<()> {
             );
             Ok(())
         }
-        cli::Command::Schema => {
-            println!("{}", include_str!("../docs/mcp-eval.manifest.schema.json"));
+        cli::Command::Schema { document } => {
+            print!(
+                "{}",
+                match document {
+                    cli::SchemaDocument::Manifest => {
+                        include_str!("../docs/mcp-eval.manifest.schema.json")
+                    }
+                    cli::SchemaDocument::Report => {
+                        include_str!("../docs/mcp-eval.probe-report.schema.json")
+                    }
+                    cli::SchemaDocument::Diff =>
+                        include_str!("../docs/mcp-eval.probe-diff.schema.json"),
+                }
+            );
             Ok(())
         }
         cli::Command::Explain { reason } => {

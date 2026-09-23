@@ -5,6 +5,9 @@
 // corpus's only claim is "deterministic verdict, reproducible by anyone";
 // this is the check that keeps the claim honest between releases.
 //
+// Observations may also carry `tool_count` and `catalog_tokens`; those move
+// with every upstream release, are informational, and are not compared.
+//
 // A server that legitimately fixed or broke something moves its score —
 // that is a deliberate corpus refresh: run scripts/corpus/collect.sh and
 // commit the result with an explanation. This script exists so drift is
@@ -83,7 +86,7 @@ function commandFor(server) {
   return null;
 }
 
-export { commandFor, NPM_PACKAGES, UVX_PACKAGES, NPM_SERVERS, UVX_SERVERS };
+export { commandFor, MANIFEST, NPM_PACKAGES, UVX_PACKAGES, NPM_SERVERS, UVX_SERVERS };
 
 // label -> package name; kept here rather than re-parsed from collect.sh so
 // the drift check is explicit about what each label launches. collect.sh's

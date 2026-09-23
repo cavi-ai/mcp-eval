@@ -38,6 +38,15 @@
   `verify`, and `compare` emit their output and exit 3. `verify` leaves
   the finding's lifecycle unchanged and full-battery runs record no
   trend point for such a run.
+- The text and markdown readiness line no longer carries
+  `beats N% of observed servers; corpus median M`. A separate corpus line
+  scores only the report's cases of the corpus battery and counts the
+  observed servers that score is above, tied with, and below
+  (`corpus battery (discovery-cost, token-cost, pagination,
+  surface-listing): 100/100, above 1, tied with 32, below 0 of 33 observed
+  servers`); a report with no case of the battery prints none.
+- The text `--price-per-mtok` cost line also appears when the token-cost
+  case failed its budget, as the markdown report's already did.
 
 ### Fixed
 
@@ -96,8 +105,20 @@
   fifteen additional credential-free servers across the npm and uvx
   ecosystems (airbnb, sqlite, docker, mermaid, terraform, tavily, ollama,
   calculator, wikipedia, searxng, git, arxiv). Every prior observation
-  reproduced byte-identically on re-run. With 34 observations the
-  readiness percentile resolves on ~3% steps instead of ~5%.
+  reproduced byte-identically on re-run. `mcp-atlassian` was dropped because
+  it lists no tools without credentials; the corpus now holds 33
+  observations with catalog measurements.
+- `mcpeval.readiness-corpus/v1` gains optional fields: top-level
+  `battery` (the probe kinds every observation was scored on; defaults to
+  `discovery-cost`, `token-cost`, `pagination`, `surface-listing`; an empty
+  list is rejected) and per observation `tool_count` and `catalog_tokens`.
+  `scripts/corpus/collect.sh` keeps each server's JSON report and writes all
+  three; `scripts/corpus/verify.mjs` still compares scores only. An agreement
+  test pins the collector's battery to the drift check's manifest.
+- Catalog placement line in text and markdown reports when the corpus
+  carries `catalog_tokens` and the report has a token-cost measurement:
+  `catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed
+  servers (median 1186 tokens)`.
 
 ### Changed
 

@@ -187,14 +187,19 @@ detail ever leaves the report.
 
 The score is **calibrated**: mcp-eval ships a corpus of readiness
 observations from popular public MCP servers (`data/readiness-corpus.json`,
-refreshed by `scripts/corpus/collect.sh`), and every report places your score
-in that distribution — *"beats 40% of observed servers; corpus median 100"*.
-The shipped corpus overrides cleanly: point a personal one at
-`<MCPEVAL_HOME>/corpus.json`.
+refreshed by `scripts/corpus/collect.sh`), and every text and markdown report
+places your score against it. Only your cases of the battery the corpus was
+collected with are scored for the comparison, and ties are counted —
+*"corpus battery (discovery-cost, token-cost, pagination, surface-listing):
+100/100, above 1, tied with 32, below 0 of 33 observed servers"*. When the
+corpus records catalog sizes, a second line places your token-cost
+measurement — *"catalog: 566 tokens over 12 tools, lighter than 23 of 33
+observed servers (median 1186 tokens)"*. The shipped corpus overrides
+cleanly: point a personal one at `<MCPEVAL_HOME>/corpus.json`.
 
 **[State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md)** —
 the corpus is also published: how healthy are the MCP servers agents actually
-use? 34 popular public servers, probed with the same battery, distribution
+use? 33 popular public servers, probed with the same battery, distribution
 published with full method notes. Reproduce it locally with one script; add
 your server by PR.
 

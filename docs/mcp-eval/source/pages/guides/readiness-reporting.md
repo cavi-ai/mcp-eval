@@ -8,7 +8,8 @@ The default format prints one line per case — verdict, attempts, first-failure
 
 ```text
 literal-status instruction-fidelity pass attempts=1
-demo readiness 87/100 (beats 40% of observed servers; corpus median 100) discovery=2/2 reliability=1/1 contract=1/1
+demo readiness 87/100 discovery=2/2 reliability=1/1 contract=1/1
+  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 33, below 0 of 34 observed servers
 ```
 
 Failing cases print a remediation hint: the concrete server-side fix for that fixed reason.
@@ -75,13 +76,21 @@ Each category contributes the fraction of its cases that passed, weighted as abo
 
 ## Calibration
 
-A score without a referent is just a number. mcp-eval ships a corpus of readiness observations from popular public MCP servers (`data/readiness-corpus.json`, refreshed by `scripts/corpus/collect.sh`), and every report places the score in that distribution:
+A score without a referent is just a number. mcp-eval ships a corpus of readiness observations from popular public MCP servers (`data/readiness-corpus.json`, refreshed by `scripts/corpus/collect.sh`). The corpus records its `battery`: the probe kinds every observation was scored on (`discovery-cost`, `token-cost`, `pagination`, `surface-listing` when the field is absent). Text and markdown reports score only the report's cases of that battery for the comparison, so a manifest with other cases is compared like for like, and count the observed servers that score is above, tied with, and below:
 
 ```text
-Readiness: 75/100 — beats 35% of observed servers (corpus median 100)
+  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 33, below 0 of 34 observed servers
 ```
 
-A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; when no corpus is available, reports simply omit the percentile line. Calibration is deterministic: the same score against the same corpus always produces the same percentile (midpoint method, so the median observation sits at 50).
+The readiness line still scores every case. A report with no case of the corpus battery prints no corpus line.
+
+When observations carry `catalog_tokens`, a report with a token-cost measurement also places its catalog among them; the median is the lower middle for an even count:
+
+```text
+  catalog: 566 tokens over 12 tools, lighter than 20 of 34 observed servers (median 1915 tokens)
+```
+
+A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; when no corpus is available, reports omit both lines. JSON reports never carry corpus context. Calibration is deterministic: the same report against the same corpus always produces the same placement.
 
 ## Session cost
 

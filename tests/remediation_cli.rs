@@ -122,15 +122,9 @@ fn markdown_failure_carries_a_remediation_section() {
     assert!(stdout.contains("paginate the catalog without overlap"));
 }
 
-#[test]
-fn calibration_context_appears_when_the_corpus_resolves() {
-    let dir = home();
+fn probe_demo(dir: &std::path::Path, probes: &str, demo_args: &[&str]) -> (bool, String) {
     let manifest = dir.join("m.json");
-    std::fs::write(
-        &manifest,
-        r#"{"version":1,"probes":[{"id":"d","probe":"discovery-cost","access":"read_only","max_tools":50,"max_schema_bytes":200000}]}"#,
-    )
-    .unwrap();
+    std::fs::write(&manifest, format!(r#"{{"version":1,"probes":[{probes}]}}"#)).unwrap();
     let output = Command::new(bin())
         .args([
             "probe",
@@ -139,40 +133,136 @@ fn calibration_context_appears_when_the_corpus_resolves() {
             "--manifest",
             manifest.to_str().unwrap(),
         ])
-        .args(["--", demo()])
-        .env("MCPEVAL_HOME", &dir)
+        .arg("--")
+        .arg(demo())
+        .args(demo_args)
+        .env("MCPEVAL_HOME", dir)
         .output()
         .unwrap();
-    assert!(output.status.success());
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    // The repository corpus (all strong servers, median 100) resolves even
-    // from a bare temp home.
-    assert!(stdout.contains("beats "), "{stdout}");
-    assert!(stdout.contains("corpus median 100"), "{stdout}");
+    (
+        output.status.success(),
+        String::from_utf8(output.stdout).unwrap(),
+    )
+}
 
-    // A home corpus overrides the repository default.
+const DISCOVERY: &str = r#"{"id":"d","probe":"discovery-cost","access":"read_only","max_tools":50,"max_schema_bytes":200000}"#;
+const TOKENS: &str =
+    r#"{"id":"t","probe":"token-cost","access":"read_only","max_total_tokens":100000}"#;
+
+fn measured(stdout: &str, case: &str, key: &str) -> u64 {
+    let line = stdout
+        .lines()
+        .find(|line| line.starts_with(&format!("{case} ")))
+        .unwrap_or_else(|| panic!("no {case} line: {stdout}"));
+    line.split_whitespace()
+        .find_map(|field| field.strip_prefix(&format!("{key}=")))
+        .unwrap_or_else(|| panic!("no {key} on {line}"))
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn calibration_context_appears_when_the_corpus_resolves() {
+    // The repository corpus resolves even from a bare temp home.
+    let dir = home();
+    let (passed, stdout) = probe_demo(&dir, DISCOVERY, &[]);
+    assert!(passed, "{stdout}");
+    assert!(
+        stdout.contains("\ndemo readiness 100/100 discovery=1/1\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "\n  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above "
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("beats"), "{stdout}");
+
+    // A home corpus overrides the repository default; its battery and
+    // catalog measurements drive both calibration lines.
     std::fs::write(
         dir.join("corpus.json"),
-        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus","observations":[
-            {"server":"a","score":0},{"server":"b","score":25}
+        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus",
+            "battery":["discovery-cost","token-cost"],
+            "observations":[
+                {"server":"a","score":100,"tool_count":3,"catalog_tokens":1},
+                {"server":"b","score":100,"tool_count":90,"catalog_tokens":1000000},
+                {"server":"c","score":50,"tool_count":200,"catalog_tokens":2000000},
+                {"server":"d","score":25}
         ]}"#,
     )
     .unwrap();
-    let output = Command::new(bin())
-        .args([
-            "probe",
-            "--server",
-            "demo",
-            "--manifest",
-            manifest.to_str().unwrap(),
-        ])
-        .args(["--", demo()])
-        .env("MCPEVAL_HOME", &dir)
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("beats 100%"), "{stdout}");
-    assert!(stdout.contains("corpus median 12"), "{stdout}");
+    let (passed, stdout) = probe_demo(&dir, &format!("{DISCOVERY},{TOKENS}"), &[]);
+    assert!(passed, "{stdout}");
+    let tokens = measured(&stdout, "t", "total_tokens");
+    let tools = measured(&stdout, "t", "tools");
+    assert!(
+        stdout.contains(
+            "\n  corpus battery (discovery-cost, token-cost): 100/100, above 2, tied with 2, below 0 of 4 observed servers\n"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "\n  catalog: {tokens} tokens over {tools} tools, lighter than 2 of 3 observed servers (median 1000000 tokens)\n"
+        )),
+        "{stdout}"
+    );
+
+    // A v1 corpus without a battery or measurements: the default battery
+    // labels the score line, and the catalog line is omitted.
+    std::fs::write(
+        dir.join("corpus.json"),
+        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus","observations":[
+            {"server":"a","score":0},{"server":"b","score":100}
+        ]}"#,
+    )
+    .unwrap();
+    let (passed, stdout) = probe_demo(&dir, &format!("{DISCOVERY},{TOKENS}"), &[]);
+    assert!(passed, "{stdout}");
+    assert!(
+        stdout.contains(
+            "\n  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 1, below 0 of 2 observed servers\n"
+        ),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("catalog:"), "{stdout}");
+}
+
+#[test]
+fn corpus_placement_scores_only_the_corpus_battery() {
+    // A failing non-battery case pulls the overall score down; the corpus
+    // line compares only the battery cases the corpus was collected with.
+    let dir = home();
+    std::fs::write(
+        dir.join("corpus.json"),
+        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus","observations":[
+            {"server":"a","score":75},{"server":"b","score":100}
+        ]}"#,
+    )
+    .unwrap();
+    let slow = r#"{"id":"slow","probe":"latency-budget","tool":"slow_read","access":"read_only","arguments":{},"attempts":2,"max_latency_ms":50}"#;
+    let (passed, stdout) = probe_demo(&dir, &format!("{DISCOVERY},{slow}"), &["--broken", "slow"]);
+    assert!(!passed, "{stdout}");
+    assert!(
+        stdout.contains("\ndemo readiness 42/100 discovery=1/1 reliability=0/1\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(
+            "\n  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 1, below 0 of 2 observed servers\n"
+        ),
+        "{stdout}"
+    );
+
+    // No case of the corpus battery: no corpus line at all.
+    let (_, stdout) = probe_demo(&dir, slow, &["--broken", "slow"]);
+    assert!(
+        stdout.contains("\ndemo readiness 0/100 reliability=0/1\n"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("corpus battery"), "{stdout}");
 }
 
 #[test]

@@ -142,11 +142,18 @@ jobs:
           assert location["artifactLocation"]["uri"] == os.environ["MANIFEST"], location
           assert location["region"]["startLine"] == 5, location
           EOF
+      # The failing case is deliberate. At `error` level its alert fails the
+      # code-scanning check on every pull request that touches the fixture,
+      # so the uploaded copy is lowered to `note`; the location, category,
+      # and fingerprint asserted above are unchanged.
+      - name: lower the deliberate alert to a note
+        if: env.UPLOAD == 'true'
+        run: jq '.runs[].results[].level = "note"' mcpeval.sarif > mcpeval.note.sarif
       - name: upload to code scanning
         if: env.UPLOAD == 'true'
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: mcpeval.sarif
+          sarif_file: mcpeval.note.sarif
       - name: assert the alert is located on the manifest case
         if: env.UPLOAD == 'true'
         env:

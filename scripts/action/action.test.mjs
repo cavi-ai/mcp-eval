@@ -309,16 +309,17 @@ test("run passes a clean server and writes outputs and the job summary", { skip:
   const workspace = await actionWorkspace();
   const result = await runAction(workspace, { server: "demo", command: "mcpeval-demo" });
   assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(await readFile(path.join(workspace.directory, "mcpeval.report.json"), "utf8"));
+  assert.equal(report.schema, "mcpeval.probe-report/v2");
+  assert.match(report.readiness.standard, /^mcpeval-standard\//u);
   assert.deepEqual(result.outputs, {
     report: "mcpeval.report.json",
     "exit-code": "0",
-    readiness: "100",
+    readiness: String(report.readiness.score),
     passed: "true",
     markdown: "mcpeval.report.md",
   });
   assert.match(result.summary, /^## mcp-eval report — demo$/mu);
-  const report = JSON.parse(await readFile(path.join(workspace.directory, "mcpeval.report.json"), "utf8"));
-  assert.equal(report.schema, "mcpeval.probe-report/v1");
   const markdown = await readFile(path.join(workspace.directory, result.outputs.markdown), "utf8");
   assert.match(markdown, /^## mcp-eval report — demo$/mu);
 });

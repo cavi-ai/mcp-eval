@@ -75,6 +75,8 @@ fn options(home: &TestHome, mode: &str, selected_probe: Option<ProbeKind>) -> Pr
         command: vec!["python3".into(), FIXTURE.into(), mode.into()],
         http_url: None,
         allow_remote_http: false,
+        standard: false,
+        confirm_read_only: false,
     }
 }
 
@@ -175,6 +177,8 @@ fn token_cost_options(
         command: vec!["python3".into(), FIXTURE.into(), "clean".into()],
         http_url: None,
         allow_remote_http: false,
+        standard: false,
+        confirm_read_only: false,
     }
 }
 

@@ -1,4 +1,4 @@
-//! Compare two committed `mcpeval.probe-report/v1` documents — the
+//! Compare two committed `mcpeval.probe-report` documents (v1 or v2) — the
 //! committed baseline and the current run — and classify every case as
 //! regressed, fixed, changed, or unchanged. Unlike `compare` (the space axis:
 //! several servers under one manifest), `diff` is the time axis: it gates
@@ -49,11 +49,54 @@ pub struct CaseDiff {
     pub latency_ms: Option<(u64, u64)>,
 }
 
+/// Readiness on each side, and whether the two numbers mean the same thing.
+pub struct ReadinessMovement {
+    pub baseline: Option<u64>,
+    pub current: Option<u64>,
+    pub baseline_standard: Option<String>,
+    pub current_standard: Option<String>,
+}
+
+impl ReadinessMovement {
+    fn of(baseline: &ProbeReport, current: &ProbeReport) -> Self {
+        let side = |report: &ProbeReport| match &report.readiness {
+            Some(readiness) => (Some(readiness.score), Some(readiness.standard.clone())),
+            None => (report.legacy_score, None),
+        };
+        let (baseline_score, baseline_standard) = side(baseline);
+        let (current_score, current_standard) = side(current);
+        Self {
+            baseline: baseline_score,
+            current: current_score,
+            baseline_standard,
+            current_standard,
+        }
+    }
+
+    /// Both sides were scored, under the same standard.
+    pub fn comparable(&self) -> bool {
+        self.baseline.is_some()
+            && self.current.is_some()
+            && self.baseline_standard.is_some()
+            && self.baseline_standard == self.current_standard
+    }
+
+    pub fn text(&self) -> String {
+        match (self.comparable(), self.baseline, self.current) {
+            (true, Some(baseline), Some(current)) => format!("{baseline} → {current}"),
+            _ => format!(
+                "not comparable ({} → {})",
+                self.baseline_standard.as_deref().unwrap_or("legacy"),
+                self.current_standard.as_deref().unwrap_or("legacy")
+            ),
+        }
+    }
+}
+
 /// The full comparison of two report documents.
 pub struct Diff {
     pub cases: Vec<CaseDiff>,
-    pub baseline_score: u64,
-    pub current_score: u64,
+    pub readiness: ReadinessMovement,
     /// Case IDs present only in the baseline.
     pub missing: Vec<String>,
     /// Case IDs present only in the current run.
@@ -190,8 +233,7 @@ pub fn diff(baseline: &ProbeReport, current: &ProbeReport) -> Diff {
         .map(|(k, _)| k.id.clone())
         .collect();
     Diff {
-        baseline_score: crate::score::readiness(baseline).overall,
-        current_score: crate::score::readiness(current).overall,
+        readiness: ReadinessMovement::of(baseline, current),
         cases,
         missing,
         added,
@@ -267,10 +309,13 @@ fn verdict_label(verdict: &Verdict) -> &'static str {
 /// payloads — safe to attach to a CI artifact beside the reports.
 pub fn to_json(outcome: &Diff) -> serde_json::Value {
     serde_json::json!({
-        "schema": "mcpeval.probe-diff/v1",
+        "schema": "mcpeval.probe-diff/v2",
         "readiness": {
-            "baseline": outcome.baseline_score,
-            "current": outcome.current_score,
+            "baseline": outcome.readiness.baseline,
+            "current": outcome.readiness.current,
+            "baseline_standard": outcome.readiness.baseline_standard,
+            "current_standard": outcome.readiness.current_standard,
+            "comparable": outcome.readiness.comparable(),
         },
         "summary": {
             "regressed": outcome.regressed(),
@@ -352,10 +397,7 @@ pub fn render(outcome: &Diff) -> String {
     for id in &outcome.added {
         out.push_str(&format!("{:<width$}  added\n", id, width = width));
     }
-    out.push_str(&format!(
-        "readiness  {} → {}\n",
-        outcome.baseline_score, outcome.current_score
-    ));
+    out.push_str(&format!("readiness  {}\n", outcome.readiness.text()));
     out.push_str(&format!(
         "{} regressed, {} fixed, {} changed, {} unchanged, {} removed, {} added\n",
         outcome.regressed(),
@@ -371,10 +413,7 @@ pub fn render(outcome: &Diff) -> String {
 pub fn render_markdown(outcome: &Diff) -> String {
     let mut out = String::new();
     out.push_str("## mcp-eval baseline diff\n\n");
-    out.push_str(&format!(
-        "Readiness: {} → {}\n\n",
-        outcome.baseline_score, outcome.current_score
-    ));
+    out.push_str(&format!("Readiness: {}\n\n", outcome.readiness.text()));
     out.push_str("| Case | Verdict | Baseline | Current |\n");
     out.push_str("| --- | --- | --- | --- |\n");
     for case in &outcome.cases {
@@ -423,7 +462,6 @@ pub fn render_markdown(outcome: &Diff) -> String {
 mod tests {
     use super::*;
     use crate::probe::{CaseReport, FailureReason};
-    use crate::score::readiness;
 
     fn case(
         id: &str,
@@ -459,6 +497,7 @@ mod tests {
                 case("c", crate::manifest::ProbeKind::Contention, None),
             ],
             manifest_sha256: None,
+            ..ProbeReport::default()
         };
         let current = ProbeReport {
             cases: vec![
@@ -471,6 +510,7 @@ mod tests {
                 case("c", crate::manifest::ProbeKind::Contention, None),
             ],
             manifest_sha256: None,
+            ..ProbeReport::default()
         };
         let outcome = diff(&baseline, &current);
         assert_eq!(outcome.regressed(), 1);
@@ -490,6 +530,7 @@ mod tests {
                 Some(FailureReason::PaginationDuplicateTool),
             )],
             manifest_sha256: None,
+            ..ProbeReport::default()
         };
         let current = ProbeReport {
             cases: vec![case(
@@ -498,6 +539,7 @@ mod tests {
                 Some(FailureReason::PaginationStalledCursor),
             )],
             manifest_sha256: None,
+            ..ProbeReport::default()
         };
         let outcome = diff(&baseline, &current);
         assert_eq!(outcome.cases[0].verdict, Verdict::Changed);
@@ -516,10 +558,12 @@ mod tests {
         let baseline = ProbeReport {
             cases: vec![case("old", crate::manifest::ProbeKind::DiscoveryCost, None)],
             manifest_sha256: None,
+            ..ProbeReport::default()
         };
         let current = ProbeReport {
             cases: vec![case("new", crate::manifest::ProbeKind::DiscoveryCost, None)],
             manifest_sha256: None,
+            ..ProbeReport::default()
         };
         let outcome = diff(&baseline, &current);
         assert_eq!(outcome.missing, vec!["old".to_owned()]);
@@ -529,23 +573,40 @@ mod tests {
     }
 
     #[test]
-    fn readiness_movement_is_reported() {
-        let baseline = ProbeReport {
-            cases: vec![case("a", crate::manifest::ProbeKind::DiscoveryCost, None)],
-            manifest_sha256: None,
+    fn readiness_moves_only_within_one_standard() {
+        let scored = |score: u64, standard: &str| {
+            let mut readiness = crate::score::fold(&crate::standard::Observations::default());
+            readiness.score = score;
+            readiness.standard = standard.into();
+            ProbeReport {
+                readiness: Some(readiness),
+                ..ProbeReport::default()
+            }
         };
-        let current = ProbeReport {
-            cases: vec![case(
-                "a",
-                crate::manifest::ProbeKind::DiscoveryCost,
-                Some(FailureReason::UnexpectedOutcome),
-            )],
-            manifest_sha256: None,
+        let same = diff(
+            &scored(90, "mcpeval-standard/1"),
+            &scored(85, "mcpeval-standard/1"),
+        );
+        assert!(same.readiness.comparable());
+        assert_eq!(same.readiness.text(), "90 → 85");
+        assert_eq!(to_json(&same)["readiness"]["comparable"], true);
+        assert_eq!(to_json(&same)["schema"], "mcpeval.probe-diff/v2");
+
+        let legacy = ProbeReport {
+            legacy_score: Some(100),
+            ..ProbeReport::default()
         };
-        let outcome = diff(&baseline, &current);
-        assert_eq!(outcome.baseline_score, readiness(&baseline).overall);
-        assert_eq!(outcome.current_score, 0);
-        assert_eq!(outcome.baseline_score, 100);
+        let across = diff(&legacy, &scored(85, "mcpeval-standard/1"));
+        assert!(!across.readiness.comparable());
+        assert_eq!(
+            across.readiness.text(),
+            "not comparable (legacy → mcpeval-standard/1)"
+        );
+        assert_eq!(to_json(&across)["readiness"]["baseline"], 100);
+        assert_eq!(
+            to_json(&across)["readiness"]["baseline_standard"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]
@@ -564,10 +625,12 @@ mod tests {
             &ProbeReport {
                 cases: vec![baseline_case],
                 manifest_sha256: None,
+                ..ProbeReport::default()
             },
             &ProbeReport {
                 cases: vec![current_case],
                 manifest_sha256: None,
+                ..ProbeReport::default()
             },
         );
         assert_eq!(outcome.total_tokens, Some((100, 260)));
@@ -587,10 +650,12 @@ mod tests {
             &ProbeReport {
                 cases: vec![baseline_case],
                 manifest_sha256: None,
+                ..ProbeReport::default()
             },
             &ProbeReport {
                 cases: vec![current_case],
                 manifest_sha256: None,
+                ..ProbeReport::default()
             },
         );
         assert_eq!(outcome.total_tokens, None);

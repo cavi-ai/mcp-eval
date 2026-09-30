@@ -155,7 +155,7 @@ fn string_field(tool: &ToolDefinition) -> Option<&str> {
 
 /// True when a naive `{}` call can satisfy the declared required fields,
 /// which is exactly what the `schema-guessability` probe demands.
-fn zero_required(schema: &Value) -> bool {
+pub(crate) fn zero_required(schema: &Value) -> bool {
     schema
         .get("required")
         .and_then(Value::as_array)

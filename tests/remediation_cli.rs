@@ -193,20 +193,14 @@ fn calibration_context_appears_when_the_corpus_resolves() {
     let dir = home();
     let (passed, stdout) = probe_demo(&dir, DISCOVERY, &[]);
     assert!(passed, "{stdout}");
-    assert!(
-        stdout.contains("\ndemo readiness 100/100 discovery=1/1\n"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains(
-            "\n  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above "
-        ),
-        "{stdout}"
-    );
+    assert!(stdout.contains("\ndemo gate 1/1 passed\n"), "{stdout}");
+    assert!(stdout.contains("\n  catalog: "), "{stdout}");
+    // Battery placement waits for a corpus collected under the standard.
+    assert!(!stdout.contains("corpus battery"), "{stdout}");
     assert!(!stdout.contains("beats"), "{stdout}");
 
-    // A home corpus overrides the repository default; its battery and
-    // catalog measurements drive both calibration lines.
+    // A home corpus overrides the repository default; its catalog
+    // measurements drive the catalog line.
     std::fs::write(
         dir.join("corpus.json"),
         r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus",
@@ -223,12 +217,7 @@ fn calibration_context_appears_when_the_corpus_resolves() {
     assert!(passed, "{stdout}");
     let tokens = measured(&stdout, "t", "total_tokens");
     let tools = measured(&stdout, "t", "tools");
-    assert!(
-        stdout.contains(
-            "\n  corpus battery (discovery-cost, token-cost): 100/100, above 2, tied with 2, below 0 of 4 observed servers\n"
-        ),
-        "{stdout}"
-    );
+    assert!(!stdout.contains("corpus battery"), "{stdout}");
     assert!(
         stdout.contains(&format!(
             "\n  catalog: {tokens} tokens over {tools} tools, lighter than 2 of 3 observed servers (median 1000000 tokens)\n"
@@ -236,8 +225,7 @@ fn calibration_context_appears_when_the_corpus_resolves() {
         "{stdout}"
     );
 
-    // A v1 corpus without a battery or measurements: the default battery
-    // labels the score line, and the catalog line is omitted.
+    // A v1 corpus without measurements: the catalog line is omitted.
     std::fs::write(
         dir.join("corpus.json"),
         r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus","observations":[
@@ -247,19 +235,15 @@ fn calibration_context_appears_when_the_corpus_resolves() {
     .unwrap();
     let (passed, stdout) = probe_demo(&dir, &format!("{DISCOVERY},{TOKENS}"), &[]);
     assert!(passed, "{stdout}");
-    assert!(
-        stdout.contains(
-            "\n  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 1, below 0 of 2 observed servers\n"
-        ),
-        "{stdout}"
-    );
+    assert!(!stdout.contains("corpus battery"), "{stdout}");
     assert!(!stdout.contains("catalog:"), "{stdout}");
 }
 
 #[test]
-fn corpus_placement_scores_only_the_corpus_battery() {
-    // A failing non-battery case pulls the overall score down; the corpus
-    // line compares only the battery cases the corpus was collected with.
+fn a_failing_gate_leaves_readiness_to_the_standard() {
+    // The manifest's failing case costs the gate, never the readiness
+    // score, and no corpus battery line prints until the corpus is
+    // collected under the standard.
     let dir = home();
     std::fs::write(
         dir.join("corpus.json"),
@@ -269,26 +253,19 @@ fn corpus_placement_scores_only_the_corpus_battery() {
     )
     .unwrap();
     let slow = r#"{"id":"slow","probe":"latency-budget","tool":"slow_read","access":"read_only","arguments":{},"attempts":2,"max_latency_ms":50}"#;
-    let (passed, stdout) = probe_demo(&dir, &format!("{DISCOVERY},{slow}"), &["--broken", "slow"]);
-    assert!(!passed, "{stdout}");
-    assert!(
-        stdout.contains("\ndemo readiness 42/100 discovery=1/1 reliability=0/1\n"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains(
-            "\n  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 1, below 0 of 2 observed servers\n"
-        ),
-        "{stdout}"
-    );
-
-    // No case of the corpus battery: no corpus line at all.
-    let (_, stdout) = probe_demo(&dir, slow, &["--broken", "slow"]);
-    assert!(
-        stdout.contains("\ndemo readiness 0/100 reliability=0/1\n"),
-        "{stdout}"
-    );
-    assert!(!stdout.contains("corpus battery"), "{stdout}");
+    let (passed, failing) = probe_demo(&dir, &format!("{DISCOVERY},{slow}"), &["--broken", "slow"]);
+    assert!(!passed, "{failing}");
+    assert!(failing.contains("\ndemo gate 1/2 passed\n"), "{failing}");
+    assert!(!failing.contains("corpus battery"), "{failing}");
+    let (passed, clean) = probe_demo(&dir, DISCOVERY, &["--broken", "slow"]);
+    assert!(passed, "{clean}");
+    let readiness = |stdout: &str| {
+        stdout
+            .lines()
+            .find(|line| line.starts_with("demo readiness "))
+            .map(str::to_owned)
+    };
+    assert_eq!(readiness(&failing), readiness(&clean));
 }
 
 #[test]

@@ -129,6 +129,7 @@ fn compare_diffs_two_http_endpoints_across_formats() {
                 "fixture",
                 "--manifest",
                 &manifest_path,
+                "--gate-only",
                 "--format",
                 format,
                 "--endpoint",
@@ -160,6 +161,7 @@ fn compare_diffs_two_http_endpoints_across_formats() {
             "fixture",
             "--manifest",
             &manifest_path,
+            "--gate-only",
             "--format",
             "json",
             "--endpoint",
@@ -252,6 +254,7 @@ fn compare_accepts_a_stdio_command_alongside_endpoints() {
             "demo",
             "--manifest",
             &manifest_path,
+            "--gate-only",
             "--endpoint",
             &format!("http-target={endpoint}"),
         ])
@@ -269,4 +272,39 @@ fn compare_accepts_a_stdio_command_alongside_endpoints() {
     assert!(stdout.contains("http-target"), "{stdout}");
     assert!(stdout.contains("readiness"), "{stdout}");
     server.join().unwrap();
+}
+
+#[test]
+fn compare_scores_every_target_against_the_standard_unless_gate_only() {
+    let dir = std::env::temp_dir().join(format!("mcpeval-compare-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let home = dir.join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let manifest_path = manifest(&dir);
+    // The standard battery's request count is its own business: this
+    // fixture never runs out, and its thread ends with the test process.
+    let (endpoint, _server) = fixture(false, usize::MAX);
+    let run = |extra: &[&str]| {
+        let output = Command::new(bin())
+            .args(["compare", "--server", "demo", "--manifest", &manifest_path])
+            .args(extra)
+            .args(["--endpoint", &format!("http-target={endpoint}")])
+            .args(["--", env!("CARGO_BIN_EXE_mcpeval-demo")])
+            .env("MCPEVAL_HOME", &home)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        stdout
+            .lines()
+            .find(|line| line.starts_with("readiness"))
+            .unwrap_or_else(|| panic!("no readiness row: {stdout}"))
+            .to_owned()
+    };
+    assert_eq!(run(&[]).matches("/100").count(), 2);
+    assert_eq!(run(&["--gate-only"]).matches('—').count(), 2);
 }

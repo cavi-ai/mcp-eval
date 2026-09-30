@@ -45,22 +45,21 @@ fn markdown_report_is_pull_request_ready_and_scored() {
     );
     let body = String::from_utf8(output.stdout).unwrap();
     assert!(body.contains("## mcp-eval report — fixture"));
+    assert!(body.contains("**Readiness: "), "{body}");
     assert!(
-        body.contains("**Readiness: 100/100** ![mcpeval]("),
+        body.contains("/100** ![mcpeval](https://img.shields.io/badge/mcpeval-"),
         "{body}"
     );
-    assert!(
-        body.contains("\n*Corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100 — above "),
-        "{body}"
-    );
-    assert!(body.contains("https://img.shields.io/badge/mcpeval-100%2F100-brightgreen"));
+    assert!(body.contains("`mcpeval-standard/"), "{body}");
+    assert!(body.contains("| Area | Weight | Score |"), "{body}");
+    assert!(body.contains("**Gate:** 7/7 cases passed"), "{body}");
+    assert!(!body.contains("Corpus battery"), "{body}");
     assert!(body.contains("| literal-status | instruction-fidelity | pass | 1 |"));
-    assert!(body.contains("| discovery | 2/2 |"));
     assert!(!body.contains("CANARY"));
 }
 
 #[test]
-fn markdown_report_places_the_battery_and_catalog_against_the_corpus() {
+fn markdown_report_places_the_catalog_against_the_corpus() {
     let dir = home();
     std::fs::write(
         dir.join("corpus.json"),
@@ -87,13 +86,8 @@ fn markdown_report_places_the_battery_and_catalog_against_the_corpus() {
     let output = probe_in(&dir, CLEAN, "markdown");
     assert!(output.status.success());
     let body = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        body.contains(
-            "**Readiness: 100/100** ![mcpeval](https://img.shields.io/badge/mcpeval-100%2F100-brightgreen)\n\n\
-             *Corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100 — above 1, tied with 2, below 0 of 3 observed servers.*\n\n"
-        ),
-        "{body}"
-    );
+    // Battery placement waits for a corpus collected under the standard.
+    assert!(!body.contains("Corpus battery"), "{body}");
     assert!(
         body.contains(&format!(
             "\n*Catalog: {tokens} tokens over {tools} tools — lighter than 2 of 3 observed servers (median 1000000 tokens).*\n"
@@ -110,10 +104,6 @@ fn markdown_report_places_the_battery_and_catalog_against_the_corpus() {
     )
     .unwrap();
     let body = String::from_utf8(probe_in(&dir, CLEAN, "markdown").stdout).unwrap();
-    assert!(
-        body.contains("above 0, tied with 1, below 0 of 1 observed servers.*"),
-        "{body}"
-    );
     assert!(!body.contains("*Catalog:"), "{body}");
 }
 
@@ -134,22 +124,24 @@ fn json_report_carries_the_readiness_object() {
     let output = probe(CLEAN, "json");
     assert!(output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema"], "mcpeval.probe-report/v1");
-    assert_eq!(report["readiness"]["score"], 100);
-    assert_eq!(
-        report["readiness"]["badge"],
-        "https://img.shields.io/badge/mcpeval-100%2F100-brightgreen"
-    );
-    let categories = report["readiness"]["categories"].as_array().unwrap();
-    assert_eq!(categories.len(), 4);
-    let names: Vec<&str> = categories
+    assert_eq!(report["schema"], "mcpeval.probe-report/v2");
+    assert_eq!(report["gate"], serde_json::json!({"passed": 7, "total": 7}));
+    let readiness = &report["readiness"];
+    assert!(readiness["standard"]
+        .as_str()
+        .unwrap()
+        .starts_with("mcpeval-standard/"));
+    assert!(readiness["badge"]
+        .as_str()
+        .unwrap()
+        .starts_with("https://img.shields.io/badge/mcpeval-"));
+    let names: Vec<&str> = readiness["areas"]
+        .as_array()
+        .unwrap()
         .iter()
-        .map(|category| category["name"].as_str().unwrap())
+        .map(|area| area["name"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        names,
-        ["discovery", "reliability", "contract", "concurrency"]
-    );
+    assert_eq!(names, ["context", "reliability", "coverage"]);
 }
 
 #[test]
@@ -157,10 +149,13 @@ fn text_summary_gains_a_readiness_line() {
     let output = probe(CLEAN, "text");
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\nfixture gate 7/7 passed\n"), "{stdout}");
     let readiness = stdout
         .lines()
-        .find(|line| line.contains("readiness"))
+        .find(|line| line.starts_with("fixture readiness "))
         .expect("readiness summary line");
-    assert!(readiness.starts_with("fixture readiness 100/100 "));
-    assert!(readiness.contains("discovery=2/2"));
+    assert!(
+        readiness.contains(" standard=mcpeval-standard/"),
+        "{readiness}"
+    );
 }

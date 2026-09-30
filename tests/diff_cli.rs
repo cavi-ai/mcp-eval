@@ -101,7 +101,8 @@ fn diff_classifies_regression_fix_and_gate() {
         "{stdout}"
     );
     assert!(stdout.contains("unchanged"), "{stdout}");
-    assert!(stdout.contains("100 → "), "{stdout}");
+    assert!(stdout.contains("\nreadiness  "), "{stdout}");
+    assert!(!stdout.contains("not comparable"), "{stdout}");
     assert!(!stdout.contains("CANARY"), "{stdout}");
 
     // The gate flag makes the same diff exit non-zero.
@@ -178,9 +179,15 @@ fn diff_json_document_is_versioned_and_deterministic() {
     let first = run(&dir, &args(regressed_path.to_str().unwrap()));
     assert!(first.status.success());
     let document: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
-    assert_eq!(document["schema"], "mcpeval.probe-diff/v1");
-    assert_eq!(document["readiness"]["baseline"], 100);
-    assert_eq!(document["readiness"]["current"], 85);
+    assert_eq!(document["schema"], "mcpeval.probe-diff/v2");
+    let score = |path: &std::path::Path| {
+        let report: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        report["readiness"]["score"].clone()
+    };
+    assert_eq!(document["readiness"]["comparable"], true);
+    assert_eq!(document["readiness"]["baseline"], score(&baseline_path));
+    assert_eq!(document["readiness"]["current"], score(&regressed_path));
     assert_eq!(document["summary"]["regressed"], 1);
     let regressed_case = document["cases"]
         .as_array()

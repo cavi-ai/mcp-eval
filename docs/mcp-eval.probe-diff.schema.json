@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/cavi-ai/mcp-eval/main/docs/mcp-eval.probe-diff.schema.json",
-  "title": "mcpeval.probe-diff/v1",
-  "description": "Deterministic diff of two mcpeval.probe-report/v1 documents of one server, emitted by `mcpeval diff --format json`. Version 1 grows only by optional fields, so unknown properties are allowed. Retrieve with: mcpeval schema diff",
+  "title": "mcpeval.probe-diff/v2",
+  "description": "Deterministic diff of two mcpeval.probe-report documents (v1 or v2) of one server, emitted by `mcpeval diff --format json`. Readiness moves only when both sides were scored under the same standard. Version 2 grows only by optional fields, so unknown properties are allowed. Retrieve with: mcpeval schema diff",
   "type": "object",
   "required": [
     "schema",
@@ -14,24 +14,56 @@
   ],
   "properties": {
     "schema": {
-      "const": "mcpeval.probe-diff/v1"
+      "const": "mcpeval.probe-diff/v2"
     },
     "readiness": {
       "type": "object",
       "required": [
         "baseline",
-        "current"
+        "current",
+        "baseline_standard",
+        "current_standard",
+        "comparable"
       ],
       "properties": {
         "baseline": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "current": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 100
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "baseline_standard": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "current_standard": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "comparable": {
+          "type": "boolean"
         }
       }
     },

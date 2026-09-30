@@ -108,7 +108,7 @@ fn output_schema_checks_declared_structured_content() {
 }
 
 #[test]
-fn new_probes_count_toward_readiness_categories() {
+fn new_probes_pass_the_gate_on_the_clean_demo() {
     let dir = home();
     let manifest = dir.join("m.json");
     std::fs::write(
@@ -136,12 +136,6 @@ fn new_probes_count_toward_readiness_categories() {
         .unwrap();
     assert!(output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let categories: Vec<&str> = report["readiness"]["categories"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|category| category["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(categories, ["discovery", "reliability", "contract"]);
-    assert_eq!(report["readiness"]["score"], 100);
+    assert_eq!(report["gate"]["passed"], 3);
+    assert_eq!(report["gate"]["total"], 3);
 }

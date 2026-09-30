@@ -241,3 +241,29 @@ fn the_manifest_schema_accepts_every_fixture_manifest() {
     ]});
     assert!(!manifest_schema.is_valid(&unknown));
 }
+
+#[test]
+fn a_score_document_validates_against_the_v2_schema() {
+    let dir = home();
+    let output = Command::new(bin())
+        .args([
+            "score",
+            "--server",
+            "demo",
+            "--format",
+            "json",
+            "--",
+            demo(),
+        ])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_valid(&validator("probe-report"), &document);
+    assert_eq!(document["gate"], Value::Null);
+}

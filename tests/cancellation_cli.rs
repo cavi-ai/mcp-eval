@@ -132,6 +132,7 @@ fn probe_http(
             manifest.to_str().unwrap(),
             "--format",
             "json",
+            "--gate-only",
             "--url",
             &endpoint,
         ])
@@ -283,7 +284,7 @@ fn handle_http_connection(
 }
 
 #[test]
-fn cancellation_counts_toward_reliability() {
+fn an_honored_cancellation_passes_the_gate() {
     let dir = home();
     let manifest = dir.join("m.json");
     std::fs::write(
@@ -305,7 +306,7 @@ fn cancellation_counts_toward_reliability() {
         .unwrap();
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("reliability=1/1"), "{stdout}");
+    assert!(stdout.contains("\ndemo gate 1/1 passed\n"), "{stdout}");
 }
 
 #[test]

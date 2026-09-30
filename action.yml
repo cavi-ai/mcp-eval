@@ -45,7 +45,7 @@ inputs:
     default: ''
   baseline:
     description: >
-      Committed mcpeval.probe-report/v1 baseline. When set, the run fails on
+      Committed mcpeval.probe-report (v1 or v2) baseline. When set, the run fails on
       any case that regressed against it.
     required: false
     default: ''
@@ -69,7 +69,7 @@ outputs:
     description: "'true' when every selected case passed."
     value: ${{ steps.run.outputs.passed }}
   readiness:
-    description: 'Readiness score (0-100).'
+    description: 'Readiness score (0-100) under the mcpeval standard the report names.'
     value: ${{ steps.run.outputs.readiness }}
   report:
     description: 'Path to the JSON report.'

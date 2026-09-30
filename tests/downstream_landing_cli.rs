@@ -175,7 +175,8 @@ fn report_rerenders_a_committed_document_without_any_server() {
         .unwrap();
     assert!(text.status.success());
     let stdout = String::from_utf8(text.stdout).unwrap();
-    assert!(stdout.contains("demo readiness 100/100"), "{stdout}");
+    assert!(stdout.contains("\ndemo gate 2/2 passed\n"), "{stdout}");
+    assert!(stdout.contains("\ndemo readiness "), "{stdout}");
 
     // SARIF re-render is valid SARIF with zero results.
     let sarif = Command::new(bin())

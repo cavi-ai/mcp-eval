@@ -166,7 +166,7 @@ fn completion_manifest_bounds_are_validated() {
 }
 
 #[test]
-fn completion_counts_toward_the_contract_category() {
+fn a_passing_completion_case_passes_the_gate() {
     let manifest = r#"{"version":1,"probes":[
         {"id":"completes","probe":"completion","access":"read_only",
          "ref_type":"ref/prompt","ref_uri":"welcome","argument_name":"language",
@@ -191,14 +191,8 @@ fn completion_counts_toward_the_contract_category() {
         .unwrap();
     assert!(output.status.success());
     let document: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let categories = document["readiness"]["categories"].as_array().unwrap();
-    let contract = categories
-        .iter()
-        .find(|category| category["name"] == "contract")
-        .expect("completion is a contract probe");
-    assert_eq!(contract["total"], 1);
-    assert_eq!(contract["passed"], 1);
-    assert_eq!(document["readiness"]["score"], 100);
+    assert_eq!(document["gate"]["total"], 1);
+    assert_eq!(document["gate"]["passed"], 1);
 }
 
 #[test]

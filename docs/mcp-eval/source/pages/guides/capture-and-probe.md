@@ -46,10 +46,11 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
   --format json --probe token-cost -- your-mcp-server --flags
 ```
 
-The JSON schema is `mcpeval.probe-report/v1` (`mcpeval schema report`). It
+The JSON schema is `mcpeval.probe-report/v2` (`mcpeval schema report`). It
 contains only the generator, the validated server label, the manifest's
 SHA-256, case, probe, and tool identifiers, fixed failure labels with their
-remediation hints and declared bounds, pass state, and numeric measurements.
+remediation hints and declared bounds, pass state, numeric measurements, the
+gate counts, and the standard readiness object (area scores and lost checks).
 It has no timestamps, sessions, arguments, responses, descriptions, schemas,
 or raw error text.
 

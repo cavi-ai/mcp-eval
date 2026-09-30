@@ -249,6 +249,7 @@ mod tests {
                 ),
             ],
             manifest_sha256: None,
+            ..ProbeReport::default()
         };
         let manifest = ManifestSource {
             uri: "mcp-eval.manifest.json",

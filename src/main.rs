@@ -82,27 +82,65 @@ fn render_probe_text(
             }
         }
     }
-    let readiness = mcpeval::score::readiness(report);
-    let categories = readiness
-        .categories
-        .iter()
-        .map(|category| format!("{}={}/{}", category.name, category.passed, category.total))
-        .collect::<Vec<_>>()
-        .join(" ");
-    println!("{server} readiness {}/100 {categories}", readiness.overall);
-    if let Some(corpus) = corpus {
-        if let Some(battery) = mcpeval::score::readiness_over(report, &corpus.battery) {
-            let placement = corpus.placement(battery.overall);
+    if let Some((passed, total)) = report.gate() {
+        println!("{server} gate {passed}/{total} passed");
+    }
+    match (
+        &report.readiness,
+        report.readiness_error,
+        report.legacy_score,
+    ) {
+        (Some(readiness), _, _) => {
+            let areas = readiness
+                .areas
+                .iter()
+                .map(|area| format!("{}={}", area.area.as_str(), area.score))
+                .collect::<Vec<_>>()
+                .join(" ");
             println!(
-                "  corpus battery ({}): {}/100, above {}, tied with {}, below {} of {} observed servers",
-                corpus.battery_label(),
-                battery.overall,
-                placement.above,
-                placement.tied,
-                placement.below,
-                corpus.observations.len()
+                "{server} readiness {}/100 {areas} standard={}",
+                readiness.score, readiness.standard
+            );
+            let surface = &readiness.surface;
+            println!(
+                "  surface: {} tools, {} read-only, {} writers, {} exercised",
+                surface.tools, surface.read_only, surface.writers, surface.exercised
+            );
+            for check in readiness.areas.iter().flat_map(|area| &area.checks) {
+                let tool = check
+                    .tool
+                    .as_deref()
+                    .map(|tool| format!(" tool={tool}"))
+                    .unwrap_or_default();
+                let observed = check
+                    .observed
+                    .map(|value| format!(" observed={value}"))
+                    .unwrap_or_default();
+                println!(
+                    "  lost {} score={}{tool}{observed} reason={}",
+                    check.id.as_str(),
+                    check.score,
+                    check.reason.as_str()
+                );
+                if !brief {
+                    println!(
+                        "    hint: {}",
+                        mcpeval::remediation::check_hint(check.reason)
+                    );
+                }
+            }
+        }
+        (None, Some(reason), _) => {
+            println!("{server} readiness error reason={}", reason.as_str());
+        }
+        (None, None, Some(legacy)) => {
+            println!(
+                "{server} manifest pass rate {legacy}/100 (legacy v1 score, not a readiness standard)"
             );
         }
+        (None, None, None) => println!("{server} readiness not measured"),
+    }
+    if let Some(corpus) = corpus {
         if let (Some(tokens), Some(tools)) = (
             mcpeval::score::catalog_tokens(report),
             mcpeval::score::catalog_tool_count(report),
@@ -158,6 +196,8 @@ fn run() -> anyhow::Result<()> {
             brief,
             price_per_mtok,
             allow_mutation,
+            gate_only,
+            confirm_read_only,
             url,
             allow_remote_http,
             cmd,
@@ -175,6 +215,8 @@ fn run() -> anyhow::Result<()> {
                     command: cmd,
                     http_url: url,
                     allow_remote_http,
+                    standard: !gate_only,
+                    confirm_read_only,
                 },
                 &mut store,
             )?;
@@ -210,6 +252,38 @@ fn run() -> anyhow::Result<()> {
                 cli::ProbeFormat::Text => {
                     render_probe_text(&server, &report, brief, corpus.as_ref(), price_per_mtok)
                 }
+            }
+            exit_for_report(&report);
+            Ok(())
+        }
+        cli::Command::Score {
+            server,
+            format,
+            brief,
+            confirm_read_only,
+            url,
+            allow_remote_http,
+            cmd,
+        } => {
+            let report = mcpeval::probe::score(mcpeval::probe::ScoreOptions {
+                server: server.clone(),
+                command: cmd,
+                http_url: url,
+                allow_remote_http,
+                confirm_read_only,
+            })?;
+            match format {
+                cli::ScoreFormat::Json => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&report.to_json(&server))?
+                    );
+                }
+                cli::ScoreFormat::Markdown => print!(
+                    "{}",
+                    mcpeval::report::render_probe_markdown(&server, &report, None, None)
+                ),
+                cli::ScoreFormat::Text => render_probe_text(&server, &report, brief, None, None),
             }
             exit_for_report(&report);
             Ok(())
@@ -522,6 +596,8 @@ fn run() -> anyhow::Result<()> {
                     command: cmd,
                     http_url: url,
                     allow_remote_http,
+                    standard: false,
+                    confirm_read_only: false,
                 },
                 &mut store,
             )?;

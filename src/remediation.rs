@@ -237,3 +237,63 @@ pub fn hint(reason: FailureReason) -> &'static str {
         }
     }
 }
+
+/// Server-side remediation for a standard check that lost points.
+pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
+    use crate::score::CheckReason;
+    match reason {
+        CheckReason::ContextCatalogHeavy => {
+            "shrink the tools/list catalog: shorten descriptions, drop duplicated schema \
+             prose, or move rarely used tools to a separate server or profile; every session \
+             pays for the catalog before its first call"
+        }
+        CheckReason::ContextToolHeavy => {
+            "trim this tool's description and input schema; move long reference material into \
+             a resource the agent reads on demand"
+        }
+        CheckReason::ReliabilityInconsistent => {
+            "the same read-only call with the same arguments ended differently across three \
+             calls; make read paths deterministic, or return a retryable error with a stable code"
+        }
+        CheckReason::ReliabilitySlow => {
+            "median latency is above 100 ms; cache or precompute the read, or page large results"
+        }
+        CheckReason::ReliabilityOutputSchemaBroken => {
+            "the tool declares outputSchema but its result lacks structuredContent or a required \
+             field; return structuredContent that matches the schema, or drop the declaration"
+        }
+        CheckReason::ReliabilityContentionFailed => {
+            "two clients calling this tool at once did not both succeed; guard shared state so \
+             concurrent sessions do not fail each other"
+        }
+        CheckReason::ReliabilityPayloadUnhandled => {
+            "a 1,000,000-byte string argument crashed or hung the server; bound input size and \
+             answer oversized input with a structured error"
+        }
+        CheckReason::ReliabilityNoneExercised => {
+            "no read-only tool could be called, so reliability is unmeasured; annotate read-only \
+             tools with readOnlyHint and make them callable from their schema"
+        }
+        CheckReason::CoverageUnannotated => {
+            "the tool declares neither readOnlyHint nor destructiveHint, so the standard cannot \
+             call it safely; declare readOnlyHint: true on read-only tools and destructiveHint on \
+             writers"
+        }
+        CheckReason::CoverageRequiredArguments => {
+            "the tool requires arguments the standard does not construct yet; give required \
+             parameters defaults, enums, or examples an agent can use"
+        }
+        CheckReason::CoverageRejectedArguments => {
+            "the tool rejected arguments built from its own input schema (-32602); make the \
+             schema describe exactly what the tool accepts"
+        }
+        CheckReason::CoverageCallFailed => {
+            "the call timed out, closed the connection, or broke the protocol exchange; a \
+             read-only tool must answer within 10 seconds without ending the session"
+        }
+        CheckReason::NoReadOnlyTools => {
+            "the server declares no read-only tools, so behavior cannot be measured without \
+             mutation; expose read paths as tools annotated readOnlyHint: true"
+        }
+    }
+}

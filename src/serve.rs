@@ -433,6 +433,8 @@ fn run_probe_tool_call(arguments: &Value) -> anyhow::Result<Value> {
             command: target.command,
             http_url: target.http_url,
             allow_remote_http: false,
+            standard: true,
+            confirm_read_only: false,
         },
         &mut store,
     )?;
@@ -451,10 +453,13 @@ fn run_probe_tool_call(arguments: &Value) -> anyhow::Result<Value> {
         }
     }
     let text = if lines.is_empty() {
-        format!(
-            "all cases passed; readiness {}/100",
-            crate::score::readiness(&report).overall
-        )
+        match &report.readiness {
+            Some(readiness) => format!(
+                "all cases passed; readiness {}/100 ({})",
+                readiness.score, readiness.standard
+            ),
+            None => "all cases passed".to_owned(),
+        }
     } else {
         lines.join("\n")
     };

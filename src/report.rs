@@ -224,38 +224,92 @@ fn render_markdown(findings: &[Finding]) -> anyhow::Result<String> {
     Ok(output)
 }
 
-/// Pull-request-ready rendering of a probe report: verdict table, category
-/// breakdown, readiness score, and a static badge URL. Contains only the
-/// share-safe fields already present in the JSON report.
+/// Pull-request-ready rendering of a probe report: standard readiness with
+/// its areas and lost points, a static badge URL, the gate, and the verdict
+/// table. Contains only the share-safe fields already present in the JSON
+/// report.
 pub fn render_probe_markdown(
     server: &str,
     report: &crate::probe::ProbeReport,
     corpus: Option<&crate::corpus::Corpus>,
     price_per_mtok: Option<f64>,
 ) -> String {
-    let readiness = crate::score::readiness(report);
     let mut out = String::new();
     out.push_str(&format!("## mcp-eval report — {server}\n\n"));
-    out.push_str(&format!(
-        "**Readiness: {}/100** ![mcpeval]({})\n\n",
-        readiness.overall,
-        crate::score::badge_url(readiness.overall)
-    ));
-    if let Some(corpus) = corpus {
-        if let Some(battery) = crate::score::readiness_over(report, &corpus.battery) {
-            let placement = corpus.placement(battery.overall);
+    match (
+        &report.readiness,
+        report.readiness_error,
+        report.legacy_score,
+    ) {
+        (Some(readiness), _, _) => {
             writeln!(
                 out,
-                "*Corpus battery ({}): {}/100 — above {}, tied with {}, below {} of {} observed servers.*\n",
-                corpus.battery_label(),
-                battery.overall,
-                placement.above,
-                placement.tied,
-                placement.below,
-                corpus.observations.len()
+                "**Readiness: {}/100** ![mcpeval]({}) `{}`\n",
+                readiness.score,
+                crate::score::badge_url(readiness.score),
+                readiness.standard
+            )
+            .ok();
+            out.push_str("| Area | Weight | Score |\n| --- | --- | --- |\n");
+            for area in &readiness.areas {
+                writeln!(
+                    out,
+                    "| {} | {} | {} |",
+                    area.area.as_str(),
+                    area.area.weight(),
+                    area.score
+                )
+                .ok();
+            }
+            let surface = &readiness.surface;
+            writeln!(
+                out,
+                "\n*Surface: {} tools, {} read-only, {} writers, {} exercised.*\n",
+                surface.tools, surface.read_only, surface.writers, surface.exercised
+            )
+            .ok();
+            let lost: Vec<&crate::score::Check> = readiness
+                .areas
+                .iter()
+                .flat_map(|area| &area.checks)
+                .collect();
+            if !lost.is_empty() {
+                out.push_str("### Lost points\n\n");
+                for check in lost {
+                    let tool = check
+                        .tool
+                        .as_deref()
+                        .map(|tool| format!(" `{tool}`"))
+                        .unwrap_or_default();
+                    writeln!(
+                        out,
+                        "- **`{}`**{tool} scored {} (`{}`): {}",
+                        check.id.as_str(),
+                        check.score,
+                        check.reason.as_str(),
+                        crate::remediation::check_hint(check.reason)
+                    )
+                    .ok();
+                }
+                out.push('\n');
+            }
+        }
+        (None, Some(reason), _) => {
+            writeln!(out, "**Readiness: not measured** (`{}`)\n", reason.as_str()).ok();
+        }
+        (None, None, Some(legacy)) => {
+            writeln!(
+                out,
+                "**Manifest pass rate: {legacy}/100** (legacy v1 score, not a readiness standard)\n"
             )
             .ok();
         }
+        (None, None, None) => {}
+    }
+    if let Some((passed, total)) = report.gate() {
+        writeln!(out, "**Gate:** {passed}/{total} cases passed\n").ok();
+    }
+    if let Some(corpus) = corpus {
         if let (Some(tokens), Some(tools)) = (
             crate::score::catalog_tokens(report),
             crate::score::catalog_tool_count(report),
@@ -270,52 +324,42 @@ pub fn render_probe_markdown(
             }
         }
     }
-    if !readiness.categories.is_empty() {
-        out.push_str("| Category | Passed |\n| --- | --- |\n");
-        for category in &readiness.categories {
+    if !report.cases.is_empty() {
+        out.push_str("| Case | Probe | Result | Attempts | First failure | Reason | Bound |\n");
+        out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
+        for case in &report.cases {
+            let (result, first_failure, reason) = match case.reason {
+                None => ("pass".to_string(), "—".to_string(), "—".to_string()),
+                Some(reason) if reason.is_transport() => (
+                    "error".to_string(),
+                    "—".to_string(),
+                    reason.as_str().to_string(),
+                ),
+                Some(reason) => (
+                    "fail".to_string(),
+                    case.first_failure
+                        .map(|value| value.to_string())
+                        .unwrap_or_default(),
+                    reason.as_str().to_string(),
+                ),
+            };
+            let bound = case.detail.map_or_else(
+                || "—".to_string(),
+                |detail| format!("{} {} > {}", detail.bound, detail.observed, detail.limit),
+            );
             writeln!(
                 out,
-                "| {} | {}/{} |",
-                category.name, category.passed, category.total
+                "| {} | {} | {} | {} | {} | {} | {} |",
+                case.id,
+                case.probe.as_str(),
+                result,
+                case.attempts,
+                first_failure,
+                reason,
+                bound
             )
             .ok();
         }
-        out.push('\n');
-    }
-    out.push_str("| Case | Probe | Result | Attempts | First failure | Reason | Bound |\n");
-    out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
-    for case in &report.cases {
-        let (result, first_failure, reason) = match case.reason {
-            None => ("pass".to_string(), "—".to_string(), "—".to_string()),
-            Some(reason) if reason.is_transport() => (
-                "error".to_string(),
-                "—".to_string(),
-                reason.as_str().to_string(),
-            ),
-            Some(reason) => (
-                "fail".to_string(),
-                case.first_failure
-                    .map(|value| value.to_string())
-                    .unwrap_or_default(),
-                reason.as_str().to_string(),
-            ),
-        };
-        let bound = case.detail.map_or_else(
-            || "—".to_string(),
-            |detail| format!("{} {} > {}", detail.bound, detail.observed, detail.limit),
-        );
-        writeln!(
-            out,
-            "| {} | {} | {} | {} | {} | {} | {} |",
-            case.id,
-            case.probe.as_str(),
-            result,
-            case.attempts,
-            first_failure,
-            reason,
-            bound
-        )
-        .ok();
     }
     if report.cases.iter().any(|case| case.reason.is_some()) {
         out.push_str("\n### Remediation\n\n");

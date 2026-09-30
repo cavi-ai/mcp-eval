@@ -25,6 +25,10 @@ pub struct ProbeOptions {
     pub command: Vec<String>,
     pub http_url: Option<String>,
     pub allow_remote_http: bool,
+    /// Run the standard battery after the gate (full-battery runs only).
+    pub standard: bool,
+    /// Attest unannotated tools as read-only for the standard battery.
+    pub confirm_read_only: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -592,24 +596,31 @@ impl CaseReport {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ProbeReport {
     pub cases: Vec<CaseReport>,
     /// Lowercase hex SHA-256 of the manifest bytes the run parsed.
     pub manifest_sha256: Option<String>,
+    /// The standard battery's readiness; None under --gate-only, for a
+    /// selected probe or case, or for a v1 document.
+    pub readiness: Option<crate::score::Readiness>,
+    /// The standard battery could not start: why.
+    pub readiness_error: Option<FailureReason>,
+    /// A v1 document's manifest pass rate, kept for display only.
+    pub legacy_score: Option<u64>,
 }
 
 impl ProbeReport {
-    /// Reconstruct a report from its `mcpeval.probe-report/v1` document —
-    /// the committed-baseline format. Measurements are restored where the
+    /// Reconstruct a report from its `mcpeval.probe-report/v1` or `/v2`
+    /// document — the committed-baseline format. Measurements are restored where the
     /// document carries them; the reconstructed report renders text,
     /// markdown, and SARIF identically to the run that produced it.
     pub fn from_json_document(document: &serde_json::Value) -> anyhow::Result<Self> {
-        if document.get("schema").and_then(serde_json::Value::as_str)
-            != Some("mcpeval.probe-report/v1")
-        {
-            bail!("document is not an mcpeval.probe-report/v1 report");
-        }
+        let v2 = match document.get("schema").and_then(serde_json::Value::as_str) {
+            Some("mcpeval.probe-report/v2") => true,
+            Some("mcpeval.probe-report/v1") => false,
+            _ => bail!("document is not an mcpeval.probe-report/v1 or /v2 report"),
+        };
         let cases = document
             .get("cases")
             .and_then(serde_json::Value::as_array)
@@ -692,12 +703,37 @@ impl ProbeReport {
                     .and_then(serde_json::Value::as_u64),
             });
         }
+        let (readiness, readiness_error, legacy_score) = if v2 {
+            let readiness = match document.get("readiness") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(crate::score::Readiness::from_json(value)?),
+            };
+            let readiness_error = match document.get("readiness_error") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(label) => Some(
+                    FailureReason::from_report_label(
+                        label.as_str().context("readiness_error must be a string")?,
+                    )
+                    .with_context(|| format!("unknown reason label {label}"))?,
+                ),
+            };
+            (readiness, readiness_error, None)
+        } else {
+            let legacy = document
+                .get("readiness")
+                .and_then(|readiness| readiness.get("score"))
+                .and_then(serde_json::Value::as_u64);
+            (None, None, legacy)
+        };
         Ok(Self {
             cases: parsed,
             manifest_sha256: document
                 .get("manifest_sha256")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned),
+            readiness,
+            readiness_error,
+            legacy_score,
         })
     }
 
@@ -705,18 +741,31 @@ impl ProbeReport {
         self.cases.iter().all(CaseReport::passed)
     }
 
-    /// Some case could not be evaluated, so the run is incomplete.
+    /// Manifest cases passed and declared; None when no manifest ran.
+    pub fn gate(&self) -> Option<(u64, u64)> {
+        (self.manifest_sha256.is_some() || !self.cases.is_empty()).then(|| {
+            (
+                self.cases.iter().filter(|case| case.passed()).count() as u64,
+                self.cases.len() as u64,
+            )
+        })
+    }
+
+    /// Some case, or the standard battery, could not be evaluated, so the
+    /// run is incomplete.
     pub fn errored(&self) -> bool {
-        self.cases.iter().any(CaseReport::errored)
+        self.cases.iter().any(CaseReport::errored) || self.readiness_error.is_some()
     }
 
     /// Versioned, deterministic JSON document: no timestamps, no session
     /// identifiers, cases in manifest order. Contains only share-safe
     /// fields — the generator, server label, manifest hash, case IDs, probe
     /// kinds, tool names, counts, fixed reason labels with their static
-    /// remediation hints, declared bounds, measurement numbers, and the
-    /// readiness score. Suitable for CI artifacts and committed baselines.
-    /// `docs/mcp-eval.probe-report.schema.json` describes it.
+    /// remediation hints, declared bounds, measurement numbers, the gate
+    /// counts, and the standard readiness object. Suitable for CI
+    /// artifacts and committed baselines.
+    /// `docs/mcp-eval.probe-report.schema.json` describes it
+    /// (`mcpeval.probe-report/v2`).
     pub fn to_json(&self, server: &str) -> serde_json::Value {
         let cases: Vec<serde_json::Value> = self
             .cases
@@ -768,14 +817,15 @@ impl ProbeReport {
                 })
             })
             .collect();
-        let readiness = crate::score::readiness(self);
         serde_json::json!({
-            "schema": "mcpeval.probe-report/v1",
+            "schema": "mcpeval.probe-report/v2",
             "generator": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")},
             "server": server,
             "manifest_sha256": self.manifest_sha256,
             "passed": self.passed(),
-            "readiness": readiness.to_json(),
+            "gate": self.gate().map(|(passed, total)| serde_json::json!({"passed": passed, "total": total})),
+            "readiness": self.readiness.as_ref().map(crate::score::Readiness::to_json),
+            "readiness_error": self.readiness_error.map(|reason| reason.as_str()),
             "cases": cases,
         })
     }
@@ -857,10 +907,74 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
             }
         }
     }
-    Ok(ProbeReport {
+    // The gate's connection closes before the standard opens its own, so
+    // the manifest's calls cannot move the score.
+    drop(client);
+    let mut report = ProbeReport {
         cases: reports,
         manifest_sha256: Some(manifest_sha256),
-    })
+        ..ProbeReport::default()
+    };
+    if options.standard && options.selected_probe.is_none() && options.selected_case.is_none() {
+        measure_standard(
+            &mut report,
+            &target,
+            &crate::standard::StandardOptions {
+                confirm_read_only: options.confirm_read_only,
+            },
+        );
+    }
+    Ok(report)
+}
+
+pub struct ScoreOptions {
+    pub server: String,
+    pub command: Vec<String>,
+    pub http_url: Option<String>,
+    pub allow_remote_http: bool,
+    pub confirm_read_only: bool,
+}
+
+/// The standard battery alone: no manifest, no gate.
+pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
+    if !crate::privacy::valid_server(&options.server) {
+        return Err(crate::exit::usage(anyhow::anyhow!(
+            "server label is invalid"
+        )));
+    }
+    let target = ClientTarget::new(options.command, options.http_url, options.allow_remote_http)
+        .map_err(crate::exit::usage)?;
+    let mut report = ProbeReport::default();
+    measure_standard(
+        &mut report,
+        &target,
+        &crate::standard::StandardOptions {
+            confirm_read_only: options.confirm_read_only,
+        },
+    );
+    Ok(report)
+}
+
+/// Run the standard battery into `report`; a battery that cannot start
+/// leaves readiness unmeasured with its transport reason.
+fn measure_standard(
+    report: &mut ProbeReport,
+    target: &ClientTarget,
+    options: &crate::standard::StandardOptions,
+) {
+    match crate::standard::run(target, options) {
+        Ok(readiness) => report.readiness = Some(readiness),
+        Err(error) => {
+            let reason = transport_reason(&error);
+            // Diagnostics only: a closed stderr must not end the run.
+            let _ = writeln!(
+                std::io::stderr(),
+                "standard battery {}: {error:#}",
+                reason.as_str()
+            );
+            report.readiness_error = Some(reason);
+        }
+    }
 }
 
 /// The validated manifest and the SHA-256 of the exact bytes it was parsed
@@ -2380,6 +2494,33 @@ mod tests {
         assert_eq!(
             labels(&diff["$defs"]["case"]["properties"]["probe"]["enum"]),
             kinds
+        );
+    }
+
+    #[test]
+    fn v1_documents_keep_their_score_as_legacy_and_v2_documents_round_trip() {
+        let v1 = json!({
+            "schema": "mcpeval.probe-report/v1", "server": "demo", "passed": true,
+            "readiness": {"score": 100, "categories": [], "badge": "https://img.shields.io/badge/x"},
+            "cases": []
+        });
+        let report = ProbeReport::from_json_document(&v1).unwrap();
+        assert_eq!(report.legacy_score, Some(100));
+        assert!(report.readiness.is_none());
+
+        let readiness = crate::score::fold(&crate::standard::Observations::default());
+        let report = ProbeReport {
+            readiness: Some(readiness.clone()),
+            ..ProbeReport::default()
+        };
+        let document = report.to_json("demo");
+        assert_eq!(document["schema"], "mcpeval.probe-report/v2");
+        assert_eq!(document["gate"], Value::Null);
+        let parsed = ProbeReport::from_json_document(&document).unwrap();
+        assert_eq!(parsed.readiness, Some(readiness));
+        assert_eq!(parsed.legacy_score, None);
+        assert!(
+            ProbeReport::from_json_document(&json!({"schema": "mcpeval.probe-report/v3"})).is_err()
         );
     }
 

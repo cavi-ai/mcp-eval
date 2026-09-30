@@ -93,6 +93,8 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Com
                 command,
                 http_url,
                 allow_remote_http: options.allow_remote_http,
+                standard: true,
+                confirm_read_only: false,
             },
             &mut store,
         )
@@ -149,7 +151,7 @@ fn render_text(results: &[(String, ProbeReport)]) -> String {
     }
     let scores = results
         .iter()
-        .map(|(_, report)| format!("{}/100", crate::score::readiness(report).overall))
+        .map(|(_, report)| readiness_cell(report))
         .collect::<Vec<_>>()
         .join("  ");
     out.push_str(&format!(
@@ -159,6 +161,13 @@ fn render_text(results: &[(String, ProbeReport)]) -> String {
         width = width
     ));
     out
+}
+
+fn readiness_cell(report: &ProbeReport) -> String {
+    report.readiness.as_ref().map_or_else(
+        || "—".to_owned(),
+        |readiness| format!("{}/100", readiness.score),
+    )
 }
 
 fn render_markdown(server: &str, results: &[(String, ProbeReport)]) -> String {
@@ -194,7 +203,7 @@ fn render_markdown(server: &str, results: &[(String, ProbeReport)]) -> String {
     }
     let score_cells = results
         .iter()
-        .map(|(_, report)| format!("{}/100", crate::score::readiness(report).overall))
+        .map(|(_, report)| readiness_cell(report))
         .collect::<Vec<_>>()
         .join(" | ");
     out.push_str(&format!("| **Readiness** | | {score_cells} |\n\n"));

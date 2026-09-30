@@ -13,7 +13,6 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 
 use crate::probe::ProbeReport;
-use crate::score;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrendPoint {
@@ -27,6 +26,10 @@ pub struct TrendPoint {
     /// before runs carried it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manifest_sha256: Option<String>,
+    /// The readiness standard behind `score`; absent in history recorded
+    /// before the standard existed, when `score` was a manifest pass rate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub standard: Option<String>,
 }
 
 impl TrendPoint {
@@ -42,7 +45,9 @@ impl TrendPoint {
             if self.passed { "" } else { " FAILING" }
         );
         if let Some(previous) = previous {
-            if previous.manifest_sha256 == self.manifest_sha256 {
+            if previous.standard != self.standard {
+                out.push_str(" standard changed");
+            } else if self.standard.is_some() || previous.manifest_sha256 == self.manifest_sha256 {
                 let difference = self.score as i64 - previous.score as i64;
                 out.push_str(&format!(" {difference:+}"));
             } else {
@@ -62,7 +67,10 @@ pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).context("creating trend directory")?;
     }
-    let readiness = score::readiness(report);
+    // A point is a readiness measurement: gate-only runs record none.
+    let Some(readiness) = &report.readiness else {
+        return Ok(());
+    };
     let point = TrendPoint {
         ts: chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
@@ -71,8 +79,9 @@ pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result
         passed: report.passed(),
         cases_total: report.cases.len() as u64,
         cases_passed: report.cases.iter().filter(|case| case.passed()).count() as u64,
-        score: readiness.overall,
+        score: readiness.score,
         manifest_sha256: report.manifest_sha256.clone(),
+        standard: Some(readiness.standard.clone()),
     };
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -162,4 +171,33 @@ pub fn render(root: &Path, last: usize) -> anyhow::Result<String> {
         }
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn point(score: u64, standard: Option<&str>, manifest: &str) -> TrendPoint {
+        TrendPoint {
+            ts: "2026-09-30T00:00:00.000Z".into(),
+            server: "demo".into(),
+            passed: true,
+            cases_total: 1,
+            cases_passed: 1,
+            score,
+            manifest_sha256: Some(manifest.into()),
+            standard: standard.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn deltas_compare_one_standard_only() {
+        let legacy = point(100, None, "aaaaaaaa");
+        let first = point(90, Some("mcpeval-standard/1"), "aaaaaaaa");
+        let second = point(85, Some("mcpeval-standard/1"), "bbbbbbbb");
+        assert!(first.summary(Some(&legacy)).contains(" standard changed"));
+        // A new manifest does not change what the standard score means.
+        assert!(second.summary(Some(&first)).contains(" -5"));
+        assert!(!second.summary(Some(&first)).contains("manifest changed"));
+    }
 }

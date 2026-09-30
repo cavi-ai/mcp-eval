@@ -12,7 +12,7 @@ pub enum ProbeFormat {
     /// Human-readable one-line-per-case summary.
     #[default]
     Text,
-    /// Versioned, deterministic JSON document (mcpeval.probe-report/v1).
+    /// Versioned, deterministic JSON document (mcpeval.probe-report/v2).
     Json,
     /// Pull-request-ready markdown with a readiness score and badge.
     Markdown,
@@ -21,13 +21,24 @@ pub enum ProbeFormat {
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum ScoreFormat {
+    /// Readiness, area scores, and each lost point with its hint.
+    #[default]
+    Text,
+    /// Versioned, deterministic JSON document (mcpeval.probe-report/v2).
+    Json,
+    /// Pull-request-ready markdown with the readiness badge.
+    Markdown,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum SchemaDocument {
     /// mcp-eval.manifest.json.
     #[default]
     Manifest,
-    /// mcpeval.probe-report/v1 (`probe --format json`).
+    /// mcpeval.probe-report/v2 (`probe` or `score --format json`).
     Report,
-    /// mcpeval.probe-diff/v1 (`diff --format json`).
+    /// mcpeval.probe-diff/v2 (`diff --format json`).
     Diff,
 }
 
@@ -130,6 +141,39 @@ pub enum Command {
         /// Explicitly authorize manifest-declared sandbox mutations.
         #[arg(long)]
         allow_mutation: bool,
+        /// Skip the standard battery and report the manifest gate only.
+        #[arg(long)]
+        gate_only: bool,
+        /// Attest that tools annotated with neither readOnlyHint nor
+        /// destructiveHint are read-only, so the standard battery calls them.
+        #[arg(long)]
+        confirm_read_only: bool,
+        /// Streamable HTTP endpoint instead of a stdio command.
+        #[arg(long)]
+        url: Option<String>,
+        /// Allow an explicitly selected remote HTTPS endpoint.
+        #[arg(long, requires = "url")]
+        allow_remote_http: bool,
+        /// The server command, after `--`.
+        #[arg(last = true)]
+        cmd: Vec<String>,
+    },
+    /// Score a server against mcpeval's standard battery; no manifest.
+    #[command(display_order = 2)]
+    Score {
+        /// Name this server is recorded under.
+        #[arg(long)]
+        server: String,
+        /// Output format.
+        #[arg(long, value_enum, default_value_t = ScoreFormat::Text)]
+        format: ScoreFormat,
+        /// Suppress remediation hints in text output (for scripts).
+        #[arg(long)]
+        brief: bool,
+        /// Attest that tools annotated with neither readOnlyHint nor
+        /// destructiveHint are read-only, so the standard battery calls them.
+        #[arg(long)]
+        confirm_read_only: bool,
         /// Streamable HTTP endpoint instead of a stdio command.
         #[arg(long)]
         url: Option<String>,
@@ -220,7 +264,7 @@ pub enum Command {
     },
     /// Compare a committed baseline report against a current report and
     /// classify every case as regressed, fixed, or unchanged. Both
-    /// documents are mcpeval.probe-report/v1; pass `-` for stdin.
+    /// documents are mcpeval.probe-report/v1 or /v2; pass `-` for stdin.
     #[command(display_order = 4)]
     Diff {
         /// Baseline report document (the committed gate).
@@ -260,7 +304,7 @@ pub enum Command {
         #[arg(long, default_value_t = 10)]
         last: usize,
     },
-    /// Re-render a committed mcpeval.probe-report/v1 document (a baseline
+    /// Re-render a committed mcpeval.probe-report/v1 or /v2 document (a baseline
     /// or CI artifact) into text, markdown, or SARIF without re-running
     /// any server. Reads the document from a file or stdin with `-`.
     #[command(display_order = 3)]

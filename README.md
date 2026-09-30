@@ -57,10 +57,12 @@ mcpeval init --server demo --confirm-read-only \
   --output demo.manifest.json -- mcpeval-demo
 mcpeval probe --server demo \
   --manifest demo.manifest.json -- mcpeval-demo
-# readiness 100/100
+# demo gate 25/25 passed
+# demo readiness 98/100 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
 mcpeval probe --server demo --manifest demo.manifest.json \
   -- mcpeval-demo --broken stalled-cursor
 # pagination-stalled-cursor
+# demo gate 24/25 passed
 ```
 
 ## Track 1: benchmark battery
@@ -182,10 +184,10 @@ mcpeval explain   # list every fixed reason
 ```
 
 `--format json` emits a versioned, deterministic document
-(`mcpeval.probe-report/v1`): generator version, server label, manifest
-SHA-256, per-case verdicts, tool names, fixed reason labels with their
-remediation hints and the declared bound that failed, measurement numbers,
-and the readiness score — no timestamps, sessions, or payloads, so it is safe
+(`mcpeval.probe-report/v2`): generator version, server label, manifest
+SHA-256, the gate counts, per-case verdicts, tool names, fixed reason labels
+with their remediation hints and the declared bound that failed, measurement
+numbers, and the readiness object — no timestamps, sessions, or payloads, so it is safe
 to commit as a baseline or attach to CI artifacts. `mcpeval schema report`
 and `mcpeval schema diff` print its JSON Schema and the diff document's.
 
@@ -208,27 +210,28 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
   --format markdown --price-per-mtok 3 -- your-mcp-server --flags
 ```
 
-The **readiness score** (0–100) is a deterministic composite over four
-weighted categories — discovery (discovery-cost, token-cost, pagination,
-surface-listing), reliability (degradation-over-n, error-honesty,
-state-recovery, latency-budget, payload-bounds), contract
-(schema-guessability, instruction-fidelity, output-schema), and concurrency
-(contention). Only categories present in the manifest are scored, so partial
-manifests are never penalized for probes they did not declare. The same score
-drives the badge URL embedded in the markdown report; no payload or server
-detail ever leaves the report.
+The manifest is the **gate**: its cases set `passed` and the exit code. The
+**readiness score** (0–100) is separate and absolute: after the gate, mcpeval
+runs its own read-only standard battery over the server's whole catalog and
+scores it on fixed curves, so two servers' scores mean the same thing whatever
+their manifests declare. The report names the standard
+(`mcpeval-standard/1-draft` in this build) and lists every lost point with a
+remediation hint. Surface the standard cannot test counts against the score.
+The battery never calls a tool annotated as a writer (`readOnlyHint: false` or
+`destructiveHint: true`), calls a tool with neither annotation only under
+`--confirm-read-only`, and never writes to the call journal. `mcpeval score`
+runs it without a manifest; `--gate-only` skips it. Areas in this build:
+context (catalog and heaviest-tool token cost), reliability (repeat
+consistency, median latency band, declared output schema, contention, payload
+bounds), and coverage (exercised read-only tools over all read-only tools).
 
-The score is **calibrated**: mcp-eval ships a corpus of readiness
-observations from popular public MCP servers (`data/readiness-corpus.json`,
-refreshed by `scripts/corpus/collect.sh`), and every text and markdown report
-places your score against it. Only your cases of the battery the corpus was
-collected with are scored for the comparison, and ties are counted —
-*"corpus battery (discovery-cost, token-cost, pagination, surface-listing):
-100/100, above 1, tied with 32, below 0 of 33 observed servers"*. When the
-corpus records catalog sizes, a second line places your token-cost
-measurement — *"catalog: 566 tokens over 12 tools, lighter than 23 of 33
-observed servers (median 1186 tokens)"*. The shipped corpus overrides
-cleanly: point a personal one at `<MCPEVAL_HOME>/corpus.json`.
+When the shipped corpus (`data/readiness-corpus.json`, refreshed by
+`scripts/corpus/collect.sh`) records catalog sizes, text and markdown reports
+place your catalog among the observed servers — *"catalog: 566 tokens over 12
+tools, lighter than 23 of 33 observed servers (median 1186 tokens)"*. The
+corpus's scores are manifest pass rates collected before the standard, so
+readiness is not placed among them until the corpus is recollected. A personal
+corpus at `<MCPEVAL_HOME>/corpus.json` overrides the shipped one.
 
 **[State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md)** —
 the corpus is also published: how healthy are the MCP servers agents actually
@@ -236,12 +239,12 @@ use? 33 popular public servers, probed with the same battery, distribution
 published with full method notes. Reproduce it locally with one script; add
 your server by PR.
 
-Every full-battery run appends a content-free score record to
-`<MCPEVAL_HOME>/store/probes/history.jsonl`; `mcpeval trends` renders the
-per-server history with score deltas between runs of the same manifest and
-`manifest changed` where the manifest differs.
+Every full-battery run that measured readiness appends a content-free record
+to `<MCPEVAL_HOME>/store/probes/history.jsonl`; `mcpeval trends` renders the
+per-server history with score deltas between runs under the same standard and
+`standard changed` where it differs.
 
-Five probes are this release's headline evaluation dimensions — discovery-cost, schema-guessability, error-honesty, state-recovery, and contention; the other fourteen are supplemental checks that score in the same four categories.
+Five probes are this release's headline evaluation dimensions — discovery-cost, schema-guessability, error-honesty, state-recovery, and contention; the other fourteen are supplemental checks. Manifest cases gate; they do not enter the readiness score.
 
 The deterministic battery:
 
@@ -300,7 +303,7 @@ self-tested in this repository on every push, consuming itself exactly as a
 downstream repository would.
 
 Reports are portable: `mcpeval report <baseline.json> --format markdown|sarif`
-re-renders any committed `mcpeval.probe-report/v1` document without
+re-renders any committed `mcpeval.probe-report` document (v1 or v2) without
 re-running a server, so a probe job can run in CI, publish the JSON as an
 artifact, and a separate step (or a human, later) renders the report.
 `mcpeval serve --print-config` emits a ready-to-paste MCP client config for
@@ -309,17 +312,18 @@ the agent loop.
 ## Gating against a baseline
 
 `mcpeval diff` is the time axis that `compare` is the space axis of: it
-compares two committed `mcpeval.probe-report/v1` documents of one server —
+compares two committed `mcpeval.probe-report` documents (v1 or v2) of one server —
 the baseline and the current run — and classifies every case as
 **regressed**, **fixed**, **changed** (still failing, for a different
-reason), or **unchanged**, matching cases by id and probe kind. Readiness moves with
-the verdicts; measurement movement (catalog tokens, slowest latency) is
-reported per case.
+reason), or **unchanged**, matching cases by id and probe kind. Readiness
+moves only between documents scored under the same standard; against a v1
+baseline or another standard it reads `not comparable`. Measurement movement
+(catalog tokens, slowest latency) is reported per case.
 
 ```sh
 mcpeval diff baseline.json report.json
 # catalog-pagination         REGRESSED pagination-stalled-cursor
-# readiness  100 → 85
+# readiness  98 → 98
 # 1 regressed, 0 fixed, 0 changed, 3 unchanged, 0 removed, 0 added
 
 mcpeval diff baseline.json report.json --fail-on-regression
@@ -330,7 +334,7 @@ mcpeval diff baseline.json report.json --fail-on-change
 # exits non-zero when a failing case now fails for a different reason
 
 mcpeval diff baseline.json report.json --format json
-# versioned, deterministic mcpeval.probe-diff/v1 document — safe to
+# versioned, deterministic mcpeval.probe-diff/v2 document — safe to
 # attach to CI artifacts beside the reports
 ```
 
@@ -452,7 +456,7 @@ page cannot reach the endpoint through the browser.
 | `list_findings` | Sanitized finding rows (server, tool, state, severity, evidence counts), optionally filtered by lifecycle state |
 | `get_finding` | One finding by `finding-*` identifier, including its shape-level repro |
 | `get_readiness_trends` | Readiness-score history per server, oldest first |
-| `run_probe` | Execute the read-only battery against any server with an inline manifest and get the full `mcpeval.probe-report/v1` document plus remediation hints — mutation is never authorized through this surface |
+| `run_probe` | Execute the read-only battery against any server with an inline manifest and get the full `mcpeval.probe-report/v2` document plus remediation hints — mutation is never authorized through this surface |
 | `scaffold` | Introspect a live server and return the same starter manifest JSON as `mcpeval init`, without writing files |
 | `record_annotation` | Record the agent's own observation about a captured call (same fixed kinds and 240-character bounded note as `mcpeval annotate`); the session is hashed before persistence |
 

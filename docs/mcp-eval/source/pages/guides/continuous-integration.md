@@ -1,6 +1,6 @@
 # Continuous integration
 
-The probe battery is built for CI gating: deterministic verdicts, fixed failure reasons, and a versioned JSON report with no timestamps, sessions, or payloads.
+The probe battery is built for CI gating: deterministic verdicts, fixed failure reasons, and a versioned JSON report with no timestamps, sessions, or payloads. The manifest's cases are the gate that sets the exit code; the readiness score comes from mcpeval's standard battery and never changes the exit code.
 
 ## GitHub Actions
 
@@ -30,7 +30,7 @@ The report is rendered as markdown into the job summary and written as JSON to `
 | Output | Meaning |
 | --- | --- |
 | `passed` | `true` when every selected case passed |
-| `readiness` | Readiness score |
+| `readiness` | Readiness score (0-100) under the mcpeval standard the report names |
 | `report` | Path to the JSON report |
 | `markdown` | Path to the rendered markdown report |
 | `exit-code` | `mcpeval probe` exit code |
@@ -59,7 +59,7 @@ Gate the current run against the baseline with `mcpeval diff`:
         run: mcpeval diff mcp-eval.baseline.json current.json --fail-on-regression
 ```
 
-The diff classifies every case as regressed, fixed, changed (still failing, for a different reason), or unchanged (matched by case id and probe kind), prints the readiness movement, and exits non-zero only for regressions — fixes and added cases are informational, since manifest growth is deliberate. Add `--fail-on-change` to also gate on changed failure reasons. Both documents must name the same server. `--format json` emits a deterministic `mcpeval.probe-diff/v1` document; `--format markdown` renders a pull-request-ready table. Without `--fail-on-regression` the diff is informational and always exits zero.
+The diff classifies every case as regressed, fixed, changed (still failing, for a different reason), or unchanged (matched by case id and probe kind), prints the readiness movement (or `not comparable` when the two documents were scored under different standards, or the baseline is a v1 document), and exits non-zero only for regressions — fixes and added cases are informational, since manifest growth is deliberate. Add `--fail-on-change` to also gate on changed failure reasons. Both documents must name the same server. `--format json` emits a deterministic `mcpeval.probe-diff/v1` document; `--format markdown` renders a pull-request-ready table. Without `--fail-on-regression` the diff is informational and always exits zero.
 
 Regenerate the baseline deliberately and review the diff in a pull request — never regenerate it inside CI, or the gate gates nothing.
 

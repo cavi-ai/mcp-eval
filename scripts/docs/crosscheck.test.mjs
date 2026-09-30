@@ -53,13 +53,13 @@ test("state-of-mcp-servers page matches the checked-in readiness corpus", async 
     assert.equal(claim, total, `page corpus size ${claim} != ${CORPUS_REL} count ${total}`);
   }
 
-  const perfectClaims = [...page.matchAll(/Readiness 100\/100 \| (\d+)/gmu)].map((match) => Number(match[1]));
+  const perfectClaims = [...page.matchAll(/Battery pass rate 100\/100 \| (\d+)/gmu)].map((match) => Number(match[1]));
   assert.ok(perfectClaims.length >= 1, "page should table the 100/100 count");
   for (const claim of perfectClaims) {
     assert.equal(claim, perfect, `page 100/100 count ${claim} != corpus count ${perfect}`);
   }
 
-  const belowClaims = [...page.matchAll(/Readiness below 100 \| (\d+)/gmu)].map((match) => Number(match[1]));
+  const belowClaims = [...page.matchAll(/Battery pass rate below 100 \| (\d+)/gmu)].map((match) => Number(match[1]));
   assert.ok(belowClaims.length >= 1, "page should table the below-100 count");
   for (const claim of belowClaims) {
     assert.equal(claim, below, `page below-100 count ${claim} != corpus count ${below}`);

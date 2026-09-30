@@ -8,8 +8,8 @@ How healthy are the MCP servers that agents actually use? This page is produced 
 
 | Observation | Count |
 | --- | --- |
-| Readiness 100/100 | 32 |
-| Readiness below 100 | 1 |
+| Battery pass rate 100/100 | 32 |
+| Battery pass rate below 100 | 1 |
 | Servers that could not complete the battery unaided | many require live credentials or services and are excluded |
 
 ## What the data says
@@ -32,7 +32,7 @@ scripts/corpus/collect.sh          # rebuilds data/readiness-corpus.json
 mcpeval probe --server your-server --format markdown -- your-mcp-server --flags
 ```
 
-Your own score is placed into the same distribution automatically — the corpus ships with the binary, and every text and markdown report adds a line that scores your cases of the corpus battery and reads *above N, tied with T, below M of K observed servers*. Add your server to the corpus by opening a PR with a refreshed `data/readiness-corpus.json` produced by the script above; no special access is required.
+These observations are manifest pass rates over the generic battery, collected before the readiness standard existed; that 32 of 33 servers pass it is why readiness is now an absolute standard instead. Reports place your catalog's token estimate among the observed servers, and they do not place a readiness score among these pass rates until the corpus is recollected under the standard.
 
 ## Method notes
 

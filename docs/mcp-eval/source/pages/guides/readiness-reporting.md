@@ -1,15 +1,21 @@
 # Readiness reporting
 
-Every full-battery `mcpeval probe` run produces a deterministic, privacy-safe report in three formats.
+Every full-battery `mcpeval probe` run produces two results: the **gate**, which is your manifest's cases, and **readiness**, a 0-100 score under mcpeval's standard. The gate sets `passed` and the exit code. Readiness is measured by mcpeval's own read-only standard battery over the server's whole catalog, so two servers' scores mean the same thing whatever their manifests declare. `mcpeval score` runs the standard battery alone, with no manifest.
 
 ## Text
 
-The default format prints one line per case — verdict, attempts, first-failure position, fixed reason label, and measurement numbers — followed by a readiness summary line:
+The default format prints one line per case — verdict, attempts, first-failure position, fixed reason label, and measurement numbers — then the gate, the readiness line with each area's score, the surface the standard saw, and every lost point with its hint:
 
 ```text
 literal-status instruction-fidelity pass attempts=1
-demo readiness 87/100 discovery=2/2 reliability=1/1 contract=1/1
-  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 32, below 0 of 33 observed servers
+demo gate 1/1 passed
+demo readiness 98/100 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
+  surface: 12 tools, 10 read-only, 2 writers, 10 exercised
+  lost reliability.consistent score=0 tool=flaky_read reason=reliability-inconsistent
+    hint: the same read-only call with the same arguments ended differently across three calls; make read paths deterministic, or return a retryable error with a stable code
+  lost reliability.latency score=50 tool=slow_read reason=reliability-slow
+    hint: median latency is above 100 ms (score 80: up to 300 ms, 50: up to 1 s, 20: up to 3 s, 0: slower); cache or precompute the read, or page large results
+  catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
 ```
 
 Failing cases print a remediation hint: the concrete server-side fix for that fixed reason. A case that exceeded a manifest bound also names the bound, its limit, and the observed value:
@@ -36,18 +42,27 @@ mcpeval explain        # list every fixed reason
 
 ## JSON
 
-`--format json` emits the versioned `mcpeval.probe-report/v1` document: the generator, server label, manifest SHA-256, per-case verdicts with tool names, fixed reason labels with their remediation hints, the declared bound behind a bound-based failure, measurement numbers, and a `readiness` object. There are no timestamps, sessions, or payloads, so the document is safe to commit as a baseline or attach to CI artifacts. `mcpeval schema report` prints its JSON Schema.
+`--format json` emits the versioned `mcpeval.probe-report/v2` document: the generator, server label, manifest SHA-256, the `gate` counts, the `readiness` object, and per-case verdicts with tool names, fixed reason labels with their remediation hints, the declared bound behind a bound-based failure, and measurement numbers. `readiness` names its standard, the surface, and each area with its weight, score, and lost checks. There are no timestamps, sessions, arguments, or payloads, so the document is safe to commit as a baseline or attach to CI artifacts. `mcpeval schema report` prints its JSON Schema.
 
 ```json
 {
-  "schema": "mcpeval.probe-report/v1",
+  "schema": "mcpeval.probe-report/v2",
   "generator": {"name": "mcpeval", "version": "{{PRODUCT_VERSION}}"},
   "server": "demo",
   "manifest_sha256": "3f1c…",
   "passed": false,
+  "gate": {"passed": 0, "total": 1},
   "readiness": {
-    "score": 0,
-    "categories": [{"name": "discovery", "passed": 0, "total": 1}]
+    "standard": "mcpeval-standard/1-draft",
+    "score": 98,
+    "badge": "https://img.shields.io/badge/mcpeval-98%2F100-brightgreen",
+    "attested_read_only": false,
+    "surface": {"tools": 12, "read_only": 10, "writers": 2, "exercised": 10},
+    "areas": [
+      {"name": "reliability", "weight": 20, "score": 94, "measurements": {},
+       "checks": [{"id": "reliability.latency", "tool": "slow_read", "score": 50,
+                   "observed": null, "reason": "reliability-slow", "hint": "…"}]}
+    ]
   },
   "cases": [{
     "id": "catalog-budget",
@@ -66,38 +81,31 @@ mcpeval explain        # list every fixed reason
 
 ## Markdown
 
-`--format markdown` renders a pull-request-ready report: verdict table, per-category breakdown, readiness score, and a static shields.io badge URL encoding only the score. The verdict table's `Bound` column shows `<field> <observed> > <limit>` for a case that exceeded a manifest bound (`max_tools 12 > 10`), and *Remediation* lists the heaviest tools under a `token-budget-exceeded` case. No payload or server detail ever leaves the report.
+`--format markdown` renders a pull-request-ready report: the readiness score with its standard and a static shields.io badge URL encoding only the score, an area table, the surface, *Lost points* with their hints, the gate, and the verdict table. The verdict table's `Bound` column shows `<field> <observed> > <limit>` for a case that exceeded a manifest bound (`max_tools 12 > 10`), and *Remediation* lists the heaviest tools under a `token-budget-exceeded` case. No payload or server detail ever leaves the report.
 
 ## The readiness score
 
-The score (0–100) is a deterministic composite over four weighted categories:
+Readiness (0-100) is the weighted mean of the standard's areas, each scored on fixed curves that mcpeval defines. The weights, curves, bands, and checks are the standard; the report names it (`mcpeval-standard/1-draft` in this build), and any change to them changes the name. No area ever drops out: surface the standard could not test counts against the score.
 
-| Category | Weight | Probes |
+| Area | Weight | Scored as |
 | --- | --- | --- |
-| discovery | 0.25 | `discovery-cost`, `token-cost`, `pagination`, `surface-listing` |
-| reliability | 0.35 | `degradation-over-n`, `error-honesty`, `state-recovery`, `latency-budget`, `payload-bounds`, `cancellation`, `resource-subscription` |
-| contract | 0.30 | `schema-guessability`, `instruction-fidelity`, `output-schema`, `protocol-negotiation`, `sampling`, `elicitation`, `completion` |
-| concurrency | 0.10 | `contention` |
+| context | 15 | 75% the catalog's token estimate (100 at 2,000 tokens or fewer, 0 at 40,000 or more, logarithmic between) and 25% the heaviest tool's (100 at 500 or fewer, 0 at 5,000 or more) |
+| reliability | 20 | each exercised tool's three calls: the same outcome every time, the median latency band (100 up to 100 ms, 80 up to 300 ms, 50 up to 1 s, 20 up to 3 s, else 0), and a declared `outputSchema` honored; plus one contention and one payload-bounds case on the first fully successful tool |
+| coverage | 15 | exercised read-only tools over every read-only tool |
 
-Each category contributes the fraction of its cases that passed, weighted as above. Categories with no cases in the manifest are excluded from both numerator and denominator, so a partial manifest is never penalized for probes it did not declare. The same report always produces the same score.
+The standard battery is read-only by construction. It never calls a tool annotated `readOnlyHint: false` or `destructiveHint: true`, and it calls a tool with neither annotation only when you pass `--confirm-read-only`; otherwise that tool stays in the surface as unexercised (`coverage-unannotated`). Tools that require arguments stay unexercised in this build (`coverage-required-arguments`). Each call waits at most 10 seconds; a call that times out or ends the connection costs that tool only, and the next tool starts on a fresh connection. The battery runs on its own connection after the gate and never writes to the call journal.
+
+It runs on full-battery `probe` runs and on `compare`; `--gate-only` skips it, and `--probe <kind>` and `verify` never run it. `mcpeval explain` covers the gate's reasons; each lost readiness check carries its own hint.
 
 ## Calibration
 
-A score without a referent is just a number. mcp-eval ships a corpus of readiness observations from popular public MCP servers (`data/readiness-corpus.json`, refreshed by `scripts/corpus/collect.sh`). The corpus records its `battery`: the probe kinds every observation was scored on (`discovery-cost`, `token-cost`, `pagination`, `surface-listing` when the field is absent). Text and markdown reports score only the report's cases of that battery for the comparison, so a manifest with other cases is compared like for like, and count the observed servers that score is above, tied with, and below:
-
-```text
-  corpus battery (discovery-cost, token-cost, pagination, surface-listing): 100/100, above 1, tied with 32, below 0 of 33 observed servers
-```
-
-The readiness line still scores every case. A report with no case of the corpus battery prints no corpus line.
-
-When observations carry `catalog_tokens`, a report with a token-cost measurement also places its catalog among them; the median is the lower middle for an even count:
+When the corpus (`data/readiness-corpus.json`, refreshed by `scripts/corpus/collect.sh`) carries `catalog_tokens`, text and markdown reports place your catalog among the observed servers; the median is the lower middle for an even count:
 
 ```text
   catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
 ```
 
-A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; when no corpus is available, reports omit both lines. JSON reports never carry corpus context. Calibration is deterministic: the same report against the same corpus always produces the same placement.
+The corpus's scores were collected as manifest pass rates, so reports do not place a readiness score among them until the corpus is recollected under the standard. A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; when no corpus is available, reports omit the line. JSON reports never carry corpus context.
 
 ## Session cost
 
@@ -107,13 +115,13 @@ The token-cost probe's measurement is model-independent; interpreting it is the 
 
 `--format sarif` emits a SARIF 2.1.0 document: one result per failing case, the probe kind as the rule id, the fixed reason plus remediation hint as the message, and the failing case's line in the manifest as the location. The manifest URI is relative to the working directory, so run the command from the repository root. Each server gets its own code-scanning category (`mcpeval/<server>/`). Upload it through GitHub code scanning and each failing case becomes an alert on its manifest line. `mcpeval report --format sarif` takes `--manifest` to locate results the same way. The document is deterministic and derived only from the sanitized report and the manifest's case lines.
 
-Reports traveled as JSON stay useful offline: `mcpeval report <baseline.json> --format markdown` re-renders any committed `mcpeval.probe-report/v1` document without re-running a server, so the probe run and the report rendering can live in different jobs — or on different days. Re-rendering a failing document exits non-zero, so a rendered report can gate in its own right.
+Reports traveled as JSON stay useful offline: `mcpeval report <baseline.json> --format markdown` re-renders any committed `mcpeval.probe-report/v1` or `/v2` document without re-running a server, so the probe run and the report rendering can live in different jobs — or on different days. Re-rendering a failing document exits non-zero, so a rendered report can gate in its own right.
 
-Two committed reports of the same server can also be compared directly: `mcpeval diff baseline.json current.json` classifies each case as regressed, fixed, changed (still failing, for a different reason), or unchanged and prints the readiness movement. With `--fail-on-regression` it exits non-zero for regressions, which makes the committed baseline a first-class CI gate; `--fail-on-change` also gates on changed failure reasons. See the continuous-integration guide for the recipe.
+Two committed reports of the same server can also be compared directly: `mcpeval diff baseline.json current.json` classifies each case as regressed, fixed, changed (still failing, for a different reason), or unchanged and prints the readiness movement. Readiness moves only when both documents were scored under the same standard; against a v1 baseline or a different standard the diff says `not comparable` and still classifies every case. With `--fail-on-regression` it exits non-zero for regressions, which makes the committed baseline a first-class CI gate; `--fail-on-change` also gates on changed failure reasons. See the continuous-integration guide for the recipe.
 
 ## Trends
 
-Every full-battery run appends a content-free score record — server label, verdict counts, score, manifest SHA-256, timestamp — to `<MCPEVAL_HOME>/store/probes/history.jsonl`. `mcpeval trends` renders the per-server history with a score delta between consecutive runs of the same manifest, `manifest changed` where the manifest differs, and the first eight hex digits of each run's manifest hash:
+Every full-battery run that measured readiness appends a content-free record — server label, gate counts, readiness score, its standard, manifest SHA-256, timestamp — to `<MCPEVAL_HOME>/store/probes/history.jsonl`; `--gate-only` runs record none. `mcpeval trends` renders the per-server history with a score delta between consecutive runs under the same standard, `standard changed` where the standard differs, and the first eight hex digits of each run's manifest hash:
 
 ```sh
 mcpeval trends --last 5
@@ -121,16 +129,15 @@ mcpeval trends --last 5
 
 ```text
 demo
-  2026-09-23T06:06:27.572Z score=88/100 cases=6/7 FAILING manifest=a4b5f651
-  2026-09-23T06:06:27.584Z score=88/100 cases=6/7 FAILING +0 manifest=a4b5f651
-  2026-09-23T06:06:27.590Z score=0/100 cases=0/1 FAILING manifest changed manifest=640fe10d
+  2026-09-30T18:03:04.761Z score=98/100 cases=1/1 manifest=0524c76b
+  2026-09-30T18:03:50.618Z score=97/100 cases=1/1 -1 manifest=0524c76b
 ```
 
-Records written before the hash was recorded carry none and compare only with each other.
+Records written before the standard existed hold a manifest pass rate: they compare only with each other, by manifest hash.
 
 ## Comparing servers
 
-`mcpeval compare` runs one manifest against several targets and renders a side-by-side verdict and readiness grid in text, markdown, or JSON. Targets are `--endpoint LABEL=URL` Streamable HTTP endpoints, optionally plus one stdio command after `--`, whose column is labeled `stdio`; at least two targets are required. Comparison is informational and never gates; endpoint URLs follow the same loopback-first, credential-free policy as the probes.
+`mcpeval compare` runs one manifest against several targets and renders a side-by-side verdict and readiness grid in text, markdown, or JSON; `--gate-only` compares the manifest verdicts alone. Targets are `--endpoint LABEL=URL` Streamable HTTP endpoints, optionally plus one stdio command after `--`, whose column is labeled `stdio`; at least two targets are required. Comparison is informational and never gates; endpoint URLs follow the same loopback-first, credential-free policy as the probes.
 
 ```sh
 mcpeval compare --server demo \

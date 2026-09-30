@@ -4,12 +4,35 @@
 
 ### Changed
 
+- `readiness` is an absolute score under `mcpeval-standard/1-draft`: after
+  the manifest's cases, a read-only standard battery scores the server's
+  whole catalog on fixed curves (context, reliability, coverage). Surface it
+  cannot test counts against the score. The manifest is the gate: it alone
+  sets `passed` and the exit code.
+- Probe reports are `mcpeval.probe-report/v2` (`gate`, `readiness` with
+  areas and lost checks, `readiness_error`); diffs are
+  `mcpeval.probe-diff/v2`. `report` and `diff` still read v1 documents.
+- `diff` marks readiness not comparable across standards or against a v1
+  document; `trends` compares scores only within one standard.
+- Reports no longer place the score among the shipped corpus, whose
+  observations are manifest pass rates; the catalog placement line stays.
 - README and installation docs list the Homebrew, npm, and Cargo install
   commands, and the quickstart runs the installed `mcpeval` and
   `mcpeval-demo` instead of `./target/release` paths.
 
+### Added
+
+- `mcpeval score` runs the standard battery without a manifest.
+- `probe --gate-only` and `compare --gate-only` skip the standard battery;
+  `probe --confirm-read-only` and `score --confirm-read-only` attest
+  unannotated tools as read-only for it.
+- `mcpeval-demo --broken flaky`: `read_counter` fails every second call.
+
 ### Fixed
 
+- `mcpeval-demo` tracks replies to its mid-call sampling and elicitation
+  requests under every `--broken` aspect. Under the other aspects the reply
+  was answered as a new request and broke the next call.
 - The npm package installs `mcpeval-demo` next to `mcpeval`. It
   previously extracted only `mcpeval` from the release archive, so the
   quickstart's demo server was missing on npm installs.

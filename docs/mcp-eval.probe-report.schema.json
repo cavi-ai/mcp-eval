@@ -1,19 +1,20 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/cavi-ai/mcp-eval/main/docs/mcp-eval.probe-report.schema.json",
-  "title": "mcpeval.probe-report/v1",
-  "description": "Deterministic, share-safe probe report emitted by `mcpeval probe --format json`. Version 1 grows only by optional fields, so unknown properties are allowed. Retrieve with: mcpeval schema report",
+  "title": "mcpeval.probe-report/v2",
+  "description": "Deterministic, share-safe probe report emitted by `mcpeval probe --format json` and `mcpeval score --format json`. `gate` counts the manifest cases; `readiness` is the score under an mcpeval readiness standard. Version 2 grows only by optional fields, so unknown properties are allowed. Retrieve with: mcpeval schema report",
   "type": "object",
   "required": [
     "schema",
     "server",
     "passed",
+    "gate",
     "readiness",
     "cases"
   ],
   "properties": {
     "schema": {
-      "const": "mcpeval.probe-report/v1"
+      "const": "mcpeval.probe-report/v2"
     },
     "generator": {
       "type": "object",
@@ -47,16 +48,59 @@
     },
     "passed": {
       "type": "boolean",
-      "description": "Every case passed."
+      "description": "Every manifest case passed; true when no manifest ran."
     },
     "readiness": {
-      "$ref": "#/$defs/readiness"
+      "oneOf": [
+        {
+          "$ref": "#/$defs/readiness"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Readiness under an mcpeval standard; null under --gate-only, for a selected probe, or when the standard battery could not start."
     },
     "cases": {
       "type": "array",
       "items": {
         "$ref": "#/$defs/case"
       }
+    },
+    "gate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "passed",
+            "total"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "passed": {
+              "$ref": "#/$defs/count"
+            },
+            "total": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Manifest cases passed and declared; null when no manifest ran."
+    },
+    "readiness_error": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/reason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Why the standard battery could not start."
     }
   },
   "$defs": {
@@ -118,46 +162,58 @@
     "readiness": {
       "type": "object",
       "required": [
+        "standard",
         "score",
-        "categories",
-        "badge"
+        "badge",
+        "attested_read_only",
+        "surface",
+        "areas"
       ],
       "properties": {
+        "standard": {
+          "type": "string",
+          "pattern": "^mcpeval-standard/[0-9]+(-draft)?$"
+        },
         "score": {
           "type": "integer",
           "minimum": 0,
           "maximum": 100
         },
-        "categories": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "required": [
-              "name",
-              "passed",
-              "total"
-            ],
-            "properties": {
-              "name": {
-                "enum": [
-                  "discovery",
-                  "reliability",
-                  "contract",
-                  "concurrency"
-                ]
-              },
-              "passed": {
-                "$ref": "#/$defs/count"
-              },
-              "total": {
-                "$ref": "#/$defs/count"
-              }
-            }
-          }
-        },
         "badge": {
           "type": "string",
           "format": "uri"
+        },
+        "attested_read_only": {
+          "type": "boolean"
+        },
+        "surface": {
+          "type": "object",
+          "required": [
+            "tools",
+            "read_only",
+            "writers",
+            "exercised"
+          ],
+          "properties": {
+            "tools": {
+              "$ref": "#/$defs/count"
+            },
+            "read_only": {
+              "$ref": "#/$defs/count"
+            },
+            "writers": {
+              "$ref": "#/$defs/count"
+            },
+            "exercised": {
+              "$ref": "#/$defs/count"
+            }
+          }
+        },
+        "areas": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/area"
+          }
         }
       }
     },
@@ -309,6 +365,110 @@
               "$ref": "#/$defs/count"
             }
           }
+        }
+      }
+    },
+    "area": {
+      "type": "object",
+      "required": [
+        "name",
+        "weight",
+        "score",
+        "measurements",
+        "checks"
+      ],
+      "properties": {
+        "name": {
+          "enum": [
+            "context",
+            "reliability",
+            "coverage"
+          ]
+        },
+        "weight": {
+          "$ref": "#/$defs/count"
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "measurements": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/count"
+          }
+        },
+        "checks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/check"
+          }
+        }
+      }
+    },
+    "check": {
+      "type": "object",
+      "required": [
+        "id",
+        "tool",
+        "score",
+        "observed",
+        "reason",
+        "hint"
+      ],
+      "properties": {
+        "id": {
+          "enum": [
+            "context.catalog",
+            "context.heaviest-tool",
+            "reliability.consistent",
+            "reliability.latency",
+            "reliability.output-schema",
+            "reliability.contention",
+            "reliability.payload",
+            "reliability.none-exercised",
+            "coverage.exercised"
+          ]
+        },
+        "tool": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 99
+        },
+        "observed": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "reason": {
+          "enum": [
+            "context-catalog-heavy",
+            "context-tool-heavy",
+            "reliability-inconsistent",
+            "reliability-slow",
+            "reliability-output-schema-broken",
+            "reliability-contention-failed",
+            "reliability-payload-unhandled",
+            "reliability-none-exercised",
+            "coverage-unannotated",
+            "coverage-required-arguments",
+            "coverage-rejected-arguments",
+            "coverage-call-failed",
+            "no-read-only-tools"
+          ]
+        },
+        "hint": {
+          "type": "string",
+          "minLength": 1
         }
       }
     }

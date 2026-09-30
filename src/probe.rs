@@ -2495,6 +2495,38 @@ mod tests {
             labels(&diff["$defs"]["case"]["properties"]["probe"]["enum"]),
             kinds
         );
+        let areas: Vec<String> = crate::score::Area::ALL
+            .iter()
+            .map(|area| area.as_str().to_owned())
+            .collect();
+        let checks: Vec<String> = crate::score::CheckId::ALL
+            .iter()
+            .map(|id| id.as_str().to_owned())
+            .collect();
+        let check_reasons: Vec<String> = crate::score::CheckReason::ALL
+            .iter()
+            .map(|reason| reason.as_str().to_owned())
+            .collect();
+        assert_eq!(
+            report["properties"]["schema"]["const"],
+            "mcpeval.probe-report/v2"
+        );
+        assert_eq!(
+            labels(&report["$defs"]["area"]["properties"]["name"]["enum"]),
+            areas
+        );
+        assert_eq!(
+            labels(&report["$defs"]["check"]["properties"]["id"]["enum"]),
+            checks
+        );
+        assert_eq!(
+            labels(&report["$defs"]["check"]["properties"]["reason"]["enum"]),
+            check_reasons
+        );
+        assert_eq!(
+            diff["properties"]["schema"]["const"],
+            "mcpeval.probe-diff/v2"
+        );
     }
 
     #[test]

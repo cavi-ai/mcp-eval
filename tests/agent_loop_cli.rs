@@ -200,7 +200,7 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
         }),
     );
     let document = &report["result"]["structuredContent"];
-    assert_eq!(document["schema"], "mcpeval.probe-report/v1");
+    assert_eq!(document["schema"], "mcpeval.probe-report/v2");
     assert_eq!(document["passed"], true);
     assert!(document["readiness"]["score"].as_u64().unwrap() >= 80);
 

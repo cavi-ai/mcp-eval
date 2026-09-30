@@ -70,7 +70,7 @@ fn init_then_probe_scores_the_demo_server_green() {
     );
     let report: serde_json::Value = serde_json::from_slice(&probe.stdout).unwrap();
     assert_eq!(report["passed"], true);
-    assert_eq!(report["readiness"]["score"], 100);
+    assert_eq!(report["gate"]["passed"], report["gate"]["total"]);
     // No payloads from the demo server leak into the report.
     let text = String::from_utf8(probe.stdout).unwrap();
     assert!(!text.contains("status: ready"));

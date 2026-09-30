@@ -412,6 +412,7 @@ fn run() -> anyhow::Result<()> {
             command,
             format,
             allow_mutation,
+            gate_only,
             allow_remote_http,
         } => {
             let parsed = endpoints
@@ -443,6 +444,7 @@ fn run() -> anyhow::Result<()> {
                     command,
                     allow_mutation,
                     allow_remote_http,
+                    standard: !gate_only,
                 },
                 match format {
                     cli::CompareFormat::Text => mcpeval::compare::CompareFormat::Text,

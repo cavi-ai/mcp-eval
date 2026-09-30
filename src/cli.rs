@@ -258,6 +258,9 @@ pub enum Command {
         /// Explicitly authorize manifest-declared sandbox mutations.
         #[arg(long)]
         allow_mutation: bool,
+        /// Skip the standard battery and compare the manifest gate only.
+        #[arg(long)]
+        gate_only: bool,
         /// Allow explicitly selected remote HTTPS endpoints.
         #[arg(long)]
         allow_remote_http: bool,

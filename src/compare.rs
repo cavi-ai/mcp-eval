@@ -20,6 +20,8 @@ pub struct CompareOptions {
     pub command: Vec<String>,
     pub allow_mutation: bool,
     pub allow_remote_http: bool,
+    /// Score each target against the standard battery.
+    pub standard: bool,
 }
 
 /// One comparison column: an HTTP endpoint or a stdio command.
@@ -93,7 +95,7 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Com
                 command,
                 http_url,
                 allow_remote_http: options.allow_remote_http,
-                standard: true,
+                standard: options.standard,
                 confirm_read_only: false,
             },
             &mut store,

@@ -278,7 +278,7 @@ fn token_cost_reports_sorted_usage_in_text_and_json() {
         .unwrap();
     assert!(output.status.success());
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["schema"], "mcpeval.probe-report/v1");
+    assert_eq!(report["schema"], "mcpeval.probe-report/v2");
     assert_eq!(report["server"], "fixture");
     assert_eq!(report["passed"], true);
     let case = &report["cases"][0];

@@ -256,7 +256,8 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
              calls; make read paths deterministic, or return a retryable error with a stable code"
         }
         CheckReason::ReliabilitySlow => {
-            "median latency is above 100 ms; cache or precompute the read, or page large results"
+            "median latency is above 100 ms (score 80: up to 300 ms, 50: up to 1 s, 20: up to \
+             3 s, 0: slower); cache or precompute the read, or page large results"
         }
         CheckReason::ReliabilityOutputSchemaBroken => {
             "the tool declares outputSchema but its result lacks structuredContent or a required \

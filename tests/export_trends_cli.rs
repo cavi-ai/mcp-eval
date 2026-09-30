@@ -57,10 +57,14 @@ fn trends_record_full_battery_runs_and_render_deltas() {
     assert!(rendered.status.success());
     let stdout = String::from_utf8(rendered.stdout).unwrap();
     assert!(stdout.contains("fixture"));
-    assert!(stdout.contains("score=100/100 cases=7/7"));
     let manifest = sha256_prefix(MANIFEST);
+    let lines: Vec<&str> = stdout.lines().collect();
     assert!(
-        stdout.contains(&format!("score=100/100 cases=7/7 +0 manifest={manifest}")),
+        lines[1].contains(&format!(" cases=7/7 manifest={manifest}")),
+        "{stdout}"
+    );
+    assert!(
+        lines[2].contains(&format!(" cases=7/7 +0 manifest={manifest}")),
         "{stdout}"
     );
 }
@@ -75,7 +79,7 @@ fn sha256_prefix(path: &str) -> String {
 }
 
 #[test]
-fn trends_print_no_delta_across_a_manifest_change() {
+fn trends_compare_readiness_across_a_manifest_change_and_skip_gate_only_runs() {
     let dir = home();
     assert!(probe_run(&dir).status.success());
     let other = dir.join("other.manifest.json");
@@ -104,12 +108,26 @@ fn trends_print_no_delta_across_a_manifest_change() {
         .unwrap();
     assert!(rendered.status.success());
     let stdout = String::from_utf8(rendered.stdout).unwrap();
+    // The standard does not depend on the manifest: the delta stands.
     let last = stdout.lines().last().unwrap();
-    assert!(
-        last.contains("score=100/100 cases=1/1 manifest changed manifest="),
-        "{stdout}"
-    );
-    assert!(!last.contains(" +"), "{stdout}");
+    assert!(last.contains(" cases=1/1 +0 manifest="), "{stdout}");
+    assert!(!last.contains("manifest changed"), "{stdout}");
+
+    // A gate-only run measures no readiness and records no point.
+    let gate_only = Command::new(bin())
+        .args(["probe", "--server", "fixture", "--gate-only", "--manifest"])
+        .arg(&other)
+        .args(["--", "python3", CLEAN])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(gate_only.status.success());
+    let rendered = Command::new(bin())
+        .args(["trends"])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert_eq!(String::from_utf8(rendered.stdout).unwrap(), stdout);
 }
 
 #[test]

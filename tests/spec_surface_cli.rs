@@ -205,7 +205,7 @@ fn json_report_carries_the_new_probe_labels() {
     );
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["passed"], true);
-    assert_eq!(report["readiness"]["score"], 100);
+    assert_eq!(report["gate"]["passed"], report["gate"]["total"]);
     let probes: Vec<&str> = report["cases"]
         .as_array()
         .unwrap()

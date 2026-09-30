@@ -362,11 +362,13 @@ fn reliability(observations: &Observations) -> AreaScore {
             None,
             CheckReason::ReliabilityInconsistent,
         ));
+        // The band is the measurement: raw milliseconds would make two runs
+        // of one build produce different documents.
         checks.extend(lost(
             CheckId::ReliabilityLatency,
             name,
             latency,
-            Some(*median_latency_ms),
+            None,
             CheckReason::ReliabilitySlow,
         ));
         let mut parts = vec![consistency, latency];

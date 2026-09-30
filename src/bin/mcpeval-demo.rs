@@ -36,10 +36,11 @@ enum Aspect {
     Completion,
     Surface,
     OutputSchema,
+    Flaky,
 }
 
 impl Aspect {
-    const ALL: [Aspect; 15] = [
+    const ALL: [Aspect; 16] = [
         Aspect::Schema,
         Aspect::Fidelity,
         Aspect::UnstableErrors,
@@ -55,6 +56,7 @@ impl Aspect {
         Aspect::Completion,
         Aspect::Surface,
         Aspect::OutputSchema,
+        Aspect::Flaky,
     ];
 
     fn as_str(self) -> &'static str {
@@ -74,6 +76,7 @@ impl Aspect {
             Aspect::Completion => "completion",
             Aspect::Surface => "surface",
             Aspect::OutputSchema => "output-schema",
+            Aspect::Flaky => "flaky",
         }
     }
 
@@ -126,6 +129,7 @@ fn serve(broken: Option<Aspect>) -> anyhow::Result<()> {
     let mut stdout = std::io::stdout().lock();
     let mut calls = 0u64;
     let mut flaky_calls = 0u64;
+    let mut counter_calls = 0u64;
     let mut broken_state = false;
     // Shared flag for the in-flight cancellable call. A dedicated reader
     // thread owns stdin: it parses every frame, records cancellation
@@ -232,6 +236,7 @@ fn serve(broken: Option<Aspect>) -> anyhow::Result<()> {
                     broken,
                     calls: &mut calls,
                     flaky_calls: &mut flaky_calls,
+                    counter_calls: &mut counter_calls,
                     broken_state: &mut broken_state,
                     cancelled_flag: &cancelled_flag,
                     request_id: id.as_u64(),
@@ -239,14 +244,9 @@ fn serve(broken: Option<Aspect>) -> anyhow::Result<()> {
                 });
                 if let Some(sub_id) = id.as_u64() {
                     // The handler wrote one mid-call sub-request using
-                    // this id scheme; expect a reply for it next.
-                    let issued = match broken {
-                        Some(Aspect::Sampling) | Some(Aspect::Elicitation) | None => {
-                            tool_written_sub_request(&params)
-                        }
-                        _ => false,
-                    };
-                    if issued {
+                    // this id scheme, in every personality; expect a
+                    // reply for it next.
+                    if tool_written_sub_request(&params) {
                         outstanding_sub_ids.insert(sub_id + 1000);
                         outstanding_sub_ids.insert(sub_id + 100);
                     }
@@ -554,6 +554,7 @@ struct ToolCall<'a> {
     broken: Option<Aspect>,
     calls: &'a mut u64,
     flaky_calls: &'a mut u64,
+    counter_calls: &'a mut u64,
     broken_state: &'a mut bool,
     cancelled_flag: &'a std::sync::Arc<std::sync::Mutex<std::collections::HashSet<u64>>>,
     request_id: Option<u64>,
@@ -566,6 +567,7 @@ fn call_tool(
         broken,
         calls,
         flaky_calls,
+        counter_calls,
         broken_state,
         cancelled_flag,
         request_id,
@@ -615,10 +617,20 @@ fn call_tool(
                 "status": status,
             }))
         }
-        "read_counter" => Ok(json!({
-            "content": [{"type": "text", "text": format!("count={}", calls)}],
-            "structuredContent": {"count": *calls}
-        })),
+        "read_counter" => {
+            *counter_calls += 1;
+            if broken == Some(Aspect::Flaky) && *counter_calls % 2 == 0 {
+                // The defect under test: a read that fails every second call.
+                return Ok(json!({
+                    "content": [{"type": "text", "text": "counter unavailable"}],
+                    "isError": true
+                }));
+            }
+            Ok(json!({
+                "content": [{"type": "text", "text": format!("count={}", calls)}],
+                "structuredContent": {"count": *calls}
+            }))
+        }
         "slow_read" => Ok(json!({
             "content": [{"type": "text", "text": "finally awake"}],
             "structuredContent": {"ok": true}

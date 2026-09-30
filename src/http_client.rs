@@ -4,11 +4,7 @@ use std::time::Duration;
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
 
-use crate::mcp_client::{
-    annotation_hint, CancellationOutcome, ToolCatalog, ToolDefinition, ToolResponse,
-    TransportFailure,
-};
-use crate::privacy;
+use crate::mcp_client::{CancellationOutcome, ToolCatalog, ToolResponse, TransportFailure};
 
 pub(crate) const PROTOCOL_VERSION: &str = "2025-06-18";
 const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
@@ -175,33 +171,7 @@ impl HttpMcpClient {
         let encoded_bytes = serde_json::to_vec(tools)?.len();
         let tools = tools
             .iter()
-            .map(|tool| {
-                let name = tool
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .context("tool entry is missing a name")?;
-                if !privacy::valid_tool(name) {
-                    bail!("tool entry has an invalid name");
-                }
-                let input_schema = tool
-                    .get("inputSchema")
-                    .cloned()
-                    .context("tool entry is missing inputSchema")?;
-                if !input_schema.is_object() {
-                    bail!("tool inputSchema is not an object");
-                }
-                Ok(ToolDefinition {
-                    name: name.to_owned(),
-                    input_schema,
-                    entry_bytes: serde_json::to_vec(tool)?.len(),
-                    output_schema: tool
-                        .get("outputSchema")
-                        .filter(|schema| schema.is_object())
-                        .cloned(),
-                    read_only_hint: annotation_hint(tool, "readOnlyHint"),
-                    destructive_hint: annotation_hint(tool, "destructiveHint"),
-                })
-            })
+            .map(crate::mcp_client::tool_definition)
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(ToolCatalog {
             tools,

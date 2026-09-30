@@ -28,7 +28,7 @@ pub struct ProbeOptions {
 }
 
 #[derive(Clone, Debug)]
-enum ClientTarget {
+pub(crate) enum ClientTarget {
     Stdio(Vec<String>),
     Http {
         endpoint: String,
@@ -36,27 +36,39 @@ enum ClientTarget {
     },
 }
 
-enum ProbeClient {
+pub(crate) enum ProbeClient {
     Stdio(McpClient),
     Http(HttpMcpClient),
 }
 
 impl ClientTarget {
-    fn from_options(options: &ProbeOptions) -> anyhow::Result<Self> {
-        match (&options.http_url, options.command.is_empty()) {
-            (None, false) => Ok(Self::Stdio(options.command.clone())),
+    pub(crate) fn new(
+        command: Vec<String>,
+        http_url: Option<String>,
+        allow_remote_http: bool,
+    ) -> anyhow::Result<Self> {
+        match (http_url, command.is_empty()) {
+            (None, false) => Ok(Self::Stdio(command)),
             (Some(endpoint), true) => Ok(Self::Http {
-                endpoint: endpoint.clone(),
-                allow_remote: options.allow_remote_http,
+                endpoint,
+                allow_remote: allow_remote_http,
             }),
             (Some(_), false) => bail!("select an HTTP endpoint or a stdio command, not both"),
             (None, true) => bail!("an HTTP endpoint or stdio command is required"),
         }
     }
 
+    fn from_options(options: &ProbeOptions) -> anyhow::Result<Self> {
+        Self::new(
+            options.command.clone(),
+            options.http_url.clone(),
+            options.allow_remote_http,
+        )
+    }
+
     /// Open a client whose requests wait `timeout` (`None`: the
     /// transport's default).
-    fn connect(&self, timeout: Option<Duration>) -> anyhow::Result<ProbeClient> {
+    pub(crate) fn connect(&self, timeout: Option<Duration>) -> anyhow::Result<ProbeClient> {
         let mut client = match self {
             Self::Stdio(command) => ProbeClient::Stdio(McpClient::spawn(command)?),
             Self::Http {
@@ -70,7 +82,7 @@ impl ClientTarget {
 }
 
 impl ProbeClient {
-    fn set_response_timeout(&mut self, timeout: Option<Duration>) {
+    pub(crate) fn set_response_timeout(&mut self, timeout: Option<Duration>) {
         match self {
             Self::Stdio(client) => client.set_response_timeout(timeout),
             Self::Http(client) => client.set_response_timeout(timeout),
@@ -85,7 +97,7 @@ impl ProbeClient {
         }
     }
 
-    fn initialize(&mut self) -> anyhow::Result<()> {
+    pub(crate) fn initialize(&mut self) -> anyhow::Result<()> {
         match self {
             Self::Stdio(client) => client.initialize(),
             Self::Http(client) => client.initialize(),
@@ -117,7 +129,7 @@ impl ProbeClient {
         }
     }
 
-    fn raw_request(
+    pub(crate) fn raw_request(
         &mut self,
         method: &str,
         params: serde_json::Value,
@@ -128,7 +140,7 @@ impl ProbeClient {
         }
     }
 
-    fn capabilities(&self) -> Option<serde_json::Value> {
+    pub(crate) fn capabilities(&self) -> Option<serde_json::Value> {
         match self {
             Self::Stdio(client) => client.capabilities(),
             Self::Http(client) => client.capabilities(),
@@ -148,7 +160,10 @@ impl ProbeClient {
         }
     }
 
-    fn initialize_raw(&mut self, protocol_version: &str) -> anyhow::Result<serde_json::Value> {
+    pub(crate) fn initialize_raw(
+        &mut self,
+        protocol_version: &str,
+    ) -> anyhow::Result<serde_json::Value> {
         match self {
             Self::Stdio(client) => client.initialize_raw(protocol_version),
             Self::Http(client) => {
@@ -160,7 +175,7 @@ impl ProbeClient {
         }
     }
 
-    fn call_tool_observing(
+    pub(crate) fn call_tool_observing(
         &mut self,
         tool: &str,
         arguments: &serde_json::Value,
@@ -791,15 +806,17 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     }
     let mut reports = Vec::with_capacity(cases.len());
     let mut context = RunContext {
-        server: &options.server,
-        session: &session,
-        seq: &mut seq,
-        salt: &salt,
+        journal: Some(Journal {
+            server: &options.server,
+            session: &session,
+            seq: &mut seq,
+            salt: &salt,
+            store,
+        }),
         client: &mut client,
         catalog: &catalog,
         target: &target,
         timeout,
-        store,
     };
     // A failure inside one case costs that case, never the run: it is
     // reported as errored and the next case starts on a fresh connection,
@@ -981,7 +998,7 @@ fn case_timeout(
     }
 }
 
-fn transport_reason(error: &anyhow::Error) -> FailureReason {
+pub(crate) fn transport_reason(error: &anyhow::Error) -> FailureReason {
     match TransportFailure::of(error) {
         Some(TransportFailure::Timeout) => FailureReason::TransportTimeout,
         Some(TransportFailure::Closed) => FailureReason::TransportClosed,
@@ -997,17 +1014,44 @@ fn errored_case(case: &ProbeCase, reason: FailureReason) -> CaseReport {
     }
 }
 
-struct RunContext<'a> {
+/// Where a run's calls are journaled. The standard battery runs without
+/// one: its deliberate calls must never become promoted findings.
+struct Journal<'a> {
     server: &'a str,
     session: &'a str,
     seq: &'a mut u64,
     salt: &'a Salt,
+    store: &'a mut Store,
+}
+
+struct RunContext<'a> {
+    journal: Option<Journal<'a>>,
     client: &'a mut ProbeClient,
     catalog: &'a ToolCatalog,
     target: &'a ClientTarget,
     /// The manifest's response timeout, for connections a case opens.
     timeout: Option<Duration>,
-    store: &'a mut Store,
+}
+
+/// Run one synthesized case without journaling its calls: the standard
+/// battery reuses the contention, payload, and protocol runners this way.
+pub(crate) fn run_unjournaled(
+    case: &ProbeCase,
+    client: &mut ProbeClient,
+    catalog: &ToolCatalog,
+    target: &ClientTarget,
+    timeout: Option<Duration>,
+) -> anyhow::Result<CaseReport> {
+    run_case(
+        case,
+        &mut RunContext {
+            journal: None,
+            client,
+            catalog,
+            target,
+            timeout,
+        },
+    )
 }
 
 fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
@@ -1472,20 +1516,23 @@ fn record_response(
     response: &ToolResponse,
     context: &mut RunContext<'_>,
 ) -> anyhow::Result<()> {
-    *context.seq += 1;
+    let Some(journal) = context.journal.as_mut() else {
+        return Ok(());
+    };
+    *journal.seq += 1;
     let (outcome, error) = match &response {
         ToolResponse::Success(_) => ("ok", None),
-        ToolResponse::Error { payload, .. } => ("error", Some(error_info(payload, context.salt))),
+        ToolResponse::Error { payload, .. } => ("error", Some(error_info(payload, journal.salt))),
     };
-    context
+    journal
         .store
         .append(&CallRecord {
             ts: chrono::Utc::now()
                 .format("%Y-%m-%dT%H:%M:%S%.3fZ")
                 .to_string(),
-            session: context.session.to_owned(),
-            seq: *context.seq,
-            server: context.server.to_owned(),
+            session: journal.session.to_owned(),
+            seq: *journal.seq,
+            server: journal.server.to_owned(),
             method: "tools/call".into(),
             tool: Some(tool.to_owned()),
             args: Some(arguments.clone()),

@@ -83,6 +83,36 @@ pub(crate) fn annotation_hint(entry: &Value, hint: &str) -> Option<bool> {
     entry.get("annotations")?.get(hint)?.as_bool()
 }
 
+/// Parse one `tools/list` entry. Shared by both transports and the
+/// standard battery's paged listing.
+pub(crate) fn tool_definition(tool: &Value) -> anyhow::Result<ToolDefinition> {
+    let name = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .context("tool entry is missing a name")?;
+    if !privacy::valid_tool(name) {
+        bail!("tool entry has an invalid name");
+    }
+    let input_schema = tool
+        .get("inputSchema")
+        .cloned()
+        .context("tool entry is missing inputSchema")?;
+    if !input_schema.is_object() {
+        bail!("tool inputSchema is not an object");
+    }
+    Ok(ToolDefinition {
+        name: name.to_owned(),
+        input_schema,
+        entry_bytes: serde_json::to_vec(tool)?.len(),
+        output_schema: tool
+            .get("outputSchema")
+            .filter(|schema| schema.is_object())
+            .cloned(),
+        read_only_hint: annotation_hint(tool, "readOnlyHint"),
+        destructive_hint: annotation_hint(tool, "destructiveHint"),
+    })
+}
+
 #[derive(Debug)]
 pub struct ToolCatalog {
     pub tools: Vec<ToolDefinition>,
@@ -314,33 +344,7 @@ impl McpClient {
         let encoded_bytes = serde_json::to_vec(tools)?.len();
         let tools = tools
             .iter()
-            .map(|tool| {
-                let name = tool
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .context("tool entry is missing a name")?;
-                if !privacy::valid_tool(name) {
-                    bail!("tool entry has an invalid name");
-                }
-                let input_schema = tool
-                    .get("inputSchema")
-                    .cloned()
-                    .context("tool entry is missing inputSchema")?;
-                if !input_schema.is_object() {
-                    bail!("tool inputSchema is not an object");
-                }
-                Ok(ToolDefinition {
-                    name: name.to_owned(),
-                    input_schema,
-                    entry_bytes: serde_json::to_vec(tool)?.len(),
-                    output_schema: tool
-                        .get("outputSchema")
-                        .filter(|schema| schema.is_object())
-                        .cloned(),
-                    read_only_hint: annotation_hint(tool, "readOnlyHint"),
-                    destructive_hint: annotation_hint(tool, "destructiveHint"),
-                })
-            })
+            .map(tool_definition)
             .collect::<anyhow::Result<Vec<_>>>()?;
         Ok(ToolCatalog {
             tools,
@@ -649,4 +653,28 @@ pub fn classify_tool_response(response: &Value) -> anyhow::Result<ToolResponse> 
         code,
         payload: Value::Object(error.clone()),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_definition_reads_annotations_and_sizes_the_entry() {
+        let entry = json!({
+            "name": "list_things",
+            "description": "List things.",
+            "inputSchema": {"type": "object"},
+            "outputSchema": {"type": "object"},
+            "annotations": {"readOnlyHint": true, "destructiveHint": false}
+        });
+        let tool = tool_definition(&entry).unwrap();
+        assert_eq!(tool.name, "list_things");
+        assert_eq!(tool.entry_bytes, serde_json::to_vec(&entry).unwrap().len());
+        assert_eq!(tool.read_only_hint, Some(true));
+        assert_eq!(tool.destructive_hint, Some(false));
+        assert!(tool.output_schema.is_some());
+        assert!(tool_definition(&json!({"name": "x"})).is_err());
+        assert!(tool_definition(&json!({"name": "bad name", "inputSchema": {}})).is_err());
+    }
 }

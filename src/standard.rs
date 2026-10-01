@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 
 use crate::manifest::{Access, ProbeCase};
 use crate::mcp_client::{ToolCatalog, ToolDefinition, ToolResponse};
-use crate::probe::{estimate_tokens, ClientTarget, ProbeClient};
-use crate::score::{CheckReason, Readiness};
+use crate::probe::{estimate_tokens, ClientTarget, FailureReason, ProbeClient};
+use crate::score::{CheckId, CheckReason, Readiness};
 
 /// Per-call response timeout, pinned by the standard: it bounds what a
 /// hung tool costs and is part of what a score means.
@@ -130,6 +130,8 @@ pub struct Observations {
     /// Payload bounds on the first fully successful tool with a string
     /// property; None when none.
     pub payload: Option<bool>,
+    /// Each applicable protocol check and, when it failed, why.
+    pub protocol: Vec<(CheckId, Option<CheckReason>)>,
 }
 
 /// How one call ended.
@@ -244,16 +246,16 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
                 },
             )
         });
+    let protocol = protocol_checks(&mut client, target, &catalog);
     Ok(Observations {
         tools,
         attested_read_only: options.confirm_read_only,
         contention,
         payload,
+        protocol,
     })
 }
 
-/// Every page of `tools/list`, each distinct tool once, at most
-/// [`MAX_PAGES`] pages.
 /// Every distinct tool over at most [`MAX_PAGES`] pages. A first page that
 /// fails stops the battery; a later page that fails (an error, a malformed
 /// envelope, or an invalid entry) ends the listing with what was listed.
@@ -422,6 +424,149 @@ fn server_case(
         Err(_) => {
             *client = connect(target).ok();
             false
+        }
+    }
+}
+
+/// Protocol conformance, last so its re-handshakes cannot disturb the tool
+/// calls. A check that cannot complete fails with `protocol-call-failed`
+/// and the next check starts on a fresh connection.
+fn protocol_checks(
+    client: &mut Option<ProbeClient>,
+    target: &ClientTarget,
+    catalog: &ToolCatalog,
+) -> Vec<(CheckId, Option<CheckReason>)> {
+    let failed = Some(CheckReason::ProtocolCallFailed);
+    let mut results = Vec::new();
+    let unknown_method = raw(client, target, "mcpeval/unknown", json!({})).map(|response| {
+        let code = response
+            .get("error")
+            .and_then(|error| error.get("code"))
+            .and_then(Value::as_i64);
+        (code != Some(-32601)).then_some(CheckReason::ProtocolUnknownMethodAnswered)
+    });
+    results.push((
+        CheckId::ProtocolUnknownMethod,
+        unknown_method.unwrap_or(failed),
+    ));
+    let ping = raw(client, target, "ping", json!({})).map(|response| {
+        (!response.get("result").is_some_and(Value::is_object))
+            .then_some(CheckReason::ProtocolPingFailed)
+    });
+    results.push((CheckId::ProtocolPing, ping.unwrap_or(failed)));
+    let unknown_tool = raw(
+        client,
+        target,
+        "tools/call",
+        json!({"name": "mcpeval-unknown-tool", "arguments": {}}),
+    )
+    .map(|response| {
+        let refused = response.get("error").is_some()
+            || response
+                .get("result")
+                .and_then(|result| result.get("isError"))
+                .and_then(Value::as_bool)
+                == Some(true);
+        (!refused).then_some(CheckReason::ProtocolUnknownToolAccepted)
+    });
+    results.push((CheckId::ProtocolUnknownTool, unknown_tool.unwrap_or(failed)));
+    let pagination = ProbeCase::Pagination {
+        id: "standard-pagination".into(),
+        access: Access::ReadOnly,
+        max_pages: MAX_PAGES as u64,
+    };
+    results.push((
+        CheckId::ProtocolPagination,
+        reason_of(client, target, catalog, &pagination, |_| {
+            CheckReason::ProtocolPaginationInvalid
+        }),
+    ));
+    let declares_surfaces = client
+        .as_ref()
+        .and_then(ProbeClient::capabilities)
+        .is_some_and(|capabilities| {
+            capabilities.get("resources").is_some() || capabilities.get("prompts").is_some()
+        });
+    if declares_surfaces {
+        let surfaces = ProbeCase::SurfaceListing {
+            id: "standard-surfaces".into(),
+            access: Access::ReadOnly,
+            max_pages: MAX_PAGES as u64,
+        };
+        results.push((
+            CheckId::ProtocolSurfaces,
+            reason_of(client, target, catalog, &surfaces, |_| {
+                CheckReason::ProtocolSurfaceInvalid
+            }),
+        ));
+    }
+    let negotiation = ProbeCase::ProtocolNegotiation {
+        id: "standard-negotiation".into(),
+        access: Access::ReadOnly,
+        bogus_version: "2000-01-01".into(),
+    };
+    results.push((
+        CheckId::ProtocolNegotiation,
+        reason_of(
+            client,
+            target,
+            catalog,
+            &negotiation,
+            |reason| match reason {
+                FailureReason::NegotiationEchoedUnknown => {
+                    CheckReason::ProtocolNegotiationEchoedUnknown
+                }
+                FailureReason::NegotiationInconsistentSupport => {
+                    CheckReason::ProtocolNegotiationInconsistentSupport
+                }
+                _ => CheckReason::ProtocolNegotiationInvalidVersion,
+            },
+        ),
+    ));
+    results
+}
+
+/// One raw request; None when it did not complete, after which the next
+/// request starts on a fresh connection.
+fn raw(
+    client: &mut Option<ProbeClient>,
+    target: &ClientTarget,
+    method: &str,
+    params: Value,
+) -> Option<Value> {
+    if client.is_none() {
+        *client = connect(target).ok();
+    }
+    let response = client.as_mut()?.raw_request(method, params);
+    if response.is_err() {
+        *client = connect(target).ok();
+    }
+    response.ok()
+}
+
+/// Run a reused probe case; its failure maps to a check reason.
+fn reason_of(
+    client: &mut Option<ProbeClient>,
+    target: &ClientTarget,
+    catalog: &ToolCatalog,
+    case: &ProbeCase,
+    map: impl Fn(FailureReason) -> CheckReason,
+) -> Option<CheckReason> {
+    if client.is_none() {
+        *client = connect(target).ok();
+    }
+    let Some(active) = client.as_mut() else {
+        return Some(CheckReason::ProtocolCallFailed);
+    };
+    match crate::probe::run_unjournaled(case, active, catalog, target, Some(CALL_TIMEOUT)) {
+        Ok(report) => match report.reason {
+            None => None,
+            Some(reason) if reason.is_transport() => Some(CheckReason::ProtocolCallFailed),
+            Some(reason) => Some(map(reason)),
+        },
+        Err(_) => {
+            *client = connect(target).ok();
+            Some(CheckReason::ProtocolCallFailed)
         }
     }
 }

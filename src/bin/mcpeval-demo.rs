@@ -38,10 +38,11 @@ enum Aspect {
     OutputSchema,
     Flaky,
     Undescribed,
+    UnknownMethod,
 }
 
 impl Aspect {
-    const ALL: [Aspect; 17] = [
+    const ALL: [Aspect; 18] = [
         Aspect::Schema,
         Aspect::Fidelity,
         Aspect::UnstableErrors,
@@ -59,6 +60,7 @@ impl Aspect {
         Aspect::OutputSchema,
         Aspect::Flaky,
         Aspect::Undescribed,
+        Aspect::UnknownMethod,
     ];
 
     fn as_str(self) -> &'static str {
@@ -80,6 +82,7 @@ impl Aspect {
             Aspect::OutputSchema => "output-schema",
             Aspect::Flaky => "flaky",
             Aspect::Undescribed => "undescribed",
+            Aspect::UnknownMethod => "unknown-method",
         }
     }
 
@@ -334,7 +337,12 @@ fn serve(broken: Option<Aspect>) -> anyhow::Result<()> {
                     Err((-32602, format!("unknown argument {name:?}"), false))
                 }
             }
-            _ => Ok(json!({})),
+            "ping" => Ok(json!({})),
+            _ if broken == Some(Aspect::UnknownMethod) => {
+                // The defect under test: every unknown method "succeeds".
+                Ok(json!({}))
+            }
+            _ => Err((-32601, format!("method not found: {method}"), false)),
         };
         // A cancelled request is answered with nothing: the marker error
         // (-32004) from the slow tool signals silence for this id. The

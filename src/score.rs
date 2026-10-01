@@ -31,6 +31,7 @@ pub const DESCRIPTION_MIN_CHARS: usize = 40;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Area {
+    Protocol,
     Catalog,
     Context,
     Reliability,
@@ -40,6 +41,7 @@ pub enum Area {
 impl Area {
     /// Every area of the standard, in report order.
     pub const ALL: &'static [Area] = &[
+        Area::Protocol,
         Area::Catalog,
         Area::Context,
         Area::Reliability,
@@ -48,6 +50,7 @@ impl Area {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Protocol => "protocol",
             Self::Catalog => "catalog",
             Self::Context => "context",
             Self::Reliability => "reliability",
@@ -58,6 +61,7 @@ impl Area {
     /// Weight in the overall score; standard/1's six areas sum to 100.
     pub fn weight(self) -> u64 {
         match self {
+            Self::Protocol => 15,
             Self::Catalog => 20,
             Self::Context => 15,
             Self::Reliability => 20,
@@ -91,6 +95,12 @@ pub enum CheckId {
     CatalogDestructiveDeclared,
     CatalogOutputSchema,
     CatalogEmpty,
+    ProtocolNegotiation,
+    ProtocolUnknownMethod,
+    ProtocolPing,
+    ProtocolUnknownTool,
+    ProtocolPagination,
+    ProtocolSurfaces,
 }
 
 impl CheckId {
@@ -111,6 +121,12 @@ impl CheckId {
         Self::CatalogDestructiveDeclared,
         Self::CatalogOutputSchema,
         Self::CatalogEmpty,
+        Self::ProtocolNegotiation,
+        Self::ProtocolUnknownMethod,
+        Self::ProtocolPing,
+        Self::ProtocolUnknownTool,
+        Self::ProtocolPagination,
+        Self::ProtocolSurfaces,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -131,6 +147,12 @@ impl CheckId {
             Self::CatalogDestructiveDeclared => "catalog.destructive-declared",
             Self::CatalogOutputSchema => "catalog.output-schema",
             Self::CatalogEmpty => "catalog.empty",
+            Self::ProtocolNegotiation => "protocol.negotiation",
+            Self::ProtocolUnknownMethod => "protocol.unknown-method",
+            Self::ProtocolPing => "protocol.ping",
+            Self::ProtocolUnknownTool => "protocol.unknown-tool",
+            Self::ProtocolPagination => "protocol.pagination",
+            Self::ProtocolSurfaces => "protocol.surfaces",
         }
     }
 
@@ -161,6 +183,15 @@ pub enum CheckReason {
     CatalogDestructiveUndeclared,
     CatalogNoOutputSchema,
     CatalogNoTools,
+    ProtocolNegotiationEchoedUnknown,
+    ProtocolNegotiationInvalidVersion,
+    ProtocolNegotiationInconsistentSupport,
+    ProtocolUnknownMethodAnswered,
+    ProtocolPingFailed,
+    ProtocolUnknownToolAccepted,
+    ProtocolPaginationInvalid,
+    ProtocolSurfaceInvalid,
+    ProtocolCallFailed,
 }
 
 impl CheckReason {
@@ -185,6 +216,15 @@ impl CheckReason {
         Self::CatalogDestructiveUndeclared,
         Self::CatalogNoOutputSchema,
         Self::CatalogNoTools,
+        Self::ProtocolNegotiationEchoedUnknown,
+        Self::ProtocolNegotiationInvalidVersion,
+        Self::ProtocolNegotiationInconsistentSupport,
+        Self::ProtocolUnknownMethodAnswered,
+        Self::ProtocolPingFailed,
+        Self::ProtocolUnknownToolAccepted,
+        Self::ProtocolPaginationInvalid,
+        Self::ProtocolSurfaceInvalid,
+        Self::ProtocolCallFailed,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -209,6 +249,17 @@ impl CheckReason {
             Self::CatalogDestructiveUndeclared => "catalog-destructive-undeclared",
             Self::CatalogNoOutputSchema => "catalog-no-output-schema",
             Self::CatalogNoTools => "catalog-no-tools",
+            Self::ProtocolNegotiationEchoedUnknown => "protocol-negotiation-echoed-unknown",
+            Self::ProtocolNegotiationInvalidVersion => "protocol-negotiation-invalid-version",
+            Self::ProtocolNegotiationInconsistentSupport => {
+                "protocol-negotiation-inconsistent-support"
+            }
+            Self::ProtocolUnknownMethodAnswered => "protocol-unknown-method-answered",
+            Self::ProtocolPingFailed => "protocol-ping-failed",
+            Self::ProtocolUnknownToolAccepted => "protocol-unknown-tool-accepted",
+            Self::ProtocolPaginationInvalid => "protocol-pagination-invalid",
+            Self::ProtocolSurfaceInvalid => "protocol-surface-invalid",
+            Self::ProtocolCallFailed => "protocol-call-failed",
         }
     }
 
@@ -283,6 +334,7 @@ pub fn fold(observations: &Observations) -> Readiness {
     let areas: Vec<AreaScore> = Area::ALL
         .iter()
         .map(|area| match area {
+            Area::Protocol => protocol(&observations.protocol),
             Area::Catalog => catalog(&observations.tools),
             Area::Context => context(&observations.tools),
             Area::Reliability => reliability(observations),
@@ -353,6 +405,37 @@ fn read_only_surface(tools: &[ToolObservation]) -> usize {
         .iter()
         .filter(|tool| tool.class != ToolClass::Writer)
         .count()
+}
+
+/// The share of applicable protocol checks passed. No check at all means
+/// none could run: the area scores 0 with one visible loss.
+fn protocol(results: &[(CheckId, Option<CheckReason>)]) -> AreaScore {
+    let mut checks: Vec<Check> = results
+        .iter()
+        .filter_map(|(id, reason)| reason.and_then(|reason| lost(*id, None, 0.0, None, reason)))
+        .collect();
+    let score = if results.is_empty() {
+        checks.extend(lost(
+            CheckId::ProtocolPing,
+            None,
+            0.0,
+            None,
+            CheckReason::ProtocolCallFailed,
+        ));
+        0
+    } else {
+        let passed = results
+            .iter()
+            .filter(|(_, reason)| reason.is_none())
+            .count();
+        round(100.0 * passed as f64 / results.len() as f64)
+    };
+    AreaScore {
+        area: Area::Protocol,
+        score,
+        checks,
+        measurements: serde_json::Map::new(),
+    }
 }
 
 /// Per tool, the share of its applicable checks it passes; the area is the
@@ -881,6 +964,16 @@ mod tests {
             attested_read_only: false,
             contention: Some(true),
             payload: Some(true),
+            protocol: [
+                CheckId::ProtocolUnknownMethod,
+                CheckId::ProtocolPing,
+                CheckId::ProtocolUnknownTool,
+                CheckId::ProtocolPagination,
+                CheckId::ProtocolSurfaces,
+                CheckId::ProtocolNegotiation,
+            ]
+            .map(|id| (id, None))
+            .to_vec(),
         }
     }
 
@@ -967,11 +1060,12 @@ mod tests {
     fn the_clean_demo_folds_to_its_pinned_score() {
         let readiness = fold(&clean_demo());
         assert_eq!(readiness.standard, STANDARD);
+        assert_eq!(area(&readiness, Area::Protocol).score, 100);
         assert_eq!(area(&readiness, Area::Catalog).score, 63);
         assert_eq!(area(&readiness, Area::Context).score, 100);
         assert_eq!(area(&readiness, Area::Reliability).score, 94);
         assert_eq!(area(&readiness, Area::Coverage).score, 100);
-        assert_eq!(readiness.score, 88);
+        assert_eq!(readiness.score, 90);
         assert_eq!(
             readiness.surface,
             Surface {
@@ -1107,6 +1201,44 @@ mod tests {
     }
 
     #[test]
+    fn protocol_is_the_share_of_applicable_checks_passed() {
+        let mut observations = clean_demo();
+        observations.protocol[0].1 = Some(CheckReason::ProtocolUnknownMethodAnswered);
+        let readiness = fold(&observations);
+        let protocol = area(&readiness, Area::Protocol);
+        assert_eq!(protocol.score, 83);
+        assert_eq!(
+            protocol.checks,
+            vec![Check {
+                id: CheckId::ProtocolUnknownMethod,
+                tool: None,
+                score: 0,
+                observed: None,
+                reason: CheckReason::ProtocolUnknownMethodAnswered,
+            }]
+        );
+        // A server declaring no resources or prompts has five checks.
+        observations
+            .protocol
+            .retain(|(id, _)| *id != CheckId::ProtocolSurfaces);
+        assert_eq!(area(&fold(&observations), Area::Protocol).score, 80);
+        // No protocol check could run: the loss stays visible.
+        observations.protocol.clear();
+        let readiness = fold(&observations);
+        assert_eq!(area(&readiness, Area::Protocol).score, 0);
+        assert_eq!(
+            area(&readiness, Area::Protocol).checks,
+            vec![Check {
+                id: CheckId::ProtocolPing,
+                tool: None,
+                score: 0,
+                observed: None,
+                reason: CheckReason::ProtocolCallFailed,
+            }]
+        );
+    }
+
+    #[test]
     fn untested_surface_counts_against_the_score() {
         // Only writers: nothing can be exercised, so reliability and
         // coverage score 0 instead of dropping out.
@@ -1114,10 +1246,11 @@ mod tests {
             tools: vec![tool("delete_all", 100, ToolClass::Writer, None)],
             ..Observations::default()
         });
+        assert_eq!(area(&readiness, Area::Protocol).score, 0);
         assert_eq!(area(&readiness, Area::Catalog).score, 0);
         assert_eq!(area(&readiness, Area::Reliability).score, 0);
         assert_eq!(area(&readiness, Area::Coverage).score, 0);
-        assert_eq!(readiness.score, 21);
+        assert_eq!(readiness.score, 18);
         assert!([Area::Reliability, Area::Coverage]
             .iter()
             .flat_map(|name| &area(&readiness, *name).checks)
@@ -1153,9 +1286,9 @@ mod tests {
     fn readiness_json_round_trips_and_rejects_unknown_labels() {
         let readiness = fold(&clean_demo());
         let document = readiness.to_json();
-        assert_eq!(document["badge"], badge_url(88));
+        assert_eq!(document["badge"], badge_url(90));
         assert_eq!(
-            document["areas"][2]["checks"][0]["hint"],
+            document["areas"][3]["checks"][0]["hint"],
             crate::remediation::check_hint(CheckReason::ReliabilityInconsistent)
         );
         assert_eq!(Readiness::from_json(&document).unwrap(), readiness);
@@ -1163,7 +1296,7 @@ mod tests {
         unknown["areas"][0]["name"] = "vibes".into();
         assert!(Readiness::from_json(&unknown).is_err());
         let mut unknown = document;
-        unknown["areas"][2]["checks"][0]["reason"] = "vibes".into();
+        unknown["areas"][3]["checks"][0]["reason"] = "vibes".into();
         assert!(Readiness::from_json(&unknown).is_err());
     }
 

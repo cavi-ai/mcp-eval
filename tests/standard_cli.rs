@@ -92,11 +92,13 @@ fn the_clean_demo_loses_points_only_for_its_deliberate_fixtures() {
         readiness["surface"],
         json!({"tools": 12, "read_only": 10, "writers": 2, "exercised": 10})
     );
+    assert_eq!(area(&document, "protocol"), 100);
     assert_eq!(area(&document, "catalog"), 63);
     assert_eq!(area(&document, "context"), 100);
     assert_eq!(area(&document, "reliability"), 94);
     assert_eq!(area(&document, "coverage"), 100);
-    assert_eq!(readiness["score"], 88);
+    assert_eq!(readiness["score"], 90);
+    assert_eq!(lost_in(&document, "protocol"), owned(&[]));
     // No demo tool declares outputSchema; two descriptions are under 40
     // characters; break_session omits readOnlyHint.
     let no_schema = |tool| {
@@ -163,7 +165,7 @@ fn two_runs_of_one_build_score_the_same() {
     let (_, first) = score(&home(), &[demo()]);
     let (_, second) = score(&home(), &[demo()]);
     assert_eq!(first["readiness"]["score"], second["readiness"]["score"]);
-    for name in ["catalog", "context", "reliability", "coverage"] {
+    for name in ["protocol", "catalog", "context", "reliability", "coverage"] {
         assert_eq!(area(&first, name), area(&second, name), "{name}");
     }
     assert_eq!(lost(&first), lost(&second));
@@ -178,6 +180,7 @@ fn each_new_demo_aspect_lowers_only_reliability() {
             "{aspect}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        assert_eq!(area(&document, "protocol"), 100, "{aspect}");
         assert_eq!(area(&document, "catalog"), 63, "{aspect}");
         assert_eq!(area(&document, "context"), 100, "{aspect}");
         assert_eq!(area(&document, "coverage"), 100, "{aspect}");
@@ -195,7 +198,7 @@ fn undescribed_lowers_only_the_catalog() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(area(&document, "catalog"), 35);
-    for name in ["context", "reliability", "coverage"] {
+    for name in ["protocol", "context", "reliability", "coverage"] {
         assert_eq!(area(&document, name), area(&clean, name), "{name}");
     }
     assert!(lost_in(&document, "catalog").contains(
@@ -323,7 +326,7 @@ fn probe_reports_the_gate_and_the_standard_separately_and_journals_neither_stand
     assert_eq!(document["passed"], false);
     assert_eq!(document["gate"], json!({"passed": 0, "total": 1}));
     assert_eq!(
-        document["readiness"]["score"], 88,
+        document["readiness"]["score"], 90,
         "the gate does not move the standard"
     );
     let journaled = std::fs::read_dir(dir.join("store"))
@@ -382,7 +385,7 @@ fn text_output_names_every_lost_point_with_its_hint() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("demo readiness 88/100 catalog=63 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft"),
+        stdout.contains("demo readiness 90/100 protocol=100 catalog=63 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft"),
         "{stdout}"
     );
     assert!(
@@ -495,7 +498,7 @@ fn committed_v1_baselines_render_and_diff_as_not_comparable() {
     assert_eq!(document["schema"], "mcpeval.probe-diff/v2");
     assert_eq!(document["readiness"]["comparable"], false);
     assert_eq!(document["readiness"]["baseline"], 100);
-    assert_eq!(document["readiness"]["current"], 88);
+    assert_eq!(document["readiness"]["current"], 90);
 }
 
 #[test]
@@ -511,7 +514,7 @@ fn report_rerenders_a_v2_document_with_its_lost_points() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("demo readiness 88/100"), "{stdout}");
+    assert!(stdout.contains("demo readiness 90/100"), "{stdout}");
     assert!(
         stdout.contains("lost reliability.latency score=50 tool=slow_read"),
         "{stdout}"
@@ -543,6 +546,12 @@ fn a_failed_later_tools_page_ends_the_listing_not_the_battery() {
         assert_eq!(
             document["readiness"]["surface"]["tools"], 3,
             "{mode}: the first page's tools are kept"
+        );
+        assert!(
+            lost_in(&document, "protocol").contains(
+                &owned(&[("protocol.pagination", None, "protocol-pagination-invalid")])[0]
+            ),
+            "{mode}: {document:#}"
         );
     }
 }
@@ -609,4 +618,50 @@ fn contention_finds_a_tool_listed_on_a_later_page() {
             .any(|(id, _, _)| id == "reliability.contention"),
         "{document:#}"
     );
+}
+
+#[test]
+fn unknown_method_lowers_only_the_protocol_area() {
+    let (_, clean) = score(&home(), &[demo()]);
+    let (output, document) = score(&home(), &[demo(), "--broken", "unknown-method"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(area(&document, "protocol"), 83);
+    assert_eq!(
+        lost_in(&document, "protocol"),
+        owned(&[(
+            "protocol.unknown-method",
+            None,
+            "protocol-unknown-method-answered"
+        )])
+    );
+    for name in ["catalog", "context", "reliability", "coverage"] {
+        assert_eq!(area(&document, name), area(&clean, name), "{name}");
+    }
+}
+
+#[test]
+fn an_older_protocol_server_passes_the_protocol_area() {
+    let (output, document) = run(
+        &home(),
+        &[
+            "score",
+            "--server",
+            "old",
+            "--format",
+            "json",
+            "--",
+            "python3",
+            "tests/fixtures/old_protocol_server.py",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(area(&document, "protocol"), 100, "{document:#}");
 }

@@ -4,18 +4,22 @@
 
 ### Changed
 
-- `readiness` is an absolute score under `mcpeval-standard/1`: after
-  the manifest's cases, a read-only standard battery scores the server's
-  whole catalog on fixed curves (protocol, catalog, context, error honesty,
-  reliability, coverage). Surface it cannot test counts against the score. The manifest
-  is the gate: it alone sets `passed` and the exit code.
+- `readiness` is an absolute score under `mcpeval-standard/1`: after the
+  manifest's cases, a read-only standard battery scores the server's whole
+  catalog on fixed curves (protocol, catalog, context, error honesty,
+  reliability, coverage). Surface it cannot test counts against the score.
+  The manifest is the gate: it alone sets `passed` and the exit code.
 - Probe reports are `mcpeval.probe-report/v2` (`gate`, `readiness` with
   areas and lost checks, `readiness_error`); diffs are
   `mcpeval.probe-diff/v2`. `report` and `diff` still read v1 documents.
 - `diff` marks readiness not comparable across standards or against a v1
   document; `trends` compares scores only within one standard.
-- Reports no longer place the score among the shipped corpus, whose
-  observations are manifest pass rates; the catalog placement line stays.
+- The shipped corpus is `mcpeval.readiness-corpus/v2`: readiness scores and
+  area scores from `mcpeval score` under `mcpeval-standard/1`. Text and
+  markdown reports (`probe` and `score`) place a readiness score among it
+  only when the corpus names the report's standard; v1 corpora are not
+  read. `scripts/corpus/collect.sh` and the drift check run every server
+  with no Kubernetes context and no Docker daemon.
 - README and installation docs list the Homebrew, npm, and Cargo install
   commands, and the quickstart runs the installed `mcpeval` and
   `mcpeval-demo` instead of `./target/release` paths.
@@ -45,6 +49,13 @@
   request.
 - `mcpeval-demo` refuses arguments of the wrong type with -32602;
   `--broken lying-errors` accepts them.
+- The standard battery synthesizes arguments from each read-only tool's
+  input schema, so tools with required parameters are exercised; a
+  required string with only a `pattern` scores `coverage-unsynthesizable`.
+- `probe --skip-tool` and `score --skip-tool` keep a tool uncalled; a
+  skipped tool the battery would have called scores 0 for reliability and
+  error honesty, and any skip scores contention and payload 0, so skipping
+  never raises the score.
 
 ### Fixed
 

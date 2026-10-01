@@ -221,9 +221,14 @@ their manifests declare. The report names the standard
 remediation hint. Surface the standard cannot test counts against the score.
 The battery never calls a tool annotated as a writer (`readOnlyHint: false` or
 `destructiveHint: true`), calls a tool with neither annotation only under
-`--confirm-read-only`, and never writes to the call journal. `mcpeval score`
-runs it without a manifest; `--gate-only` skips it. Areas in this build:
-context (catalog and heaviest-tool token cost), reliability (repeat
+`--confirm-read-only`, and never writes to the call journal; arguments are
+synthesized from each tool's input schema, and `--skip-tool <NAME>` keeps a
+tool uncalled without raising the score. `mcpeval score` runs it without a
+manifest; `--gate-only` skips it. Areas: protocol (unknown methods, `ping`,
+unknown tools, paging, declared surfaces, version negotiation), catalog
+(descriptions, described and typed parameters, declared annotations and
+output schemas), context (catalog and heaviest-tool token cost), error
+honesty (schema-violating arguments refused with words), reliability (repeat
 consistency, median latency band, declared output schema, contention, payload
 bounds), and coverage (exercised read-only tools over all read-only tools).
 

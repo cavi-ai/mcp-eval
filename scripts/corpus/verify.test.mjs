@@ -96,8 +96,15 @@ test("both scripts keep servers away from this machine's cluster and containers"
   const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
   assert.ok(Object.keys(ISOLATION).length >= 2);
   for (const [name, value] of Object.entries(ISOLATION)) {
-    assert.ok(collect.includes(`export ${name}=${value}\n`), `collector does not export ${name}=${value}`);
+    const exported = collect.match(new RegExp(`^export ${name}=(.+)$`, "mu"))?.[1];
+    assert.ok(exported, `collector does not export ${name}`);
+    assert.equal(exported.replaceAll('"', "").replace("$ROOT", ROOT), value, name);
   }
+  // A valid kubeconfig with no cluster: the Kubernetes server starts and
+  // reaches nothing.
+  const kubeconfig = await readFile(ISOLATION.KUBECONFIG, "utf8");
+  assert.match(kubeconfig, /^clusters: \[\]$/mu);
+  assert.match(kubeconfig, /^contexts: \[\]$/mu);
 });
 
 test("every corpus observation has a launch command", async () => {

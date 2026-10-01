@@ -34,7 +34,7 @@ const TIMEOUT_MS = 600_000;
 
 /** Environment both scripts give every server; collect.sh exports the same. */
 const ISOLATION = {
-  KUBECONFIG: "/dev/null",
+  KUBECONFIG: path.join(ROOT, "scripts/corpus/empty-kubeconfig.yaml"),
   DOCKER_HOST: "unix:///nonexistent/docker.sock",
 };
 

@@ -18,7 +18,8 @@ function headlineCounts(observations) {
 
 test("readiness corpus follows its schema contract", async () => {
   const document = await corpus();
-  assert.equal(document.schema, "mcpeval.readiness-corpus/v1");
+  assert.equal(document.schema, "mcpeval.readiness-corpus/v2");
+  assert.match(document.standard, /^mcpeval-standard\/\d+$/u);
   assert.ok(Array.isArray(document.observations));
   assert.ok(document.observations.length >= 2, "corpus needs a distribution");
   const names = document.observations.map((observation) => observation.server);
@@ -53,13 +54,13 @@ test("state-of-mcp-servers page matches the checked-in readiness corpus", async 
     assert.equal(claim, total, `page corpus size ${claim} != ${CORPUS_REL} count ${total}`);
   }
 
-  const perfectClaims = [...page.matchAll(/Battery pass rate 100\/100 \| (\d+)/gmu)].map((match) => Number(match[1]));
+  const perfectClaims = [...page.matchAll(/Readiness 100\/100 \| (\d+)/gmu)].map((match) => Number(match[1]));
   assert.ok(perfectClaims.length >= 1, "page should table the 100/100 count");
   for (const claim of perfectClaims) {
     assert.equal(claim, perfect, `page 100/100 count ${claim} != corpus count ${perfect}`);
   }
 
-  const belowClaims = [...page.matchAll(/Battery pass rate below 100 \| (\d+)/gmu)].map((match) => Number(match[1]));
+  const belowClaims = [...page.matchAll(/Readiness below 100 \| (\d+)/gmu)].map((match) => Number(match[1]));
   assert.ok(belowClaims.length >= 1, "page should table the below-100 count");
   for (const claim of belowClaims) {
     assert.equal(claim, below, `page below-100 count ${claim} != corpus count ${below}`);
@@ -68,6 +69,14 @@ test("state-of-mcp-servers page matches the checked-in readiness corpus", async 
   for (const claim of page.matchAll(/(\d+) of (\d+) servers score 100\/100/gmu)) {
     assert.equal(Number(claim[2]), total, `page denominator ${claim[2]} != corpus count ${total}`);
     assert.equal(Number(claim[1]), perfect, `page numerator ${claim[1]} != corpus count ${perfect}`);
+  }
+
+  // Every observation's table row carries its corpus score.
+  for (const observation of observations) {
+    assert.ok(
+      page.includes(`| \`${observation.server}\` | ${observation.score} |`),
+      `page table row for ${observation.server} does not show score ${observation.score}`,
+    );
   }
 
   // A named sub-100 server must actually be sub-100 in the corpus, and vice

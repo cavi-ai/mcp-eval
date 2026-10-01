@@ -26,7 +26,7 @@ WORK="$(cd "$WORK" && pwd)"
 # Every server runs with no Kubernetes context and no Docker daemon, so the
 # battery's read-only calls never reach this machine's cluster or
 # containers; scripts/corpus/verify.mjs uses the same ISOLATION.
-export KUBECONFIG=/dev/null
+export KUBECONFIG="$ROOT/scripts/corpus/empty-kubeconfig.yaml"
 export DOCKER_HOST=unix:///nonexistent/docker.sock
 
 REPORTS="$(mktemp -d "$WORK/reports.XXXXXX")"

@@ -2056,7 +2056,10 @@ fn outcome_had_failure(outcome: crate::mcp_client::CancellationOutcome) -> Optio
 }
 
 /// Protocol-negotiation probe: three handshakes assert version selection.
-/// (1) A fresh handshake with the supported version must echo it. (2) A
+/// (1) A fresh handshake with the supported version must echo it, or answer
+/// with another date-shaped version the server supports (the MCP lifecycle
+/// lets a server that does not speak the requested version answer with its
+/// own), which must itself be echoed on a further handshake. (2) A
 /// fresh handshake with an unknown date-shaped version must answer with a
 /// date-shaped, non-echoed version (the spec: respond with the server's
 /// latest supported version, never the requested one). (3) The version
@@ -2073,25 +2076,34 @@ fn run_protocol_negotiation(
     let supported = crate::http_client::PROTOCOL_VERSION;
     let client = &mut context.client;
     let attempts = 3;
-    // (1) The supported version must be echoed verbatim.
-    let supported_reply = client.initialize_raw(supported)?;
-    let echoed = supported_reply
-        .get("result")
-        .and_then(|result| result.get("protocolVersion"))
-        .and_then(Value::as_str);
-    if echoed != Some(supported) {
+    let version_of = |reply: &Value| {
+        reply
+            .get("result")
+            .and_then(|result| result.get("protocolVersion"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    // (1) The supported version is echoed, or answered with another
+    //     supported version that is itself echoed.
+    let answered = version_of(&client.initialize_raw(supported)?);
+    let Some(answered) = answered.filter(|version| is_date_shaped(version)) else {
         return Ok(failed_case(
             case,
             1,
             FailureReason::NegotiationInvalidVersion,
         ));
+    };
+    if answered != supported
+        && version_of(&client.initialize_raw(&answered)?).as_deref() != Some(answered.as_str())
+    {
+        return Ok(failed_case(
+            case,
+            1,
+            FailureReason::NegotiationInconsistentSupport,
+        ));
     }
     // (2) The unknown version must not be echoed back.
-    let unknown_reply = client.initialize_raw(bogus_version)?;
-    let negotiated = unknown_reply
-        .get("result")
-        .and_then(|result| result.get("protocolVersion"))
-        .and_then(Value::as_str);
+    let negotiated = version_of(&client.initialize_raw(bogus_version)?);
     let Some(negotiated) = negotiated else {
         return Ok(failed_case(
             case,
@@ -2106,7 +2118,7 @@ fn run_protocol_negotiation(
             FailureReason::NegotiationEchoedUnknown,
         ));
     }
-    if !is_date_shaped(negotiated) {
+    if !is_date_shaped(&negotiated) {
         return Ok(failed_case(
             case,
             2,
@@ -2114,12 +2126,7 @@ fn run_protocol_negotiation(
         ));
     }
     // (3) The claimed version must actually be supported.
-    let claimed_reply = client.initialize_raw(negotiated)?;
-    let claimed_echo = claimed_reply
-        .get("result")
-        .and_then(|result| result.get("protocolVersion"))
-        .and_then(Value::as_str);
-    if claimed_echo != Some(negotiated) {
+    if version_of(&client.initialize_raw(&negotiated)?).as_deref() != Some(negotiated.as_str()) {
         return Ok(failed_case(
             case,
             3,

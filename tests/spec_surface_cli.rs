@@ -315,3 +315,33 @@ fn probe_flag_selects_each_spec_surface_kind() {
         assert_eq!(cases[0]["probe"], kind);
     }
 }
+
+#[test]
+fn a_server_on_an_older_protocol_version_negotiates_cleanly() {
+    let dir = home();
+    let manifest = dir.join("m.json");
+    std::fs::write(
+        &manifest,
+        r#"{"version":1,"probes":[{"id":"negotiates","probe":"protocol-negotiation","access":"read_only","bogus_version":"2000-01-01"}]}"#,
+    )
+    .unwrap();
+    let output = Command::new(bin())
+        .args([
+            "probe",
+            "--server",
+            "old",
+            "--gate-only",
+            "--manifest",
+            manifest.to_str().unwrap(),
+        ])
+        .args(["--", "python3", "tests/fixtures/old_protocol_server.py"])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{stdout}");
+    assert!(
+        stdout.contains("negotiates protocol-negotiation pass"),
+        "{stdout}"
+    );
+}

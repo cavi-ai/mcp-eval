@@ -286,13 +286,13 @@
     },
     {
       "server": "notion",
-      "score": 66,
+      "score": 65,
       "areas": {
         "protocol": 100,
         "catalog": 64,
         "context": 32,
         "error-honesty": 0,
-        "reliability": 91,
+        "reliability": 89,
         "coverage": 100
       },
       "tool_count": 24,
@@ -390,8 +390,8 @@
         "catalog": 72,
         "context": 100,
         "error-honesty": 100,
-        "reliability": 100,
-        "coverage": 89
+        "reliability": 95,
+        "coverage": 100
       },
       "tool_count": 13,
       "catalog_tokens": 1915

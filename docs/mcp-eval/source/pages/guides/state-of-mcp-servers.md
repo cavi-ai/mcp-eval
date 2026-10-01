@@ -21,13 +21,13 @@ How healthy are the MCP servers that agents actually use? This page is produced 
 | `filesystem` | 95 | 100 | 84 | 88 | 100 | 100 | 100 | 14 | 3246 |
 | `searxng` | 95 | 100 | 80 | 93 | 100 | 100 | 100 | 4 | 1745 |
 | `context7` | 93 | 100 | 80 | 95 | 100 | 91 | 100 | 2 | 1216 |
-| `everything` | 93 | 100 | 72 | 100 | 100 | 100 | 89 | 13 | 1915 |
+| `everything` | 93 | 100 | 72 | 100 | 100 | 95 | 100 | 13 | 1915 |
 | `arxiv` | 89 | 83 | 76 | 80 | 100 | 97 | 100 | 19 | 4463 |
 | `time` | 89 | 80 | 60 | 100 | 100 | 100 | 100 | 2 | 307 |
 | `git` | 87 | 80 | 52 | 100 | 100 | 100 | 100 | 12 | 1479 |
 | `desktop-commander` | 77 | 100 | 63 | 36 | 64 | 99 | 100 | 26 | 14361 |
 | `kubernetes` | 73 | 100 | 62 | 65 | 33 | 100 | 70 | 23 | 5965 |
-| `notion` | 66 | 100 | 64 | 32 | 0 | 91 | 100 | 24 | 19057 |
+| `notion` | 65 | 100 | 64 | 32 | 0 | 89 | 100 | 24 | 19057 |
 | `airbnb` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 2 | 538 |
 | `docker` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 1 | 93 |
 | `markitdown` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 1 | 105 |
@@ -53,7 +53,7 @@ How healthy are the MCP servers that agents actually use? This page is produced 
 
 **Missing annotations cost the most.** 20 of 33 servers mark no tool `readOnlyHint: true`, so the standard battery calls none of their tools: error honesty, reliability, and coverage score 0, and these servers land between 31 and 42. Across the corpus, 173 of 302 tools declare no `readOnlyHint` at all. The annotation is one line per tool, and it is what lets any client tell a read from a write.
 
-**Where tools can be called, most servers behave.** The 13 servers with callable tools score 66 to 99. Ten of them refuse every schema-violating call with -32602 or an `isError` result that says why. `notion` accepted invalid arguments on 11 tools, `desktop-commander` on 5, and `kubernetes` refused 4 with a JSON-RPC code other than -32602.
+**Where tools can be called, most servers behave.** The 13 servers with callable tools score 65 to 99. Ten of them refuse every schema-violating call with -32602 or an `isError` result that says why. `notion` accepted invalid arguments on 11 tools, `desktop-commander` on 5, and `kubernetes` refused 4 with a JSON-RPC code other than -32602.
 
 **Catalogs rarely describe their results.** 269 of 302 tools declare no `outputSchema`, and 27 of 33 servers declare none on any tool; 96 tools leave input parameters undescribed and 70 have descriptions under 40 characters. Only `sequential-thinking` scores 100 on the catalog area; the median is 60.
 
@@ -84,5 +84,5 @@ Text and markdown reports place a readiness score among these servers when it wa
 - The standard battery is read-only: it calls only tools annotated `readOnlyHint: true` (never `readOnlyHint: false` or `destructiveHint: true`), with arguments synthesized from each tool's input schema, plus one schema-violating call per judged tool, protocol requests, and the paged listings. Unannotated tools count as unexercised. The readiness-reporting guide lists every area and check.
 - Servers that need credentials or backing services ran without them, so their tools may answer with errors; `mcp-atlassian` lists no tools without credentials and is not in the corpus.
 - Every server runs with an empty kubeconfig and an unreachable Docker host, so no call reaches a real cluster or container daemon.
-- Two consecutive collections on one machine produced the same readiness score for every server; one area score moved by one point. Latency bands depend on the machine and network: on a Linux CI runner, `notion` scored two points higher on reliability alone. Some servers also describe their tools per operating system — `desktop-commander`'s descriptions name the platform and its shell — so the corpus records the platform it was collected on (macOS) and is re-scored there.
+- Re-runs on one machine moved only reliability, by at most 3 points: latency bands depend on the machine and network, and they move more between machines. Some servers also describe their tools per operating system — `desktop-commander`'s descriptions name the platform and its shell — so the corpus records the platform it was collected on (macOS) and is re-scored there.
 - Reproducibility is enforced, not assumed: a scheduled workflow re-scores every corpus observation with the current binary and fails when any area other than reliability moved, or reliability moved by more than 10 points (one latency band on every tool) (`node scripts/corpus/verify.mjs` locally). A moved area means the server changed — refreshes are deliberate and explained in the pull request that commits them.

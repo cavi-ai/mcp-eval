@@ -9,7 +9,7 @@ The default format prints one line per case — verdict, attempts, first-failure
 ```text
 literal-status instruction-fidelity pass attempts=1
 demo gate 1/1 passed
-demo readiness 88/100 catalog=63 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
+demo readiness 90/100 protocol=100 catalog=63 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
   surface: 12 tools, 10 read-only, 2 writers, 10 exercised
   lost catalog.description score=0 tool=describe_status observed=37 reason=catalog-short-description
     hint: describe what the tool does, when to use it, and what it returns in at least 40 characters; agents choose tools from this text
@@ -60,11 +60,12 @@ mcpeval explain        # list every fixed reason
   "gate": {"passed": 0, "total": 1},
   "readiness": {
     "standard": "mcpeval-standard/1-draft",
-    "score": 88,
-    "badge": "https://img.shields.io/badge/mcpeval-88%2F100-brightgreen",
+    "score": 90,
+    "badge": "https://img.shields.io/badge/mcpeval-90%2F100-brightgreen",
     "attested_read_only": false,
     "surface": {"tools": 12, "read_only": 10, "writers": 2, "exercised": 10},
     "areas": [
+      {"name": "protocol", "weight": 15, "score": 100, "measurements": {}, "checks": []},
       {"name": "catalog", "weight": 20, "score": 63, "measurements": {},
        "checks": [{"id": "catalog.description", "tool": "describe_status", "score": 0,
                    "observed": 37, "reason": "catalog-short-description", "hint": "…"}, …]},
@@ -98,12 +99,13 @@ Readiness (0-100) is the weighted mean of the standard's areas, each scored on f
 
 | Area | Weight | Scored as |
 | --- | --- | --- |
+| protocol | 15 | the share of these checks passed: an unknown method answers error -32601; `ping` answers an empty result; `tools/call` with an unknown tool name is refused; `tools/list` pages with finite cursors and valid, distinct entries; a declared resources or prompts capability lists cleanly (only when declared); `initialize` with an unknown version answers a date-shaped version the server supports and will echo |
 | catalog | 20 | per tool, the share of its checks it passes, averaged over the catalog: a description of at least 40 characters; every input property described and typed (type, enum, const, `$ref`, anyOf, or oneOf), for tools with properties; `readOnlyHint` declared; `destructiveHint` declared, for writers; `outputSchema` declared. An empty catalog scores 0 |
 | context | 15 | 75% the catalog's token estimate (100 at 2,000 tokens or fewer, 0 at 40,000 or more, logarithmic between) and 25% the heaviest tool's (100 at 500 or fewer, 0 at 5,000 or more) |
 | reliability | 20 | each exercised tool's three calls: the same outcome every time, the median latency band (100 up to 100 ms, 80 up to 300 ms, 50 up to 1 s, 20 up to 3 s, else 0), and a declared `outputSchema` honored; plus one contention and one payload-bounds case on the first fully successful tool |
 | coverage | 15 | exercised read-only tools over every read-only tool |
 
-The standard battery is read-only by construction. It never calls a tool annotated `readOnlyHint: false` or `destructiveHint: true`, and it calls a tool with neither annotation only when you pass `--confirm-read-only`; otherwise that tool stays in the surface as unexercised (`coverage-unannotated`). Tools that require arguments stay unexercised in this build (`coverage-required-arguments`). Each call waits at most 10 seconds; a call that times out or ends the connection costs that tool only, and the next tool starts on a fresh connection. The battery runs on its own connection after the gate and never writes to the call journal.
+The standard battery is read-only by construction. It never calls a tool annotated `readOnlyHint: false` or `destructiveHint: true`, and it calls a tool with neither annotation only when you pass `--confirm-read-only`; otherwise that tool stays in the surface as unexercised (`coverage-unannotated`). Tools that require arguments stay unexercised in this build (`coverage-required-arguments`). Each call waits at most 10 seconds; a call that times out or ends the connection costs that tool only, and the next tool starts on a fresh connection. The battery runs on its own connection after the gate and never writes to the call journal. The protocol checks run last: they send an unknown method, `ping`, a `tools/call` naming a tool that does not exist, the paged listings, and extra `initialize` handshakes. A page after the first that fails ends the catalog with the tools already listed and costs `protocol.pagination`.
 
 It runs on full-battery `probe` runs and on `compare`; `--gate-only` skips it, and `--probe <kind>` and `verify` never run it. `mcpeval explain` covers the gate's reasons; each lost readiness check carries its own hint.
 
@@ -139,8 +141,8 @@ mcpeval trends --last 5
 
 ```text
 demo
-  2026-09-30T18:03:04.761Z score=88/100 cases=1/1 manifest=0524c76b
-  2026-09-30T18:03:50.618Z score=87/100 cases=1/1 -1 manifest=0524c76b
+  2026-09-30T18:03:04.761Z score=90/100 cases=1/1 manifest=0524c76b
+  2026-09-30T18:03:50.618Z score=89/100 cases=1/1 -1 manifest=0524c76b
 ```
 
 Records written before the standard existed hold a manifest pass rate: they compare only with each other, by manifest hash.

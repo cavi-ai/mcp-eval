@@ -787,3 +787,36 @@ fn skipping_a_tool_never_raises_the_score() {
     );
     assert_eq!(output.status.code(), Some(2));
 }
+
+#[test]
+fn synthesized_arguments_reach_required_argument_tools() {
+    let (output, document) = run(
+        &home(),
+        &[
+            "score",
+            "--server",
+            "args",
+            "--format",
+            "json",
+            "--",
+            "python3",
+            "tests/fixtures/required_args_server.py",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(document["readiness"]["surface"]["exercised"], 4);
+    assert_eq!(area(&document, "coverage"), 80);
+    assert_eq!(area(&document, "error-honesty"), 100);
+    assert_eq!(
+        lost_in(&document, "coverage"),
+        owned(&[(
+            "coverage.exercised",
+            Some("patterned"),
+            "coverage-unsynthesizable"
+        )])
+    );
+}

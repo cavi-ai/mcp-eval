@@ -42,4 +42,3 @@ GEMINI.md
 /npm/node_modules/
 
 # Rendered documentation site (deterministic, rebuilt on release)
-/docs/site/

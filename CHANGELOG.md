@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Removed
+
+- The GitHub Pages documentation site. Documentation is published at
+  https://cavi-ai.xyz/docs/mcp-eval/ from each release's docs archive.
+
 ## 0.4.0 - 2026-10-01
 
 ### Changed

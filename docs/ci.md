@@ -75,9 +75,9 @@ diff when `baseline` is set). The step exits with the probe's code, or
 with the diff's when the probe passed and the diff failed.
 
 `baseline` and `sarif` need `mcpeval` 0.3.0 or later (`diff` and `report
---manifest`). The pinned release moves when `distribution/release.json`
-is updated at release time; until then, set `version: '0.3.0'` or later,
-or the step fails fast with a usage error naming the installed version.
+--manifest`); the action's pinned release has both. A `version` input
+older than 0.3.0 fails fast with a usage error naming the installed
+version.
 
 ### Streamable HTTP server
 

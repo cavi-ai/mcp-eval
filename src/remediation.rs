@@ -280,9 +280,12 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
              call it safely; declare readOnlyHint: true on read-only tools and destructiveHint on \
              writers"
         }
-        CheckReason::CoverageRequiredArguments => {
-            "the tool requires arguments the standard does not construct yet; give required \
-             parameters defaults, enums, or examples an agent can use"
+        CheckReason::CoverageUnsynthesizable => {
+            "a required parameter has no type, enum, default, or example the standard can build a \
+             value from (a bare pattern counts as none); add an enum, a default, or examples"
+        }
+        CheckReason::CoverageSkipped => {
+            "the operator skipped this tool with --skip-tool, so it counts as unexercised"
         }
         CheckReason::CoverageRejectedArguments => {
             "the tool rejected arguments built from its own input schema (-32602); make the \

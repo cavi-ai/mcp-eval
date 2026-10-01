@@ -143,7 +143,14 @@ fn json_report_carries_the_readiness_object() {
         .collect();
     assert_eq!(
         names,
-        ["protocol", "catalog", "context", "reliability", "coverage"]
+        [
+            "protocol",
+            "catalog",
+            "context",
+            "error-honesty",
+            "reliability",
+            "coverage"
+        ]
     );
 }
 

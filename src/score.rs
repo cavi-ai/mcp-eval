@@ -10,7 +10,7 @@
 use serde_json::{json, Value};
 
 use crate::probe::ProbeReport;
-use crate::standard::{Exercise, Observations, ToolClass, ToolObservation};
+use crate::standard::{Exercise, Honesty, Observations, ToolClass, ToolObservation};
 
 /// The standard this build scores against. `-draft` until every area of
 /// standard/1 has landed; no release carries a draft.
@@ -34,6 +34,7 @@ pub enum Area {
     Protocol,
     Catalog,
     Context,
+    ErrorHonesty,
     Reliability,
     Coverage,
 }
@@ -44,6 +45,7 @@ impl Area {
         Area::Protocol,
         Area::Catalog,
         Area::Context,
+        Area::ErrorHonesty,
         Area::Reliability,
         Area::Coverage,
     ];
@@ -53,6 +55,7 @@ impl Area {
             Self::Protocol => "protocol",
             Self::Catalog => "catalog",
             Self::Context => "context",
+            Self::ErrorHonesty => "error-honesty",
             Self::Reliability => "reliability",
             Self::Coverage => "coverage",
         }
@@ -64,6 +67,7 @@ impl Area {
             Self::Protocol => 15,
             Self::Catalog => 20,
             Self::Context => 15,
+            Self::ErrorHonesty => 15,
             Self::Reliability => 20,
             Self::Coverage => 15,
         }
@@ -101,6 +105,8 @@ pub enum CheckId {
     ProtocolUnknownTool,
     ProtocolPagination,
     ProtocolSurfaces,
+    ErrorHonestyInvalidArguments,
+    ErrorHonestyUntestable,
 }
 
 impl CheckId {
@@ -127,6 +133,8 @@ impl CheckId {
         Self::ProtocolUnknownTool,
         Self::ProtocolPagination,
         Self::ProtocolSurfaces,
+        Self::ErrorHonestyInvalidArguments,
+        Self::ErrorHonestyUntestable,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -153,6 +161,8 @@ impl CheckId {
             Self::ProtocolUnknownTool => "protocol.unknown-tool",
             Self::ProtocolPagination => "protocol.pagination",
             Self::ProtocolSurfaces => "protocol.surfaces",
+            Self::ErrorHonestyInvalidArguments => "error-honesty.invalid-arguments",
+            Self::ErrorHonestyUntestable => "error-honesty.untestable",
         }
     }
 
@@ -192,6 +202,11 @@ pub enum CheckReason {
     ProtocolPaginationInvalid,
     ProtocolSurfaceInvalid,
     ProtocolCallFailed,
+    HonestyAcceptedInvalid,
+    HonestyEmptyError,
+    HonestyWrongCode,
+    HonestyCallFailed,
+    HonestyUntestable,
 }
 
 impl CheckReason {
@@ -225,6 +240,11 @@ impl CheckReason {
         Self::ProtocolPaginationInvalid,
         Self::ProtocolSurfaceInvalid,
         Self::ProtocolCallFailed,
+        Self::HonestyAcceptedInvalid,
+        Self::HonestyEmptyError,
+        Self::HonestyWrongCode,
+        Self::HonestyCallFailed,
+        Self::HonestyUntestable,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -260,6 +280,11 @@ impl CheckReason {
             Self::ProtocolPaginationInvalid => "protocol-pagination-invalid",
             Self::ProtocolSurfaceInvalid => "protocol-surface-invalid",
             Self::ProtocolCallFailed => "protocol-call-failed",
+            Self::HonestyAcceptedInvalid => "honesty-accepted-invalid",
+            Self::HonestyEmptyError => "honesty-empty-error",
+            Self::HonestyWrongCode => "honesty-wrong-code",
+            Self::HonestyCallFailed => "honesty-call-failed",
+            Self::HonestyUntestable => "honesty-untestable",
         }
     }
 
@@ -337,6 +362,7 @@ pub fn fold(observations: &Observations) -> Readiness {
             Area::Protocol => protocol(&observations.protocol),
             Area::Catalog => catalog(&observations.tools),
             Area::Context => context(&observations.tools),
+            Area::ErrorHonesty => error_honesty(&observations.tools),
             Area::Reliability => reliability(observations),
             Area::Coverage => coverage(&observations.tools),
         })
@@ -553,6 +579,55 @@ fn context(tools: &[ToolObservation]) -> AreaScore {
         score: round(CATALOG_SHARE * catalog + (1.0 - CATALOG_SHARE) * tool),
         checks,
         measurements,
+    }
+}
+
+/// The share of judged tools that refused schema-violating arguments with
+/// words. Read-only tools whose schema admits every input are not judged;
+/// when none can be judged, the area scores 0 with one visible loss.
+fn error_honesty(tools: &[ToolObservation]) -> AreaScore {
+    let judged: Vec<(&ToolObservation, Honesty)> = tools
+        .iter()
+        .filter_map(|tool| tool.honesty.map(|honesty| (tool, honesty)))
+        .collect();
+    let mut checks = Vec::new();
+    for (tool, honesty) in &judged {
+        if let Honesty::Dishonest(reason) = honesty {
+            checks.extend(lost(
+                CheckId::ErrorHonestyInvalidArguments,
+                Some(tool.name.as_str()),
+                0.0,
+                None,
+                *reason,
+            ));
+        }
+    }
+    let score = if judged.is_empty() {
+        let reason = if read_only_surface(tools) == 0 {
+            CheckReason::NoReadOnlyTools
+        } else {
+            CheckReason::HonestyUntestable
+        };
+        checks.extend(lost(
+            CheckId::ErrorHonestyUntestable,
+            None,
+            0.0,
+            None,
+            reason,
+        ));
+        0
+    } else {
+        let honest = judged
+            .iter()
+            .filter(|(_, honesty)| *honesty == Honesty::Honest)
+            .count();
+        round(100.0 * honest as f64 / judged.len() as f64)
+    };
+    AreaScore {
+        area: Area::ErrorHonesty,
+        score,
+        checks,
+        measurements: serde_json::Map::new(),
     }
 }
 
@@ -873,7 +948,9 @@ mod tests {
     use super::*;
     use crate::manifest::ProbeKind;
     use crate::probe::{CaseReport, FailureReason};
-    use crate::standard::{CatalogFacts, Exercise, Observations, ToolClass, ToolObservation};
+    use crate::standard::{
+        CatalogFacts, Exercise, Honesty, Observations, ToolClass, ToolObservation,
+    };
 
     fn tool(
         name: &str,
@@ -887,6 +964,7 @@ mod tests {
             class,
             exercise,
             catalog: CatalogFacts::default(),
+            honesty: None,
         }
     }
 
@@ -938,7 +1016,10 @@ mod tests {
             tools: vec![
                 read("describe_status", 40, facts(37, 0, 0, true, false)),
                 read("read_counter", 40, facts(47, 0, 0, true, false)),
-                read("shared_read", 56, facts(42, 1, 1, true, false)),
+                ToolObservation {
+                    honesty: Some(Honesty::Honest),
+                    ..read("shared_read", 56, facts(42, 1, 1, true, false))
+                },
                 with(
                     tool("flaky_read", 45, ToolClass::ReadOnly, exercised(false, 1)),
                     facts(63, 0, 0, true, false),
@@ -956,7 +1037,10 @@ mod tests {
                     facts(42, 0, 0, true, true),
                 ),
                 read("session_status", 45, facts(53, 0, 0, true, false)),
-                read("report_weather", 56, facts(47, 1, 1, true, false)),
+                ToolObservation {
+                    honesty: Some(Honesty::Honest),
+                    ..read("report_weather", 56, facts(47, 1, 1, true, false))
+                },
                 read("sampled_read", 50, facts(72, 0, 0, true, false)),
                 read("elicited_read", 49, facts(70, 0, 0, true, false)),
                 read("publish_status", 50, facts(60, 0, 0, true, false)),
@@ -1065,7 +1149,8 @@ mod tests {
         assert_eq!(area(&readiness, Area::Context).score, 100);
         assert_eq!(area(&readiness, Area::Reliability).score, 94);
         assert_eq!(area(&readiness, Area::Coverage).score, 100);
-        assert_eq!(readiness.score, 90);
+        assert_eq!(area(&readiness, Area::ErrorHonesty).score, 100);
+        assert_eq!(readiness.score, 91);
         assert_eq!(
             readiness.surface,
             Surface {
@@ -1239,6 +1324,51 @@ mod tests {
     }
 
     #[test]
+    fn error_honesty_scores_applicable_tools_and_untestable_counts_against() {
+        let with = |honesty| ToolObservation {
+            honesty,
+            ..tool("t", 10, ToolClass::ReadOnly, exercised(true, 1))
+        };
+        let readiness = fold(&Observations {
+            tools: vec![
+                with(Some(Honesty::Honest)),
+                with(Some(Honesty::Dishonest(
+                    CheckReason::HonestyAcceptedInvalid,
+                ))),
+                with(None),
+            ],
+            ..Observations::default()
+        });
+        let honesty = area(&readiness, Area::ErrorHonesty);
+        assert_eq!(honesty.score, 50);
+        assert_eq!(
+            honesty.checks,
+            vec![Check {
+                id: CheckId::ErrorHonestyInvalidArguments,
+                tool: Some("t".into()),
+                score: 0,
+                observed: None,
+                reason: CheckReason::HonestyAcceptedInvalid,
+            }]
+        );
+        let untestable = fold(&Observations {
+            tools: vec![with(None)],
+            ..Observations::default()
+        });
+        assert_eq!(area(&untestable, Area::ErrorHonesty).score, 0);
+        assert_eq!(
+            area(&untestable, Area::ErrorHonesty).checks,
+            vec![Check {
+                id: CheckId::ErrorHonestyUntestable,
+                tool: None,
+                score: 0,
+                observed: None,
+                reason: CheckReason::HonestyUntestable,
+            }]
+        );
+    }
+
+    #[test]
     fn untested_surface_counts_against_the_score() {
         // Only writers: nothing can be exercised, so reliability and
         // coverage score 0 instead of dropping out.
@@ -1250,7 +1380,8 @@ mod tests {
         assert_eq!(area(&readiness, Area::Catalog).score, 0);
         assert_eq!(area(&readiness, Area::Reliability).score, 0);
         assert_eq!(area(&readiness, Area::Coverage).score, 0);
-        assert_eq!(readiness.score, 18);
+        assert_eq!(area(&readiness, Area::ErrorHonesty).score, 0);
+        assert_eq!(readiness.score, 15);
         assert!([Area::Reliability, Area::Coverage]
             .iter()
             .flat_map(|name| &area(&readiness, *name).checks)
@@ -1286,9 +1417,9 @@ mod tests {
     fn readiness_json_round_trips_and_rejects_unknown_labels() {
         let readiness = fold(&clean_demo());
         let document = readiness.to_json();
-        assert_eq!(document["badge"], badge_url(90));
+        assert_eq!(document["badge"], badge_url(91));
         assert_eq!(
-            document["areas"][3]["checks"][0]["hint"],
+            document["areas"][4]["checks"][0]["hint"],
             crate::remediation::check_hint(CheckReason::ReliabilityInconsistent)
         );
         assert_eq!(Readiness::from_json(&document).unwrap(), readiness);
@@ -1296,7 +1427,7 @@ mod tests {
         unknown["areas"][0]["name"] = "vibes".into();
         assert!(Readiness::from_json(&unknown).is_err());
         let mut unknown = document;
-        unknown["areas"][3]["checks"][0]["reason"] = "vibes".into();
+        unknown["areas"][4]["checks"][0]["reason"] = "vibes".into();
         assert!(Readiness::from_json(&unknown).is_err());
     }
 

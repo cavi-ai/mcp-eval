@@ -21,7 +21,7 @@ pub const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 /// Calls per exercised tool.
 pub const REPEATS: usize = 3;
 /// `tools/list` pages followed before the catalog is taken as complete.
-pub const MAX_PAGES: usize = 20;
+pub const MAX_PAGES: usize = crate::mcp_client::MAX_TOOL_PAGES;
 /// Server-to-client requests declined during one tool call.
 pub(crate) const MAX_SERVER_REQUESTS: u64 = 8;
 const PAYLOAD_BYTES: u64 = 1_000_000;
@@ -303,37 +303,9 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
     })
 }
 
-/// Every distinct tool over at most [`MAX_PAGES`] pages. A first page that
-/// fails stops the battery; a later page that fails (an error, a malformed
-/// envelope, or an invalid entry) ends the listing with what was listed.
+/// Every distinct tool over every page; see `mcp_client::page_catalog`.
 fn list_catalog(client: &mut ProbeClient) -> anyhow::Result<ToolCatalog> {
-    let mut tools: Vec<ToolDefinition> = Vec::new();
-    let mut cursor: Option<String> = None;
-    for page in 0..MAX_PAGES {
-        let params = match &cursor {
-            Some(cursor) => json!({"cursor": cursor}),
-            None => json!({}),
-        };
-        let (entries, next) = match list_page(client, params) {
-            Ok(listed) => listed,
-            Err(error) if page == 0 => return Err(error),
-            Err(_) => break,
-        };
-        for tool in entries {
-            if !tools.iter().any(|seen| seen.name == tool.name) {
-                tools.push(tool);
-            }
-        }
-        cursor = next;
-        if cursor.is_none() {
-            break;
-        }
-    }
-    let encoded_bytes = tools.iter().map(|tool| tool.entry_bytes).sum();
-    Ok(ToolCatalog {
-        tools,
-        encoded_bytes,
-    })
+    crate::mcp_client::page_catalog(|params| client.raw_request("tools/list", params))
 }
 
 /// Nesting followed while synthesizing, `$ref` hops included.
@@ -551,30 +523,6 @@ fn probe_honesty(
         return failed;
     }
     Some(honesty_of(&response))
-}
-
-/// One `tools/list` page: its parsed entries and the next cursor.
-fn list_page(
-    client: &mut ProbeClient,
-    params: Value,
-) -> anyhow::Result<(Vec<ToolDefinition>, Option<String>)> {
-    let response = client.raw_request("tools/list", params)?;
-    let result = response
-        .get("result")
-        .context("tools/list returned an error")?;
-    let entries = result
-        .get("tools")
-        .and_then(Value::as_array)
-        .context("tools/list response is missing tools")?
-        .iter()
-        .map(crate::mcp_client::tool_definition)
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    let next = result
-        .get("nextCursor")
-        .and_then(Value::as_str)
-        .filter(|cursor| !cursor.is_empty())
-        .map(str::to_owned);
-    Ok((entries, next))
 }
 
 /// Three calls with `arguments`. A call that does not complete costs this

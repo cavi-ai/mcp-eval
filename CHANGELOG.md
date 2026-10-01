@@ -65,6 +65,11 @@
 
 ### Fixed
 
+- `probe` and `init` read every `tools/list` page (up to 20), as the
+  standard battery does: a manifest may name a tool listed after the first
+  page instead of exiting 2, `init` scaffolds tools from every page, and
+  `discovery-cost` and `token-cost` measure the whole catalog. A page after
+  the first that fails ends the catalog; `pagination` reports it.
 - `protocol-negotiation` no longer fails a server that answers the
   supported version with an older version it supports.
 - `payload-bounds` and `contention` decline requests a tool sends before

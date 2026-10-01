@@ -1343,7 +1343,12 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
     let worker = std::thread::spawn(move || -> anyhow::Result<(ToolResponse, u64)> {
         let mut client = target.connect(timeout)?;
         client.initialize()?;
-        if !lists_tool(&mut client, &worker_tool)? {
+        if !client
+            .list_tools_catalog()?
+            .tools
+            .iter()
+            .any(|listed| listed.name == worker_tool)
+        {
             bail!("contended client is missing the probe tool");
         }
         ready_tx
@@ -1393,42 +1398,6 @@ fn call_declining(
         crate::standard::MAX_SERVER_REQUESTS,
     )?;
     Ok(response)
-}
-
-/// Whether `tool` is listed on any `tools/list` page, following cursors up
-/// to the standard's page bound.
-fn lists_tool(client: &mut ProbeClient, tool: &str) -> anyhow::Result<bool> {
-    let mut cursor: Option<String> = None;
-    for _ in 0..crate::standard::MAX_PAGES {
-        let params = match &cursor {
-            Some(cursor) => json!({"cursor": cursor}),
-            None => json!({}),
-        };
-        let response = client.raw_request("tools/list", params)?;
-        let result = response
-            .get("result")
-            .context("tools/list returned an error")?;
-        let listed = result
-            .get("tools")
-            .and_then(Value::as_array)
-            .is_some_and(|entries| {
-                entries
-                    .iter()
-                    .any(|entry| entry.get("name").and_then(Value::as_str) == Some(tool))
-            });
-        if listed {
-            return Ok(true);
-        }
-        cursor = result
-            .get("nextCursor")
-            .and_then(Value::as_str)
-            .filter(|cursor| !cursor.is_empty())
-            .map(str::to_owned);
-        if cursor.is_none() {
-            break;
-        }
-    }
-    Ok(false)
 }
 
 fn run_error_honesty(

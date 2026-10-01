@@ -161,22 +161,9 @@ impl HttpMcpClient {
             .collect())
     }
 
+    /// The whole catalog, every page; see `mcp_client::page_catalog`.
     pub fn list_tools_catalog(&mut self) -> anyhow::Result<ToolCatalog> {
-        let response = self.request("tools/list", json!({}))?;
-        let tools = response
-            .get("result")
-            .and_then(|result| result.get("tools"))
-            .and_then(Value::as_array)
-            .context("tools/list response is missing tools")?;
-        let encoded_bytes = serde_json::to_vec(tools)?.len();
-        let tools = tools
-            .iter()
-            .map(crate::mcp_client::tool_definition)
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(ToolCatalog {
-            tools,
-            encoded_bytes,
-        })
+        crate::mcp_client::page_catalog(|params| self.request("tools/list", params))
     }
 
     pub fn call_tool(&mut self, tool: &str, arguments: &Value) -> anyhow::Result<ToolResponse> {

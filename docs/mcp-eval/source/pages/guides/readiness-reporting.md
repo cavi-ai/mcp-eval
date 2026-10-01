@@ -21,6 +21,7 @@ demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reli
     hint: the same read-only call with the same arguments ended differently across three calls; make read paths deterministic, or return a retryable error with a stable code
   lost reliability.latency score=50 tool=slow_read reason=reliability-slow
     hint: median latency is above 100 ms (score 80: up to 300 ms, 50: up to 1 s, 20: up to 3 s, 0: slower); cache or precompute the read, or page large results
+  standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers
   catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
 ```
 
@@ -112,13 +113,14 @@ It runs on full-battery `probe` runs and on `compare`; `--gate-only` skips it, a
 
 ## Calibration
 
-When the corpus (`data/readiness-corpus.json`, refreshed by `scripts/corpus/collect.sh`) carries `catalog_tokens`, text and markdown reports place your catalog among the observed servers; the median is the lower middle for an even count:
+The corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v2`, refreshed by `scripts/corpus/collect.sh`) holds the readiness and area scores of popular public servers under one named standard. Text and markdown reports from `probe` and `score` place your readiness among them when your report was scored under the same standard, counting ties explicitly, and place your catalog among the servers that recorded `catalog_tokens`; the median is the lower middle for an even count:
 
 ```text
+  standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers
   catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
 ```
 
-The corpus's scores were collected as manifest pass rates, so reports do not place a readiness score among them until the corpus is recollected under the standard. A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; when no corpus is available, reports omit the line. JSON reports never carry corpus context.
+A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; a v1 corpus (manifest pass rates) is not read. When no corpus is available, reports omit both lines. JSON reports never carry corpus context.
 
 ## Session cost
 

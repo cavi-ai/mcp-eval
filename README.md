@@ -232,18 +232,19 @@ honesty (schema-violating arguments refused with words), reliability (repeat
 consistency, median latency band, declared output schema, contention, payload
 bounds), and coverage (exercised read-only tools over all read-only tools).
 
-When the shipped corpus (`data/readiness-corpus.json`, refreshed by
-`scripts/corpus/collect.sh`) records catalog sizes, text and markdown reports
-place your catalog among the observed servers — *"catalog: 566 tokens over 12
-tools, lighter than 23 of 33 observed servers (median 1186 tokens)"*. The
-corpus's scores are manifest pass rates collected before the standard, so
-readiness is not placed among them until the corpus is recollected. A personal
-corpus at `<MCPEVAL_HOME>/corpus.json` overrides the shipped one.
+The shipped corpus (`data/readiness-corpus.json`, refreshed by
+`scripts/corpus/collect.sh`) holds readiness scores under the standard, so
+text and markdown reports place your score and your catalog among the
+observed servers — *"standard corpus (mcpeval-standard/1): above 26, tied 0,
+below 7 of 33 observed servers"* and *"catalog: 566 tokens over 12 tools,
+lighter than 23 of 33 observed servers (median 1186 tokens)"*. A score is
+placed only against a corpus of its own standard. A personal corpus at
+`<MCPEVAL_HOME>/corpus.json` overrides the shipped one.
 
 **[State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md)** —
 the corpus is also published: how healthy are the MCP servers agents actually
-use? 33 popular public servers, probed with the same battery, distribution
-published with full method notes. Reproduce it locally with one script; add
+use? 33 popular public servers, scored by the same standard battery,
+distribution published with full method notes. Reproduce it locally with one script; add
 your server by PR.
 
 Every full-battery run that measured readiness appends a content-free record

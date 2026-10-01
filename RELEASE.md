@@ -85,11 +85,9 @@ brew test cavi-ai/tap/mcpeval
 
 ## Corpus drift check
 
-The corpus claims every observation reproduces; the `corpus-drift` workflow
-keeps that claim honest. It re-probes every server in
-`data/readiness-corpus.json` with the current binary and fails on any score
-that moved — weekly on a schedule, and on pull requests touching the corpus
-or the probe battery. Locally, the same check:
+The corpus re-scores live public servers over the network, so it is not a CI
+gate. Before a release, re-score every server in `data/readiness-corpus.json`
+with the current binary, on the platform the corpus records:
 
 ```sh
 cargo build --release

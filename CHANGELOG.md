@@ -18,12 +18,14 @@
   area scores from `mcpeval score` under `mcpeval-standard/1`. Text and
   markdown reports (`probe` and `score`) place a readiness score among it
   only when the corpus names the report's standard; v1 corpora are not
-  read. `scripts/corpus/collect.sh` and the drift check run every server
-  with no Kubernetes context and no Docker daemon. The drift check fails
-  when any area other than reliability moves, or reliability moves by more
-  than 10 (one latency band on every tool). The corpus records the
-  platform it was collected on, and the drift check runs on that platform
-  only.
+  read. `scripts/corpus/collect.sh` and `scripts/corpus/verify.mjs` run
+  every server with no Kubernetes context and no Docker daemon.
+  `verify.mjs` fails when any area other than reliability moves, or
+  reliability moves by more than 10 (one latency band on every tool), and
+  runs only on the platform the corpus records.
+- The `corpus-drift` workflow is removed: re-scoring live public servers is
+  not a deterministic CI gate. Run `scripts/corpus/verify.mjs` before a
+  release.
 - README and installation docs list the Homebrew, npm, and Cargo install
   commands, and the quickstart runs the installed `mcpeval` and
   `mcpeval-demo` instead of `./target/release` paths.

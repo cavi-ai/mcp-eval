@@ -10,8 +10,8 @@ use serde_json::{json, Value};
 
 use crate::manifest::{Access, ProbeCase};
 use crate::mcp_client::{ToolCatalog, ToolDefinition, ToolResponse};
-use crate::probe::{estimate_tokens, ClientTarget, ProbeClient};
-use crate::score::{CheckReason, Readiness};
+use crate::probe::{estimate_tokens, ClientTarget, FailureReason, ProbeClient};
+use crate::score::{CheckId, CheckReason, Readiness};
 
 /// Per-call response timeout, pinned by the standard: it bounds what a
 /// hung tool costs and is part of what a score means.
@@ -21,7 +21,7 @@ pub const REPEATS: usize = 3;
 /// `tools/list` pages followed before the catalog is taken as complete.
 pub const MAX_PAGES: usize = 20;
 /// Server-to-client requests declined during one tool call.
-const MAX_SERVER_REQUESTS: u64 = 8;
+pub(crate) const MAX_SERVER_REQUESTS: u64 = 8;
 const PAYLOAD_BYTES: u64 = 1_000_000;
 
 #[derive(Clone, Debug, Default)]
@@ -130,6 +130,8 @@ pub struct Observations {
     /// Payload bounds on the first fully successful tool with a string
     /// property; None when none.
     pub payload: Option<bool>,
+    /// Each applicable protocol check and, when it failed, why.
+    pub protocol: Vec<(CheckId, Option<CheckReason>)>,
 }
 
 /// How one call ended.
@@ -244,43 +246,38 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
                 },
             )
         });
+    let protocol = protocol_checks(&mut client, target, &catalog);
     Ok(Observations {
         tools,
         attested_read_only: options.confirm_read_only,
         contention,
         payload,
+        protocol,
     })
 }
 
-/// Every page of `tools/list`, each distinct tool once, at most
-/// [`MAX_PAGES`] pages.
+/// Every distinct tool over at most [`MAX_PAGES`] pages. A first page that
+/// fails stops the battery; a later page that fails (an error, a malformed
+/// envelope, or an invalid entry) ends the listing with what was listed.
 fn list_catalog(client: &mut ProbeClient) -> anyhow::Result<ToolCatalog> {
     let mut tools: Vec<ToolDefinition> = Vec::new();
     let mut cursor: Option<String> = None;
-    for _ in 0..MAX_PAGES {
+    for page in 0..MAX_PAGES {
         let params = match &cursor {
             Some(cursor) => json!({"cursor": cursor}),
             None => json!({}),
         };
-        let response = client.raw_request("tools/list", params)?;
-        let result = response
-            .get("result")
-            .context("tools/list returned an error")?;
-        let entries = result
-            .get("tools")
-            .and_then(Value::as_array)
-            .context("tools/list response is missing tools")?;
-        for entry in entries {
-            let tool = crate::mcp_client::tool_definition(entry)?;
+        let (entries, next) = match list_page(client, params) {
+            Ok(listed) => listed,
+            Err(error) if page == 0 => return Err(error),
+            Err(_) => break,
+        };
+        for tool in entries {
             if !tools.iter().any(|seen| seen.name == tool.name) {
                 tools.push(tool);
             }
         }
-        cursor = result
-            .get("nextCursor")
-            .and_then(Value::as_str)
-            .filter(|cursor| !cursor.is_empty())
-            .map(str::to_owned);
+        cursor = next;
         if cursor.is_none() {
             break;
         }
@@ -290,6 +287,30 @@ fn list_catalog(client: &mut ProbeClient) -> anyhow::Result<ToolCatalog> {
         tools,
         encoded_bytes,
     })
+}
+
+/// One `tools/list` page: its parsed entries and the next cursor.
+fn list_page(
+    client: &mut ProbeClient,
+    params: Value,
+) -> anyhow::Result<(Vec<ToolDefinition>, Option<String>)> {
+    let response = client.raw_request("tools/list", params)?;
+    let result = response
+        .get("result")
+        .context("tools/list returned an error")?;
+    let entries = result
+        .get("tools")
+        .and_then(Value::as_array)
+        .context("tools/list response is missing tools")?
+        .iter()
+        .map(crate::mcp_client::tool_definition)
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let next = result
+        .get("nextCursor")
+        .and_then(Value::as_str)
+        .filter(|cursor| !cursor.is_empty())
+        .map(str::to_owned);
+    Ok((entries, next))
 }
 
 /// Three calls with `arguments`. A call that does not complete costs this
@@ -403,6 +424,149 @@ fn server_case(
         Err(_) => {
             *client = connect(target).ok();
             false
+        }
+    }
+}
+
+/// Protocol conformance, last so its re-handshakes cannot disturb the tool
+/// calls. A check that cannot complete fails with `protocol-call-failed`
+/// and the next check starts on a fresh connection.
+fn protocol_checks(
+    client: &mut Option<ProbeClient>,
+    target: &ClientTarget,
+    catalog: &ToolCatalog,
+) -> Vec<(CheckId, Option<CheckReason>)> {
+    let failed = Some(CheckReason::ProtocolCallFailed);
+    let mut results = Vec::new();
+    let unknown_method = raw(client, target, "mcpeval/unknown", json!({})).map(|response| {
+        let code = response
+            .get("error")
+            .and_then(|error| error.get("code"))
+            .and_then(Value::as_i64);
+        (code != Some(-32601)).then_some(CheckReason::ProtocolUnknownMethodAnswered)
+    });
+    results.push((
+        CheckId::ProtocolUnknownMethod,
+        unknown_method.unwrap_or(failed),
+    ));
+    let ping = raw(client, target, "ping", json!({})).map(|response| {
+        (!response.get("result").is_some_and(Value::is_object))
+            .then_some(CheckReason::ProtocolPingFailed)
+    });
+    results.push((CheckId::ProtocolPing, ping.unwrap_or(failed)));
+    let unknown_tool = raw(
+        client,
+        target,
+        "tools/call",
+        json!({"name": "mcpeval-unknown-tool", "arguments": {}}),
+    )
+    .map(|response| {
+        let refused = response.get("error").is_some()
+            || response
+                .get("result")
+                .and_then(|result| result.get("isError"))
+                .and_then(Value::as_bool)
+                == Some(true);
+        (!refused).then_some(CheckReason::ProtocolUnknownToolAccepted)
+    });
+    results.push((CheckId::ProtocolUnknownTool, unknown_tool.unwrap_or(failed)));
+    let pagination = ProbeCase::Pagination {
+        id: "standard-pagination".into(),
+        access: Access::ReadOnly,
+        max_pages: MAX_PAGES as u64,
+    };
+    results.push((
+        CheckId::ProtocolPagination,
+        reason_of(client, target, catalog, &pagination, |_| {
+            CheckReason::ProtocolPaginationInvalid
+        }),
+    ));
+    let declares_surfaces = client
+        .as_ref()
+        .and_then(ProbeClient::capabilities)
+        .is_some_and(|capabilities| {
+            capabilities.get("resources").is_some() || capabilities.get("prompts").is_some()
+        });
+    if declares_surfaces {
+        let surfaces = ProbeCase::SurfaceListing {
+            id: "standard-surfaces".into(),
+            access: Access::ReadOnly,
+            max_pages: MAX_PAGES as u64,
+        };
+        results.push((
+            CheckId::ProtocolSurfaces,
+            reason_of(client, target, catalog, &surfaces, |_| {
+                CheckReason::ProtocolSurfaceInvalid
+            }),
+        ));
+    }
+    let negotiation = ProbeCase::ProtocolNegotiation {
+        id: "standard-negotiation".into(),
+        access: Access::ReadOnly,
+        bogus_version: "2000-01-01".into(),
+    };
+    results.push((
+        CheckId::ProtocolNegotiation,
+        reason_of(
+            client,
+            target,
+            catalog,
+            &negotiation,
+            |reason| match reason {
+                FailureReason::NegotiationEchoedUnknown => {
+                    CheckReason::ProtocolNegotiationEchoedUnknown
+                }
+                FailureReason::NegotiationInconsistentSupport => {
+                    CheckReason::ProtocolNegotiationInconsistentSupport
+                }
+                _ => CheckReason::ProtocolNegotiationInvalidVersion,
+            },
+        ),
+    ));
+    results
+}
+
+/// One raw request; None when it did not complete, after which the next
+/// request starts on a fresh connection.
+fn raw(
+    client: &mut Option<ProbeClient>,
+    target: &ClientTarget,
+    method: &str,
+    params: Value,
+) -> Option<Value> {
+    if client.is_none() {
+        *client = connect(target).ok();
+    }
+    let response = client.as_mut()?.raw_request(method, params);
+    if response.is_err() {
+        *client = connect(target).ok();
+    }
+    response.ok()
+}
+
+/// Run a reused probe case; its failure maps to a check reason.
+fn reason_of(
+    client: &mut Option<ProbeClient>,
+    target: &ClientTarget,
+    catalog: &ToolCatalog,
+    case: &ProbeCase,
+    map: impl Fn(FailureReason) -> CheckReason,
+) -> Option<CheckReason> {
+    if client.is_none() {
+        *client = connect(target).ok();
+    }
+    let Some(active) = client.as_mut() else {
+        return Some(CheckReason::ProtocolCallFailed);
+    };
+    match crate::probe::run_unjournaled(case, active, catalog, target, Some(CALL_TIMEOUT)) {
+        Ok(report) => match report.reason {
+            None => None,
+            Some(reason) if reason.is_transport() => Some(CheckReason::ProtocolCallFailed),
+            Some(reason) => Some(map(reason)),
+        },
+        Err(_) => {
+            *client = connect(target).ok();
+            Some(CheckReason::ProtocolCallFailed)
         }
     }
 }

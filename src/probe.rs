@@ -108,13 +108,6 @@ impl ProbeClient {
         }
     }
 
-    fn list_tools(&mut self) -> anyhow::Result<Vec<String>> {
-        match self {
-            Self::Stdio(client) => client.list_tools(),
-            Self::Http(client) => client.list_tools(),
-        }
-    }
-
     fn list_tools_catalog(&mut self) -> anyhow::Result<ToolCatalog> {
         match self {
             Self::Stdio(client) => client.list_tools_catalog(),
@@ -1342,8 +1335,7 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
     let worker = std::thread::spawn(move || -> anyhow::Result<(ToolResponse, u64)> {
         let mut client = target.connect(timeout)?;
         client.initialize()?;
-        let tools = client.list_tools()?;
-        if !tools.iter().any(|name| name == &worker_tool) {
+        if !lists_tool(&mut client, &worker_tool)? {
             bail!("contended client is missing the probe tool");
         }
         ready_tx
@@ -1351,14 +1343,22 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
             .map_err(|_| anyhow::anyhow!("contention coordinator closed"))?;
         worker_barrier.wait();
         let started = Instant::now();
-        let response = client.call_tool(&worker_tool, &worker_arguments)?;
+        let response = call_declining(&mut client, &worker_tool, &worker_arguments)?;
         Ok((response, started.elapsed().as_millis() as u64))
     });
     ready_rx
         .recv_timeout(std::time::Duration::from_secs(30))
         .map_err(|_| anyhow::anyhow!("contended client failed to initialize"))?;
     barrier.wait();
-    let primary = call_named_and_record(&tool, &arguments, context)?;
+    let started = Instant::now();
+    let primary = call_declining(context.client, &tool, &arguments)?;
+    record_response(
+        &tool,
+        &arguments,
+        started.elapsed().as_millis() as u64,
+        &primary,
+        context,
+    )?;
     let (secondary, latency_ms) = worker
         .join()
         .map_err(|_| anyhow::anyhow!("contended client terminated unexpectedly"))??;
@@ -1369,6 +1369,58 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
     } else {
         Ok(failed_case(case, 2, FailureReason::ContendedClientFailed))
     }
+}
+
+/// A `tools/call` that declines any request the server sends before it
+/// answers, as a client without sampling or elicitation does.
+fn call_declining(
+    client: &mut ProbeClient,
+    tool: &str,
+    arguments: &Value,
+) -> anyhow::Result<ToolResponse> {
+    let (response, _) = client.call_tool_observing(
+        tool,
+        arguments,
+        &mut |_, _| None,
+        crate::standard::MAX_SERVER_REQUESTS,
+    )?;
+    Ok(response)
+}
+
+/// Whether `tool` is listed on any `tools/list` page, following cursors up
+/// to the standard's page bound.
+fn lists_tool(client: &mut ProbeClient, tool: &str) -> anyhow::Result<bool> {
+    let mut cursor: Option<String> = None;
+    for _ in 0..crate::standard::MAX_PAGES {
+        let params = match &cursor {
+            Some(cursor) => json!({"cursor": cursor}),
+            None => json!({}),
+        };
+        let response = client.raw_request("tools/list", params)?;
+        let result = response
+            .get("result")
+            .context("tools/list returned an error")?;
+        let listed = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| entry.get("name").and_then(Value::as_str) == Some(tool))
+            });
+        if listed {
+            return Ok(true);
+        }
+        cursor = result
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .filter(|cursor| !cursor.is_empty())
+            .map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(false)
 }
 
 fn run_error_honesty(
@@ -1754,9 +1806,11 @@ fn run_payload_bounds(
         Value::String("a".repeat(size_bytes as usize)),
     );
     let started = Instant::now();
-    let outcome = context
-        .client
-        .call_tool(case.tool().expect("payload case has a tool"), &arguments);
+    let outcome = call_declining(
+        context.client,
+        case.tool().expect("payload case has a tool"),
+        &arguments,
+    );
     let latency_ms = started.elapsed().as_millis() as u64;
     let (response, reason) = match outcome {
         // The transport died: crash, hang, or non-JSON output under load.
@@ -2002,7 +2056,10 @@ fn outcome_had_failure(outcome: crate::mcp_client::CancellationOutcome) -> Optio
 }
 
 /// Protocol-negotiation probe: three handshakes assert version selection.
-/// (1) A fresh handshake with the supported version must echo it. (2) A
+/// (1) A fresh handshake with the supported version must echo it, or answer
+/// with another date-shaped version the server supports (the MCP lifecycle
+/// lets a server that does not speak the requested version answer with its
+/// own), which must itself be echoed on a further handshake. (2) A
 /// fresh handshake with an unknown date-shaped version must answer with a
 /// date-shaped, non-echoed version (the spec: respond with the server's
 /// latest supported version, never the requested one). (3) The version
@@ -2019,25 +2076,34 @@ fn run_protocol_negotiation(
     let supported = crate::http_client::PROTOCOL_VERSION;
     let client = &mut context.client;
     let attempts = 3;
-    // (1) The supported version must be echoed verbatim.
-    let supported_reply = client.initialize_raw(supported)?;
-    let echoed = supported_reply
-        .get("result")
-        .and_then(|result| result.get("protocolVersion"))
-        .and_then(Value::as_str);
-    if echoed != Some(supported) {
+    let version_of = |reply: &Value| {
+        reply
+            .get("result")
+            .and_then(|result| result.get("protocolVersion"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    // (1) The supported version is echoed, or answered with another
+    //     supported version that is itself echoed.
+    let answered = version_of(&client.initialize_raw(supported)?);
+    let Some(answered) = answered.filter(|version| is_date_shaped(version)) else {
         return Ok(failed_case(
             case,
             1,
             FailureReason::NegotiationInvalidVersion,
         ));
+    };
+    if answered != supported
+        && version_of(&client.initialize_raw(&answered)?).as_deref() != Some(answered.as_str())
+    {
+        return Ok(failed_case(
+            case,
+            1,
+            FailureReason::NegotiationInconsistentSupport,
+        ));
     }
     // (2) The unknown version must not be echoed back.
-    let unknown_reply = client.initialize_raw(bogus_version)?;
-    let negotiated = unknown_reply
-        .get("result")
-        .and_then(|result| result.get("protocolVersion"))
-        .and_then(Value::as_str);
+    let negotiated = version_of(&client.initialize_raw(bogus_version)?);
     let Some(negotiated) = negotiated else {
         return Ok(failed_case(
             case,
@@ -2052,7 +2118,7 @@ fn run_protocol_negotiation(
             FailureReason::NegotiationEchoedUnknown,
         ));
     }
-    if !is_date_shaped(negotiated) {
+    if !is_date_shaped(&negotiated) {
         return Ok(failed_case(
             case,
             2,
@@ -2060,12 +2126,7 @@ fn run_protocol_negotiation(
         ));
     }
     // (3) The claimed version must actually be supported.
-    let claimed_reply = client.initialize_raw(negotiated)?;
-    let claimed_echo = claimed_reply
-        .get("result")
-        .and_then(|result| result.get("protocolVersion"))
-        .and_then(Value::as_str);
-    if claimed_echo != Some(negotiated) {
+    if version_of(&client.initialize_raw(&negotiated)?).as_deref() != Some(negotiated.as_str()) {
         return Ok(failed_case(
             case,
             3,

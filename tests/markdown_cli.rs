@@ -141,7 +141,10 @@ fn json_report_carries_the_readiness_object() {
         .iter()
         .map(|area| area["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["catalog", "context", "reliability", "coverage"]);
+    assert_eq!(
+        names,
+        ["protocol", "catalog", "context", "reliability", "coverage"]
+    );
 }
 
 #[test]

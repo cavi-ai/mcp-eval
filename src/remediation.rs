@@ -319,5 +319,41 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
              without parsing prose"
         }
         CheckReason::CatalogNoTools => "the server lists no tools",
+        CheckReason::ProtocolNegotiationEchoedUnknown => {
+            "initialize echoed a protocol version the server does not support; answer an \
+             unsupported version with the latest version the server does support"
+        }
+        CheckReason::ProtocolNegotiationInvalidVersion => {
+            "initialize answered without a date-shaped protocolVersion; answer with a \
+             YYYY-MM-DD version the server supports"
+        }
+        CheckReason::ProtocolNegotiationInconsistentSupport => {
+            "the server answered with a protocol version it then would not negotiate; only \
+             answer with versions the server accepts"
+        }
+        CheckReason::ProtocolUnknownMethodAnswered => {
+            "an unknown JSON-RPC method got a result; answer unknown methods with error -32601 \
+             (method not found)"
+        }
+        CheckReason::ProtocolPingFailed => {
+            "ping did not return a result; answer ping with an empty result object"
+        }
+        CheckReason::ProtocolUnknownToolAccepted => {
+            "tools/call with an unknown tool name succeeded; refuse unknown tools with a \
+             JSON-RPC error or an isError result"
+        }
+        CheckReason::ProtocolPaginationInvalid => {
+            "tools/list paging returned an error or an invalid entry, repeated a tool, or never \
+             ended its cursor; page with finite cursors and list each tool once with a name and \
+             an inputSchema object"
+        }
+        CheckReason::ProtocolSurfaceInvalid => {
+            "a declared resources or prompts capability did not list cleanly; list what the \
+             capability declares, or stop declaring it"
+        }
+        CheckReason::ProtocolCallFailed => {
+            "a protocol request timed out, closed the connection, or broke the exchange; answer \
+             every request within 10 seconds without ending the session"
+        }
     }
 }

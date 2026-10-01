@@ -6,9 +6,9 @@
 
 - `readiness` is an absolute score under `mcpeval-standard/1-draft`: after
   the manifest's cases, a read-only standard battery scores the server's
-  whole catalog on fixed curves (catalog, context, reliability, coverage).
-  Surface it cannot test counts against the score. The manifest is the
-  gate: it alone sets `passed` and the exit code.
+  whole catalog on fixed curves (protocol, catalog, context, reliability,
+  coverage). Surface it cannot test counts against the score. The manifest
+  is the gate: it alone sets `passed` and the exit code.
 - Probe reports are `mcpeval.probe-report/v2` (`gate`, `readiness` with
   areas and lost checks, `readiness_error`); diffs are
   `mcpeval.probe-diff/v2`. `report` and `diff` still read v1 documents.
@@ -34,9 +34,19 @@
 - `mcpeval-demo --broken undescribed`: 20-character descriptions and
   undescribed input properties.
 - Text and markdown reports print each lost check's hint once per reason.
+- Readiness protocol area: unknown methods answer -32601, `ping` answers,
+  unknown tools are refused, `tools/list` pages cleanly, declared
+  resources and prompts list cleanly, and version negotiation holds.
+- `mcpeval-demo --broken unknown-method`: unknown methods answer a result.
+  The clean demo answers `ping` and unknown methods with -32601.
 
 ### Fixed
 
+- `protocol-negotiation` no longer fails a server that answers the
+  supported version with an older version it supports.
+- `payload-bounds` and `contention` decline requests a tool sends before
+  it answers, instead of failing the case; `contention`'s second client
+  finds a tool listed on a later `tools/list` page.
 - `mcpeval-demo` tracks replies to its mid-call sampling and elicitation
   requests under every `--broken` aspect. Under the other aspects the reply
   was answered as a new request and broke the next call.

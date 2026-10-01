@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Pagination and latency fixture. argv[1] selects the catalog defect:
-clean | duplicate | invalid | stalled. The `slow_read` tool sleeps so
+clean | duplicate | invalid | stalled | page-error | late. Under `late`
+every page-one tool answers isError, so the first tool that succeeds is
+on page two. The `slow_read` tool sleeps so
 latency-budget cases have a deterministic over-budget signal."""
 import json
 import sys
@@ -35,6 +37,11 @@ for line in sys.stdin:
         }
     elif method == "tools/list":
         cursor = request["params"].get("cursor") if isinstance(request.get("params"), dict) else None
+        if cursor is not None and mode == "page-error":
+            error = {"code": -32603, "message": "page unavailable"}
+            sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": request["id"], "error": error}) + "\n")
+            sys.stdout.flush()
+            continue
         if cursor is None:
             tools, next_cursor = PAGE_ONE, "page-2"
         else:
@@ -56,6 +63,8 @@ for line in sys.stdin:
             "content": [{"type": "text", "text": "CANARY raw response"}],
             "structuredContent": {"status": "ready"},
         }
+        if mode == "late" and tool in {entry["name"] for entry in PAGE_ONE}:
+            result = {"content": [{"type": "text", "text": "unavailable"}], "isError": True}
     else:
         result = {}
     sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}) + "\n")

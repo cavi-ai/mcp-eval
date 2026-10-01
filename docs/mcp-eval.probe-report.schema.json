@@ -380,6 +380,7 @@
       "properties": {
         "name": {
           "enum": [
+            "protocol",
             "catalog",
             "context",
             "reliability",
@@ -436,7 +437,13 @@
             "catalog.read-only-declared",
             "catalog.destructive-declared",
             "catalog.output-schema",
-            "catalog.empty"
+            "catalog.empty",
+            "protocol.negotiation",
+            "protocol.unknown-method",
+            "protocol.ping",
+            "protocol.unknown-tool",
+            "protocol.pagination",
+            "protocol.surfaces"
           ]
         },
         "tool": {
@@ -478,7 +485,16 @@
             "catalog-read-only-undeclared",
             "catalog-destructive-undeclared",
             "catalog-no-output-schema",
-            "catalog-no-tools"
+            "catalog-no-tools",
+            "protocol-negotiation-echoed-unknown",
+            "protocol-negotiation-invalid-version",
+            "protocol-negotiation-inconsistent-support",
+            "protocol-unknown-method-answered",
+            "protocol-ping-failed",
+            "protocol-unknown-tool-accepted",
+            "protocol-pagination-invalid",
+            "protocol-surface-invalid",
+            "protocol-call-failed"
           ]
         },
         "hint": {

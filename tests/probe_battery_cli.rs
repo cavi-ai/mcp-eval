@@ -181,3 +181,62 @@ fn new_probes_respect_the_share_safe_boundary() {
         );
     }
 }
+
+#[test]
+fn the_gate_sees_every_tools_list_page() {
+    // gamma_reset is listed only on the fixture's second page.
+    let dir = home();
+    let manifest = dir.join("paged.json");
+    std::fs::write(
+        &manifest,
+        r#"{"version":1,"probes":[
+            {"id":"both","probe":"contention","tool":"gamma_reset","access":"read_only","arguments":{}},
+            {"id":"size","probe":"discovery-cost","access":"read_only","max_tools":50,"max_schema_bytes":100000}
+        ]}"#,
+    )
+    .unwrap();
+    let output = Command::new(bin())
+        .args(["probe", "--server", "fixture", "--gate-only", "--manifest"])
+        .arg(&manifest)
+        .args(["--", "python3", PAGED])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(
+        output.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(stdout.contains("both contention pass"), "{stdout}");
+    assert!(
+        stdout.contains("size discovery-cost pass attempts=1 tools=5 "),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn init_scaffolds_tools_from_every_page() {
+    let dir = home();
+    let output = Command::new(bin())
+        .args([
+            "init",
+            "--server",
+            "fixture",
+            "--confirm-read-only",
+            "--dry-run",
+            "--",
+        ])
+        .args(["python3", PAGED])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(output.status.success(), "{stdout}");
+    for tool in ["alpha_read", "gamma_reset", "delta_slow"] {
+        assert!(
+            stdout.contains(&format!("{tool}  candidate (attested)")),
+            "{tool}: {stdout}"
+        );
+    }
+}

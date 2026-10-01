@@ -119,6 +119,72 @@ pub(crate) fn tool_definition(tool: &Value) -> anyhow::Result<ToolDefinition> {
     })
 }
 
+/// `tools/list` pages followed before the catalog is taken as complete.
+pub const MAX_TOOL_PAGES: usize = 20;
+
+/// Every distinct tool over at most [`MAX_TOOL_PAGES`] `tools/list` pages,
+/// each name once (the first listing wins). `request` sends one
+/// `tools/list` with the given params and returns the response envelope. A
+/// first page that fails is an error; a later page that fails (an error, a
+/// malformed envelope, or an invalid entry) ends the catalog with what was
+/// listed, for the pagination probe to report. `encoded_bytes` sizes the
+/// catalog as one compact tools array.
+pub(crate) fn page_catalog(
+    mut request: impl FnMut(Value) -> anyhow::Result<Value>,
+) -> anyhow::Result<ToolCatalog> {
+    let mut entries: Vec<Value> = Vec::new();
+    let mut tools: Vec<ToolDefinition> = Vec::new();
+    let mut cursor: Option<String> = None;
+    for page in 0..MAX_TOOL_PAGES {
+        let params = match &cursor {
+            Some(cursor) => json!({"cursor": cursor}),
+            None => json!({}),
+        };
+        let (listed, next) = match request(params).and_then(|response| parse_page(&response)) {
+            Ok(listed) => listed,
+            Err(error) if page == 0 => return Err(error),
+            Err(_) => break,
+        };
+        for (entry, tool) in listed {
+            if !tools.iter().any(|seen| seen.name == tool.name) {
+                entries.push(entry);
+                tools.push(tool);
+            }
+        }
+        cursor = next;
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(ToolCatalog {
+        encoded_bytes: serde_json::to_vec(&entries)?.len(),
+        tools,
+    })
+}
+
+/// One `tools/list` page: each raw entry with its parsed definition, and
+/// the next cursor.
+type Page = (Vec<(Value, ToolDefinition)>, Option<String>);
+
+fn parse_page(response: &Value) -> anyhow::Result<Page> {
+    let result = response
+        .get("result")
+        .context("tools/list returned an error")?;
+    let listed = result
+        .get("tools")
+        .and_then(Value::as_array)
+        .context("tools/list response is missing tools")?
+        .iter()
+        .map(|entry| Ok((entry.clone(), tool_definition(entry)?)))
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let next = result
+        .get("nextCursor")
+        .and_then(Value::as_str)
+        .filter(|cursor| !cursor.is_empty())
+        .map(str::to_owned);
+    Ok((listed, next))
+}
+
 #[derive(Debug)]
 pub struct ToolCatalog {
     pub tools: Vec<ToolDefinition>,
@@ -340,22 +406,9 @@ impl McpClient {
             .collect())
     }
 
+    /// The whole catalog, every page; see [`page_catalog`].
     pub fn list_tools_catalog(&mut self) -> anyhow::Result<ToolCatalog> {
-        let response = self.request("tools/list", json!({}))?;
-        let tools = response
-            .get("result")
-            .and_then(|result| result.get("tools"))
-            .and_then(Value::as_array)
-            .context("tools/list response is missing tools")?;
-        let encoded_bytes = serde_json::to_vec(tools)?.len();
-        let tools = tools
-            .iter()
-            .map(tool_definition)
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        Ok(ToolCatalog {
-            tools,
-            encoded_bytes,
-        })
+        page_catalog(|params| self.request("tools/list", params))
     }
 
     pub fn call_tool(&mut self, tool: &str, arguments: &Value) -> anyhow::Result<ToolResponse> {
@@ -668,6 +721,114 @@ pub fn classify_tool_response(response: &Value) -> anyhow::Result<ToolResponse> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(name: &str) -> Value {
+        json!({"name": name, "inputSchema": {"type": "object"}})
+    }
+
+    /// A lister over canned pages, keyed by cursor; counts requests.
+    fn pages(
+        pages: Vec<(Option<&'static str>, Value)>,
+    ) -> (
+        impl FnMut(Value) -> anyhow::Result<Value>,
+        std::rc::Rc<std::cell::Cell<usize>>,
+    ) {
+        let requests = std::rc::Rc::new(std::cell::Cell::new(0));
+        let counter = requests.clone();
+        let request = move |params: Value| {
+            counter.set(counter.get() + 1);
+            let cursor = params
+                .get("cursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            pages
+                .iter()
+                .find(|(key, _)| key.map(str::to_owned) == cursor)
+                .map(|(_, page)| page.clone())
+                .context("no such page")
+        };
+        (request, requests)
+    }
+
+    #[test]
+    fn the_catalog_spans_every_page_once() {
+        let (request, _) = pages(vec![
+            (
+                None,
+                json!({"result": {"tools": [entry("a"), entry("b")], "nextCursor": "2"}}),
+            ),
+            (
+                Some("2"),
+                json!({"result": {"tools": [entry("b"), entry("c")]}}),
+            ),
+        ]);
+        let catalog = page_catalog(request).unwrap();
+        let names: Vec<&str> = catalog
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect();
+        assert_eq!(names, ["a", "b", "c"]);
+        // Sized as one compact tools array: a single page measures exactly
+        // as the unpaged listing did.
+        let array = json!([entry("a"), entry("b"), entry("c")]);
+        assert_eq!(
+            catalog.encoded_bytes,
+            serde_json::to_vec(&array).unwrap().len()
+        );
+        let (request, _) = pages(vec![(None, json!({"result": {"tools": [entry("a")]}}))]);
+        assert_eq!(
+            page_catalog(request).unwrap().encoded_bytes,
+            serde_json::to_vec(&json!([entry("a")])).unwrap().len()
+        );
+    }
+
+    #[test]
+    fn a_failed_later_page_ends_the_catalog_and_a_failed_first_page_fails() {
+        let (request, _) = pages(vec![
+            (
+                None,
+                json!({"result": {"tools": [entry("a")], "nextCursor": "2"}}),
+            ),
+            (
+                Some("2"),
+                json!({"error": {"code": -32603, "message": "boom"}}),
+            ),
+        ]);
+        assert_eq!(page_catalog(request).unwrap().tools.len(), 1);
+        let (request, _) = pages(vec![
+            (
+                None,
+                json!({"result": {"tools": [entry("a")], "nextCursor": "2"}}),
+            ),
+            (
+                Some("2"),
+                json!({"result": {"tools": [{"name": "no schema"}]}}),
+            ),
+        ]);
+        assert_eq!(page_catalog(request).unwrap().tools.len(), 1);
+        let (request, _) = pages(vec![(
+            None,
+            json!({"error": {"code": -32603, "message": "boom"}}),
+        )]);
+        assert!(page_catalog(request).is_err());
+    }
+
+    #[test]
+    fn an_endless_cursor_stops_at_the_page_bound() {
+        let (request, requests) = pages(vec![
+            (
+                None,
+                json!({"result": {"tools": [entry("a")], "nextCursor": "x"}}),
+            ),
+            (
+                Some("x"),
+                json!({"result": {"tools": [], "nextCursor": "x"}}),
+            ),
+        ]);
+        assert_eq!(page_catalog(request).unwrap().tools.len(), 1);
+        assert_eq!(requests.get(), MAX_TOOL_PAGES);
+    }
 
     #[test]
     fn tool_definition_reads_annotations_and_sizes_the_entry() {

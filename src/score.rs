@@ -25,9 +25,13 @@ pub const TOOL_ZERO_TOKENS: u64 = 5_000;
 /// Share of the context area carried by the catalog total; the heaviest
 /// tool carries the rest.
 const CATALOG_SHARE: f64 = 0.75;
+/// A description shorter than this does not tell an agent what the tool
+/// does, when to use it, and what it returns.
+pub const DESCRIPTION_MIN_CHARS: usize = 40;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Area {
+    Catalog,
     Context,
     Reliability,
     Coverage,
@@ -35,10 +39,16 @@ pub enum Area {
 
 impl Area {
     /// Every area of the standard, in report order.
-    pub const ALL: &'static [Area] = &[Area::Context, Area::Reliability, Area::Coverage];
+    pub const ALL: &'static [Area] = &[
+        Area::Catalog,
+        Area::Context,
+        Area::Reliability,
+        Area::Coverage,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Catalog => "catalog",
             Self::Context => "context",
             Self::Reliability => "reliability",
             Self::Coverage => "coverage",
@@ -48,6 +58,7 @@ impl Area {
     /// Weight in the overall score; standard/1's six areas sum to 100.
     pub fn weight(self) -> u64 {
         match self {
+            Self::Catalog => 20,
             Self::Context => 15,
             Self::Reliability => 20,
             Self::Coverage => 15,
@@ -73,6 +84,13 @@ pub enum CheckId {
     ReliabilityPayload,
     ReliabilityNoneExercised,
     CoverageExercised,
+    CatalogDescription,
+    CatalogParamsDescribed,
+    CatalogParamsTyped,
+    CatalogReadOnlyDeclared,
+    CatalogDestructiveDeclared,
+    CatalogOutputSchema,
+    CatalogEmpty,
 }
 
 impl CheckId {
@@ -86,6 +104,13 @@ impl CheckId {
         Self::ReliabilityPayload,
         Self::ReliabilityNoneExercised,
         Self::CoverageExercised,
+        Self::CatalogDescription,
+        Self::CatalogParamsDescribed,
+        Self::CatalogParamsTyped,
+        Self::CatalogReadOnlyDeclared,
+        Self::CatalogDestructiveDeclared,
+        Self::CatalogOutputSchema,
+        Self::CatalogEmpty,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -99,6 +124,13 @@ impl CheckId {
             Self::ReliabilityPayload => "reliability.payload",
             Self::ReliabilityNoneExercised => "reliability.none-exercised",
             Self::CoverageExercised => "coverage.exercised",
+            Self::CatalogDescription => "catalog.description",
+            Self::CatalogParamsDescribed => "catalog.params-described",
+            Self::CatalogParamsTyped => "catalog.params-typed",
+            Self::CatalogReadOnlyDeclared => "catalog.read-only-declared",
+            Self::CatalogDestructiveDeclared => "catalog.destructive-declared",
+            Self::CatalogOutputSchema => "catalog.output-schema",
+            Self::CatalogEmpty => "catalog.empty",
         }
     }
 
@@ -122,6 +154,13 @@ pub enum CheckReason {
     CoverageRejectedArguments,
     CoverageCallFailed,
     NoReadOnlyTools,
+    CatalogShortDescription,
+    CatalogUndescribedParams,
+    CatalogUntypedParams,
+    CatalogReadOnlyUndeclared,
+    CatalogDestructiveUndeclared,
+    CatalogNoOutputSchema,
+    CatalogNoTools,
 }
 
 impl CheckReason {
@@ -139,6 +178,13 @@ impl CheckReason {
         Self::CoverageRejectedArguments,
         Self::CoverageCallFailed,
         Self::NoReadOnlyTools,
+        Self::CatalogShortDescription,
+        Self::CatalogUndescribedParams,
+        Self::CatalogUntypedParams,
+        Self::CatalogReadOnlyUndeclared,
+        Self::CatalogDestructiveUndeclared,
+        Self::CatalogNoOutputSchema,
+        Self::CatalogNoTools,
     ];
 
     pub fn as_str(self) -> &'static str {
@@ -156,6 +202,13 @@ impl CheckReason {
             Self::CoverageRejectedArguments => "coverage-rejected-arguments",
             Self::CoverageCallFailed => "coverage-call-failed",
             Self::NoReadOnlyTools => "no-read-only-tools",
+            Self::CatalogShortDescription => "catalog-short-description",
+            Self::CatalogUndescribedParams => "catalog-undescribed-params",
+            Self::CatalogUntypedParams => "catalog-untyped-params",
+            Self::CatalogReadOnlyUndeclared => "catalog-read-only-undeclared",
+            Self::CatalogDestructiveUndeclared => "catalog-destructive-undeclared",
+            Self::CatalogNoOutputSchema => "catalog-no-output-schema",
+            Self::CatalogNoTools => "catalog-no-tools",
         }
     }
 
@@ -230,6 +283,7 @@ pub fn fold(observations: &Observations) -> Readiness {
     let areas: Vec<AreaScore> = Area::ALL
         .iter()
         .map(|area| match area {
+            Area::Catalog => catalog(&observations.tools),
             Area::Context => context(&observations.tools),
             Area::Reliability => reliability(observations),
             Area::Coverage => coverage(&observations.tools),
@@ -299,6 +353,85 @@ fn read_only_surface(tools: &[ToolObservation]) -> usize {
         .iter()
         .filter(|tool| tool.class != ToolClass::Writer)
         .count()
+}
+
+/// Per tool, the share of its applicable checks it passes; the area is the
+/// mean over the catalog. Parameter checks apply only to tools with input
+/// properties, the destructiveHint check only to writers.
+fn catalog(tools: &[ToolObservation]) -> AreaScore {
+    let mut checks = Vec::new();
+    if tools.is_empty() {
+        checks.extend(lost(
+            CheckId::CatalogEmpty,
+            None,
+            0.0,
+            None,
+            CheckReason::CatalogNoTools,
+        ));
+        return AreaScore {
+            area: Area::Catalog,
+            score: 0,
+            checks,
+            measurements: serde_json::Map::new(),
+        };
+    }
+    let mut fractions = Vec::with_capacity(tools.len());
+    for tool in tools {
+        let facts = &tool.catalog;
+        let mut results: Vec<(bool, CheckId, CheckReason, Option<u64>)> = vec![(
+            facts.description_chars >= DESCRIPTION_MIN_CHARS,
+            CheckId::CatalogDescription,
+            CheckReason::CatalogShortDescription,
+            Some(facts.description_chars as u64),
+        )];
+        if facts.properties > 0 {
+            results.push((
+                facts.described_properties == facts.properties,
+                CheckId::CatalogParamsDescribed,
+                CheckReason::CatalogUndescribedParams,
+                None,
+            ));
+            results.push((
+                facts.typed_properties == facts.properties,
+                CheckId::CatalogParamsTyped,
+                CheckReason::CatalogUntypedParams,
+                None,
+            ));
+        }
+        results.push((
+            facts.read_only_declared,
+            CheckId::CatalogReadOnlyDeclared,
+            CheckReason::CatalogReadOnlyUndeclared,
+            None,
+        ));
+        if tool.class == ToolClass::Writer {
+            results.push((
+                facts.destructive_declared,
+                CheckId::CatalogDestructiveDeclared,
+                CheckReason::CatalogDestructiveUndeclared,
+                None,
+            ));
+        }
+        results.push((
+            facts.output_schema,
+            CheckId::CatalogOutputSchema,
+            CheckReason::CatalogNoOutputSchema,
+            None,
+        ));
+        let passed = results.iter().filter(|(passed, ..)| *passed).count();
+        fractions.push(100.0 * passed as f64 / results.len() as f64);
+        for (passed, id, reason, observed) in results {
+            if !passed {
+                checks.extend(lost(id, Some(tool.name.as_str()), 0.0, observed, reason));
+            }
+        }
+    }
+    AreaScore {
+        area: Area::Catalog,
+        score: round(fractions.iter().sum::<f64>() / fractions.len() as f64),
+        checks,
+        measurements: serde_json::Map::new(),
+    }
 }
 
 fn context(tools: &[ToolObservation]) -> AreaScore {
@@ -657,7 +790,7 @@ mod tests {
     use super::*;
     use crate::manifest::ProbeKind;
     use crate::probe::{CaseReport, FailureReason};
-    use crate::standard::{Exercise, Observations, ToolClass, ToolObservation};
+    use crate::standard::{CatalogFacts, Exercise, Observations, ToolClass, ToolObservation};
 
     fn tool(
         name: &str,
@@ -670,6 +803,25 @@ mod tests {
             tokens,
             class,
             exercise,
+            catalog: CatalogFacts::default(),
+        }
+    }
+
+    fn facts(
+        description_chars: usize,
+        properties: usize,
+        described: usize,
+        read_only_declared: bool,
+        destructive_declared: bool,
+    ) -> CatalogFacts {
+        CatalogFacts {
+            description_chars,
+            properties,
+            described_properties: described,
+            typed_properties: properties,
+            read_only_declared,
+            destructive_declared,
+            output_schema: false,
         }
     }
 
@@ -691,21 +843,40 @@ mod tests {
 
     /// The clean demo as the standard sees it (the plan's derivation).
     fn clean_demo() -> Observations {
-        let read = |name: &str, tokens| tool(name, tokens, ToolClass::ReadOnly, exercised(true, 1));
+        let read = |name: &str, tokens, catalog| ToolObservation {
+            catalog,
+            ..tool(name, tokens, ToolClass::ReadOnly, exercised(true, 1))
+        };
+        let with = |observation: ToolObservation, catalog| ToolObservation {
+            catalog,
+            ..observation
+        };
         Observations {
             tools: vec![
-                read("describe_status", 40),
-                read("read_counter", 40),
-                read("shared_read", 56),
-                tool("flaky_read", 45, ToolClass::ReadOnly, exercised(false, 1)),
-                tool("slow_read", 40, ToolClass::ReadOnly, exercised(true, 402)),
-                tool("break_session", 40, ToolClass::Writer, None),
-                tool("recover_session", 45, ToolClass::Writer, None),
-                read("session_status", 45),
-                read("report_weather", 56),
-                read("sampled_read", 50),
-                read("elicited_read", 49),
-                read("publish_status", 50),
+                read("describe_status", 40, facts(37, 0, 0, true, false)),
+                read("read_counter", 40, facts(47, 0, 0, true, false)),
+                read("shared_read", 56, facts(42, 1, 1, true, false)),
+                with(
+                    tool("flaky_read", 45, ToolClass::ReadOnly, exercised(false, 1)),
+                    facts(63, 0, 0, true, false),
+                ),
+                with(
+                    tool("slow_read", 40, ToolClass::ReadOnly, exercised(true, 402)),
+                    facts(45, 0, 0, true, false),
+                ),
+                with(
+                    tool("break_session", 40, ToolClass::Writer, None),
+                    facts(38, 0, 0, false, true),
+                ),
+                with(
+                    tool("recover_session", 45, ToolClass::Writer, None),
+                    facts(42, 0, 0, true, true),
+                ),
+                read("session_status", 45, facts(53, 0, 0, true, false)),
+                read("report_weather", 56, facts(47, 1, 1, true, false)),
+                read("sampled_read", 50, facts(72, 0, 0, true, false)),
+                read("elicited_read", 49, facts(70, 0, 0, true, false)),
+                read("publish_status", 50, facts(60, 0, 0, true, false)),
             ],
             attested_read_only: false,
             contention: Some(true),
@@ -796,10 +967,11 @@ mod tests {
     fn the_clean_demo_folds_to_its_pinned_score() {
         let readiness = fold(&clean_demo());
         assert_eq!(readiness.standard, STANDARD);
+        assert_eq!(area(&readiness, Area::Catalog).score, 63);
         assert_eq!(area(&readiness, Area::Context).score, 100);
         assert_eq!(area(&readiness, Area::Reliability).score, 94);
         assert_eq!(area(&readiness, Area::Coverage).score, 100);
-        assert_eq!(readiness.score, 98);
+        assert_eq!(readiness.score, 88);
         assert_eq!(
             readiness.surface,
             Surface {
@@ -809,9 +981,11 @@ mod tests {
                 exercised: 10
             }
         );
+        // The catalog's checks are pinned by the catalog test.
         let lost: Vec<(CheckId, Option<&str>, u64)> = readiness
             .areas
             .iter()
+            .filter(|area| area.area != Area::Catalog)
             .flat_map(|area| &area.checks)
             .map(|check| (check.id, check.tool.as_deref(), check.score))
             .collect();
@@ -825,6 +999,114 @@ mod tests {
     }
 
     #[test]
+    fn catalog_is_the_mean_of_per_tool_check_fractions() {
+        // The clean demo's catalog (plan: .tmp/score/demo_catalog.py) = 63.
+        let readiness = fold(&clean_demo());
+        let catalog = area(&readiness, Area::Catalog);
+        assert_eq!(catalog.score, 63);
+        let lost = |id, tool: &str, observed, reason| Check {
+            id,
+            tool: Some(tool.into()),
+            score: 0,
+            observed,
+            reason,
+        };
+        let no_schema = |tool| {
+            lost(
+                CheckId::CatalogOutputSchema,
+                tool,
+                None,
+                CheckReason::CatalogNoOutputSchema,
+            )
+        };
+        let mut expected = vec![
+            lost(
+                CheckId::CatalogDescription,
+                "describe_status",
+                Some(37),
+                CheckReason::CatalogShortDescription,
+            ),
+            no_schema("describe_status"),
+        ];
+        expected.extend(["read_counter", "shared_read", "flaky_read", "slow_read"].map(no_schema));
+        expected.extend([
+            lost(
+                CheckId::CatalogDescription,
+                "break_session",
+                Some(38),
+                CheckReason::CatalogShortDescription,
+            ),
+            lost(
+                CheckId::CatalogReadOnlyDeclared,
+                "break_session",
+                None,
+                CheckReason::CatalogReadOnlyUndeclared,
+            ),
+            no_schema("break_session"),
+        ]);
+        expected.extend(
+            [
+                "recover_session",
+                "session_status",
+                "report_weather",
+                "sampled_read",
+                "elicited_read",
+                "publish_status",
+            ]
+            .map(no_schema),
+        );
+        assert_eq!(catalog.checks, expected);
+
+        // Parameters count only when a tool has them; destructiveHint only
+        // for writers.
+        let readiness = fold(&Observations {
+            tools: vec![
+                ToolObservation {
+                    catalog: CatalogFacts {
+                        typed_properties: 1,
+                        ..facts(40, 2, 2, true, false)
+                    },
+                    ..tool("bare", 10, ToolClass::ReadOnly, None)
+                },
+                ToolObservation {
+                    catalog: facts(40, 0, 0, true, false),
+                    ..tool("writer", 10, ToolClass::Writer, None)
+                },
+            ],
+            ..Observations::default()
+        });
+        let catalog = area(&readiness, Area::Catalog);
+        // bare: 3 of 5 (params-typed and output-schema lost); writer: 2 of 4.
+        assert_eq!(catalog.score, 55);
+        assert_eq!(
+            catalog
+                .checks
+                .iter()
+                .map(|check| (check.tool.as_deref().unwrap(), check.reason))
+                .collect::<Vec<_>>(),
+            vec![
+                ("bare", CheckReason::CatalogUntypedParams),
+                ("bare", CheckReason::CatalogNoOutputSchema),
+                ("writer", CheckReason::CatalogDestructiveUndeclared),
+                ("writer", CheckReason::CatalogNoOutputSchema),
+            ]
+        );
+
+        let empty = fold(&Observations::default());
+        assert_eq!(area(&empty, Area::Catalog).score, 0);
+        assert_eq!(
+            area(&empty, Area::Catalog).checks,
+            vec![Check {
+                id: CheckId::CatalogEmpty,
+                tool: None,
+                score: 0,
+                observed: None,
+                reason: CheckReason::CatalogNoTools,
+            }]
+        );
+    }
+
+    #[test]
     fn untested_surface_counts_against_the_score() {
         // Only writers: nothing can be exercised, so reliability and
         // coverage score 0 instead of dropping out.
@@ -832,18 +1114,14 @@ mod tests {
             tools: vec![tool("delete_all", 100, ToolClass::Writer, None)],
             ..Observations::default()
         });
+        assert_eq!(area(&readiness, Area::Catalog).score, 0);
         assert_eq!(area(&readiness, Area::Reliability).score, 0);
         assert_eq!(area(&readiness, Area::Coverage).score, 0);
-        assert_eq!(readiness.score, 30);
-        assert!(readiness
-            .areas
+        assert_eq!(readiness.score, 21);
+        assert!([Area::Reliability, Area::Coverage]
             .iter()
-            .flat_map(|area| &area.checks)
-            .all(|check| {
-                check.id == CheckId::ContextCatalog
-                    || check.id == CheckId::ContextHeaviestTool
-                    || check.reason == CheckReason::NoReadOnlyTools
-            }));
+            .flat_map(|name| &area(&readiness, *name).checks)
+            .all(|check| check.reason == CheckReason::NoReadOnlyTools));
 
         // Read-only tools that could not be called: coverage names each.
         let readiness = fold(&Observations {
@@ -875,9 +1153,9 @@ mod tests {
     fn readiness_json_round_trips_and_rejects_unknown_labels() {
         let readiness = fold(&clean_demo());
         let document = readiness.to_json();
-        assert_eq!(document["badge"], badge_url(98));
+        assert_eq!(document["badge"], badge_url(88));
         assert_eq!(
-            document["areas"][1]["checks"][0]["hint"],
+            document["areas"][2]["checks"][0]["hint"],
             crate::remediation::check_hint(CheckReason::ReliabilityInconsistent)
         );
         assert_eq!(Readiness::from_json(&document).unwrap(), readiness);
@@ -885,7 +1163,7 @@ mod tests {
         unknown["areas"][0]["name"] = "vibes".into();
         assert!(Readiness::from_json(&unknown).is_err());
         let mut unknown = document;
-        unknown["areas"][1]["checks"][0]["reason"] = "vibes".into();
+        unknown["areas"][2]["checks"][0]["reason"] = "vibes".into();
         assert!(Readiness::from_json(&unknown).is_err());
     }
 

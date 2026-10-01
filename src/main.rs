@@ -106,6 +106,9 @@ fn render_probe_text(
                 "  surface: {} tools, {} read-only, {} writers, {} exercised",
                 surface.tools, surface.read_only, surface.writers, surface.exercised
             );
+            // One hint per reason: a catalog-wide defect loses a check on
+            // every tool.
+            let mut hinted = Vec::new();
             for check in readiness.areas.iter().flat_map(|area| &area.checks) {
                 let tool = check
                     .tool
@@ -122,7 +125,8 @@ fn render_probe_text(
                     check.score,
                     check.reason.as_str()
                 );
-                if !brief {
+                if !brief && !hinted.contains(&check.reason) {
+                    hinted.push(check.reason);
                     println!(
                         "    hint: {}",
                         mcpeval::remediation::check_hint(check.reason)

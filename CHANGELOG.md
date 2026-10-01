@@ -6,9 +6,9 @@
 
 - `readiness` is an absolute score under `mcpeval-standard/1-draft`: after
   the manifest's cases, a read-only standard battery scores the server's
-  whole catalog on fixed curves (context, reliability, coverage). Surface it
-  cannot test counts against the score. The manifest is the gate: it alone
-  sets `passed` and the exit code.
+  whole catalog on fixed curves (catalog, context, reliability, coverage).
+  Surface it cannot test counts against the score. The manifest is the
+  gate: it alone sets `passed` and the exit code.
 - Probe reports are `mcpeval.probe-report/v2` (`gate`, `readiness` with
   areas and lost checks, `readiness_error`); diffs are
   `mcpeval.probe-diff/v2`. `report` and `diff` still read v1 documents.
@@ -27,6 +27,13 @@
   `probe --confirm-read-only` and `score --confirm-read-only` attest
   unannotated tools as read-only for it.
 - `mcpeval-demo --broken flaky`: `read_counter` fails every second call.
+- Readiness catalog area: per tool, a description of at least 40
+  characters, described and typed input properties, declared
+  `readOnlyHint` (and `destructiveHint` on writers), and a declared
+  `outputSchema`.
+- `mcpeval-demo --broken undescribed`: 20-character descriptions and
+  undescribed input properties.
+- Text and markdown reports print each lost check's hint once per reason.
 
 ### Fixed
 

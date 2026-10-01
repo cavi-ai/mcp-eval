@@ -296,5 +296,28 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
             "the server declares no read-only tools, so behavior cannot be measured without \
              mutation; expose read paths as tools annotated readOnlyHint: true"
         }
+        CheckReason::CatalogShortDescription => {
+            "describe what the tool does, when to use it, and what it returns in at least 40 \
+             characters; agents choose tools from this text"
+        }
+        CheckReason::CatalogUndescribedParams => {
+            "give every input property a description; agents fill arguments from it"
+        }
+        CheckReason::CatalogUntypedParams => {
+            "give every input property a type, enum, const, or $ref so agents can construct \
+             valid arguments"
+        }
+        CheckReason::CatalogReadOnlyUndeclared => {
+            "declare readOnlyHint (true or false) so clients know whether a call can change state"
+        }
+        CheckReason::CatalogDestructiveUndeclared => {
+            "declare destructiveHint on tools that write, so clients can confirm before \
+             destructive calls"
+        }
+        CheckReason::CatalogNoOutputSchema => {
+            "declare outputSchema and return structuredContent so agents can read results \
+             without parsing prose"
+        }
+        CheckReason::CatalogNoTools => "the server lists no tools",
     }
 }

@@ -47,9 +47,10 @@ The binaries are `target/release/mcpeval` and `target/release/mcpeval-demo`
 No server of your own yet? `mcpeval-demo` is a bundled MCP server with a
 clean personality and a set of `--broken <aspect>` personalities that
 reproduce specific defects (incoherent schema, unfaithful results, unstable
-error codes, bloated catalogs, broken pagination, slow calls, dropped
-cancellations, echoed protocol versions, malformed sampling and elicitation
-requests, missing subscription notifications, malformed completions);
+error codes, bloated catalogs, terse descriptions, broken pagination, slow
+and flaky calls, dropped cancellations, echoed protocol versions, malformed
+sampling and elicitation requests, missing subscription notifications,
+malformed completions);
 `mcpeval-demo --help` lists every aspect, and an unknown aspect exits 2:
 
 ```sh
@@ -58,7 +59,7 @@ mcpeval init --server demo --confirm-read-only \
 mcpeval probe --server demo \
   --manifest demo.manifest.json -- mcpeval-demo
 # demo gate 25/25 passed
-# demo readiness 98/100 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
+# demo readiness 88/100 catalog=63 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
 mcpeval probe --server demo --manifest demo.manifest.json \
   -- mcpeval-demo --broken stalled-cursor
 # pagination-stalled-cursor

@@ -37,10 +37,11 @@ enum Aspect {
     Surface,
     OutputSchema,
     Flaky,
+    Undescribed,
 }
 
 impl Aspect {
-    const ALL: [Aspect; 16] = [
+    const ALL: [Aspect; 17] = [
         Aspect::Schema,
         Aspect::Fidelity,
         Aspect::UnstableErrors,
@@ -57,6 +58,7 @@ impl Aspect {
         Aspect::Surface,
         Aspect::OutputSchema,
         Aspect::Flaky,
+        Aspect::Undescribed,
     ];
 
     fn as_str(self) -> &'static str {
@@ -77,6 +79,7 @@ impl Aspect {
             Aspect::Surface => "surface",
             Aspect::OutputSchema => "output-schema",
             Aspect::Flaky => "flaky",
+            Aspect::Undescribed => "undescribed",
         }
     }
 
@@ -502,6 +505,26 @@ fn catalog(broken: Option<Aspect>) -> Vec<Value> {
             "properties": {},
             "required": ["missing"]
         });
+    }
+    if broken == Some(Aspect::Undescribed) {
+        // Terse descriptions and bare parameters: agents cannot tell what a
+        // tool does or what to pass it.
+        for entry in &mut entries {
+            let short: String = entry["description"]
+                .as_str()
+                .unwrap_or_default()
+                .chars()
+                .take(20)
+                .collect();
+            entry["description"] = json!(short);
+            if let Some(properties) = entry["inputSchema"]["properties"].as_object_mut() {
+                for property in properties.values_mut() {
+                    if let Some(property) = property.as_object_mut() {
+                        property.remove("description");
+                    }
+                }
+            }
+        }
     }
     if broken == Some(Aspect::Bloated) {
         for entry in &mut entries {

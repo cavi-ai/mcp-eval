@@ -9,7 +9,7 @@ mcpeval probe --server demo \
   --manifest demo.manifest.json -- mcpeval-demo
 ```
 
-`init` writes every probe kind that needs no domain input: catalog budgets, pagination, protocol negotiation, and surface listing, plus schema-guessability, degradation-over-n, latency-budget, and output-schema cases for each candidate tool that answers a naive `{}` call, one contention case, and one payload-bounds case. Candidates are tools annotated `readOnlyHint: true` and, after the read-only attestation, unannotated tools; tools annotated `destructiveHint: true` or `readOnlyHint: false` are never called. `--dry-run` lists each tool's decision without calling it. On the clean demo the gate passes 25/25 and readiness scores 90/100 under mcpeval's standard, with each area's score and every lost point. Flip one flag to watch a fixed failure reason appear:
+`init` writes every probe kind that needs no domain input: catalog budgets, pagination, protocol negotiation, and surface listing, plus schema-guessability, degradation-over-n, latency-budget, and output-schema cases for each candidate tool that answers a naive `{}` call, one contention case, and one payload-bounds case. Candidates are tools annotated `readOnlyHint: true` and, after the read-only attestation, unannotated tools; tools annotated `destructiveHint: true` or `readOnlyHint: false` are never called. `--dry-run` lists each tool's decision without calling it. On the clean demo the gate passes 25/25 and readiness scores 91/100 under mcpeval's standard, with each area's score and every lost point. Flip one flag to watch a fixed failure reason appear:
 
 ```sh
 mcpeval probe --server demo --manifest demo.manifest.json \

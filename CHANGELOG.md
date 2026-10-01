@@ -6,8 +6,8 @@
 
 - `readiness` is an absolute score under `mcpeval-standard/1-draft`: after
   the manifest's cases, a read-only standard battery scores the server's
-  whole catalog on fixed curves (protocol, catalog, context, reliability,
-  coverage). Surface it cannot test counts against the score. The manifest
+  whole catalog on fixed curves (protocol, catalog, context, error honesty,
+  reliability, coverage). Surface it cannot test counts against the score. The manifest
   is the gate: it alone sets `passed` and the exit code.
 - Probe reports are `mcpeval.probe-report/v2` (`gate`, `readiness` with
   areas and lost checks, `readiness_error`); diffs are
@@ -39,6 +39,12 @@
   resources and prompts list cleanly, and version negotiation holds.
 - `mcpeval-demo --broken unknown-method`: unknown methods answer a result.
   The clean demo answers `ping` and unknown methods with -32601.
+- Readiness error-honesty area: a read-only tool called with arguments
+  that violate its input schema must refuse them with -32602 or an
+  `isError` result that says why, and the session must answer the next
+  request.
+- `mcpeval-demo` refuses arguments of the wrong type with -32602;
+  `--broken lying-errors` accepts them.
 
 ### Fixed
 

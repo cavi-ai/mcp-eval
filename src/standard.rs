@@ -66,6 +66,49 @@ pub enum Exercise {
     },
 }
 
+/// Presence facts about one catalog entry; no description or schema text.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct CatalogFacts {
+    pub description_chars: usize,
+    pub properties: usize,
+    pub described_properties: usize,
+    pub typed_properties: usize,
+    pub read_only_declared: bool,
+    pub destructive_declared: bool,
+    pub output_schema: bool,
+}
+
+impl CatalogFacts {
+    pub fn of(tool: &ToolDefinition) -> Self {
+        const TYPED: [&str; 6] = ["type", "enum", "const", "$ref", "anyOf", "oneOf"];
+        let properties = tool
+            .input_schema
+            .get("properties")
+            .and_then(Value::as_object);
+        let count = |keep: &dyn Fn(&Value) -> bool| {
+            properties.map_or(0, |properties| {
+                properties.values().filter(|value| keep(value)).count()
+            })
+        };
+        Self {
+            description_chars: tool.description_chars,
+            properties: properties.map_or(0, serde_json::Map::len),
+            described_properties: count(&|property| {
+                property
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .is_some_and(|text| !text.is_empty())
+            }),
+            typed_properties: count(&|property| {
+                TYPED.iter().any(|key| property.get(*key).is_some())
+            }),
+            read_only_declared: tool.read_only_hint.is_some(),
+            destructive_declared: tool.destructive_hint.is_some(),
+            output_schema: tool.output_schema.is_some(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct ToolObservation {
     pub name: String,
@@ -74,6 +117,7 @@ pub struct ToolObservation {
     pub class: ToolClass,
     /// None for writers, which are never called.
     pub exercise: Option<Exercise>,
+    pub catalog: CatalogFacts,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -163,6 +207,7 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             tokens: estimate_tokens(tool.entry_bytes),
             class,
             exercise,
+            catalog: CatalogFacts::of(tool),
         });
     }
     let contention = succeeded.first().map(|(tool, arguments)| {
@@ -437,6 +482,32 @@ mod tests {
             &json!({"type": "object"}),
             &json!({"structuredContent": {}})
         ));
+    }
+
+    #[test]
+    fn catalog_facts_count_presence_only() {
+        let tool = definition(json!({
+            "name": "t",
+            "description": "Forty-one characters of useful description",
+            "inputSchema": {"type": "object", "properties": {
+                "a": {"type": "string", "description": "A"},
+                "b": {"enum": [1, 2]},
+                "c": {}
+            }},
+            "annotations": {"readOnlyHint": true}
+        }));
+        assert_eq!(
+            CatalogFacts::of(&tool),
+            CatalogFacts {
+                description_chars: 42,
+                properties: 3,
+                described_properties: 1,
+                typed_properties: 2,
+                read_only_declared: true,
+                destructive_declared: false,
+                output_schema: false,
+            }
+        );
     }
 
     #[test]

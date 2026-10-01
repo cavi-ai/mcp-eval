@@ -63,6 +63,8 @@ pub struct ToolDefinition {
     /// Encoded size of the complete `tools/list` entry for this tool
     /// (name, description, schema, annotations). Measured in memory only.
     pub entry_bytes: usize,
+    /// Characters in the tool's description; the text itself is never kept.
+    pub description_chars: usize,
     /// The tool's declared `outputSchema`, when present. Structural
     /// metadata only; never persisted.
     pub output_schema: Option<Value>,
@@ -104,6 +106,10 @@ pub(crate) fn tool_definition(tool: &Value) -> anyhow::Result<ToolDefinition> {
         name: name.to_owned(),
         input_schema,
         entry_bytes: serde_json::to_vec(tool)?.len(),
+        description_chars: tool
+            .get("description")
+            .and_then(Value::as_str)
+            .map_or(0, |text| text.chars().count()),
         output_schema: tool
             .get("outputSchema")
             .filter(|schema| schema.is_object())
@@ -671,6 +677,7 @@ mod tests {
         let tool = tool_definition(&entry).unwrap();
         assert_eq!(tool.name, "list_things");
         assert_eq!(tool.entry_bytes, serde_json::to_vec(&entry).unwrap().len());
+        assert_eq!(tool.description_chars, 12);
         assert_eq!(tool.read_only_hint, Some(true));
         assert_eq!(tool.destructive_hint, Some(false));
         assert!(tool.output_schema.is_some());

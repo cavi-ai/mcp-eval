@@ -380,6 +380,7 @@
       "properties": {
         "name": {
           "enum": [
+            "catalog",
             "context",
             "reliability",
             "coverage"
@@ -428,7 +429,14 @@
             "reliability.contention",
             "reliability.payload",
             "reliability.none-exercised",
-            "coverage.exercised"
+            "coverage.exercised",
+            "catalog.description",
+            "catalog.params-described",
+            "catalog.params-typed",
+            "catalog.read-only-declared",
+            "catalog.destructive-declared",
+            "catalog.output-schema",
+            "catalog.empty"
           ]
         },
         "tool": {
@@ -463,7 +471,14 @@
             "coverage-required-arguments",
             "coverage-rejected-arguments",
             "coverage-call-failed",
-            "no-read-only-tools"
+            "no-read-only-tools",
+            "catalog-short-description",
+            "catalog-undescribed-params",
+            "catalog-untyped-params",
+            "catalog-read-only-undeclared",
+            "catalog-destructive-undeclared",
+            "catalog-no-output-schema",
+            "catalog-no-tools"
           ]
         },
         "hint": {

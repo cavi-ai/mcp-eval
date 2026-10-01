@@ -28,6 +28,8 @@ const PAYLOAD_BYTES: u64 = 1_000_000;
 pub struct StandardOptions {
     /// Attest that unannotated tools are read-only, so they are called.
     pub confirm_read_only: bool,
+    /// Tools never to call; each must be one the server lists.
+    pub skip_tools: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,6 +191,15 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
     let mut client = Some(connect(target).context("connecting for the standard battery")?);
     let catalog = list_catalog(client.as_mut().expect("just connected"))
         .context("listing tools for the standard battery")?;
+    if let Some(name) = options
+        .skip_tools
+        .iter()
+        .find(|name| !catalog.tools.iter().any(|tool| &tool.name == *name))
+    {
+        return Err(crate::exit::usage(anyhow::anyhow!(
+            "--skip-tool {name} is not a tool the server lists"
+        )));
+    }
     let mut tools = Vec::with_capacity(catalog.tools.len());
     // Tools whose three calls all succeeded, with the arguments used: the
     // server-level cases run on the first of them.
@@ -200,7 +211,13 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             ToolClass::Unannotated => options.confirm_read_only,
             ToolClass::ReadOnly => true,
         };
-        let honesty = if callable {
+        // A skipped tool is never called; it scores as the worst call it
+        // could have made (see score.rs), so skipping never pays.
+        let skipped = callable && options.skip_tools.contains(&tool.name);
+        let honesty = if skipped {
+            invalid_arguments(&tool.input_schema)
+                .map(|_| Honesty::Dishonest(CheckReason::CoverageSkipped))
+        } else if callable {
             probe_honesty(&mut client, target, tool)
         } else {
             None
@@ -211,6 +228,7 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
                 Some(Exercise::NotExercised(CheckReason::CoverageUnannotated))
             }
             _ => match synthesize(&tool.input_schema) {
+                Some(_) if skipped => Some(Exercise::NotExercised(CheckReason::CoverageSkipped)),
                 Some(arguments) => {
                     let (exercise, all_succeeded) =
                         exercise_tool(&mut client, target, tool, &arguments);
@@ -230,6 +248,14 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             catalog: CatalogFacts::of(tool),
             honesty,
         });
+    }
+    // With a tool skipped, the server-level cases score 0 (score.rs) and
+    // are not run.
+    let any_skipped = tools
+        .iter()
+        .any(|tool| tool.exercise == Some(Exercise::NotExercised(CheckReason::CoverageSkipped)));
+    if any_skipped {
+        succeeded.clear();
     }
     let contention = succeeded.first().map(|(tool, arguments)| {
         server_case(

@@ -77,6 +77,7 @@ fn options(home: &TestHome, mode: &str, selected_probe: Option<ProbeKind>) -> Pr
         allow_remote_http: false,
         standard: false,
         confirm_read_only: false,
+        skip_tools: Vec::new(),
     }
 }
 
@@ -179,6 +180,7 @@ fn token_cost_options(
         allow_remote_http: false,
         standard: false,
         confirm_read_only: false,
+        skip_tools: Vec::new(),
     }
 }
 

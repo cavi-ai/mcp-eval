@@ -742,3 +742,48 @@ fn a_refusal_counts_even_when_the_server_lacks_ping() {
     assert!(lost_in(&document, "protocol")
         .contains(&owned(&[("protocol.ping", None, "protocol-ping-failed")])[0]));
 }
+
+#[test]
+fn skipping_a_tool_never_raises_the_score() {
+    let (_, clean) = score(&home(), &[demo()]);
+    let (output, skipped) = run(
+        &home(),
+        &[
+            "score",
+            "--server",
+            "demo",
+            "--format",
+            "json",
+            "--skip-tool",
+            "slow_read",
+            "--",
+            demo(),
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(lost(&skipped)
+        .contains(&owned(&[("coverage.exercised", Some("slow_read"), "coverage-skipped")])[0]));
+    assert!(
+        skipped["readiness"]["score"].as_u64() <= clean["readiness"]["score"].as_u64(),
+        "skipping the slow tool raised the score: {skipped:#}"
+    );
+    assert!(lost(&skipped)
+        .contains(&owned(&[("reliability.skipped", Some("slow_read"), "coverage-skipped")])[0]));
+    let (output, _) = run(
+        &home(),
+        &[
+            "score",
+            "--server",
+            "demo",
+            "--skip-tool",
+            "no_such_tool",
+            "--",
+            demo(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(2));
+}

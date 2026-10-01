@@ -97,6 +97,7 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Com
                 allow_remote_http: options.allow_remote_http,
                 standard: options.standard,
                 confirm_read_only: false,
+                skip_tools: Vec::new(),
             },
             &mut store,
         )

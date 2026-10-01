@@ -202,6 +202,7 @@ fn run() -> anyhow::Result<()> {
             allow_mutation,
             gate_only,
             confirm_read_only,
+            skip_tools,
             url,
             allow_remote_http,
             cmd,
@@ -221,6 +222,7 @@ fn run() -> anyhow::Result<()> {
                     allow_remote_http,
                     standard: !gate_only,
                     confirm_read_only,
+                    skip_tools,
                 },
                 &mut store,
             )?;
@@ -265,6 +267,7 @@ fn run() -> anyhow::Result<()> {
             format,
             brief,
             confirm_read_only,
+            skip_tools,
             url,
             allow_remote_http,
             cmd,
@@ -275,6 +278,7 @@ fn run() -> anyhow::Result<()> {
                 http_url: url,
                 allow_remote_http,
                 confirm_read_only,
+                skip_tools,
             })?;
             match format {
                 cli::ScoreFormat::Json => {
@@ -604,6 +608,7 @@ fn run() -> anyhow::Result<()> {
                     allow_remote_http,
                     standard: false,
                     confirm_read_only: false,
+                    skip_tools: Vec::new(),
                 },
                 &mut store,
             )?;

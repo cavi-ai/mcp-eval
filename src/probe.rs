@@ -29,6 +29,8 @@ pub struct ProbeOptions {
     pub standard: bool,
     /// Attest unannotated tools as read-only for the standard battery.
     pub confirm_read_only: bool,
+    /// Tools the standard battery never calls (`--skip-tool`).
+    pub skip_tools: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -914,8 +916,9 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
             &target,
             &crate::standard::StandardOptions {
                 confirm_read_only: options.confirm_read_only,
+                skip_tools: options.skip_tools,
             },
-        );
+        )?;
     }
     Ok(report)
 }
@@ -926,6 +929,7 @@ pub struct ScoreOptions {
     pub http_url: Option<String>,
     pub allow_remote_http: bool,
     pub confirm_read_only: bool,
+    pub skip_tools: Vec<String>,
 }
 
 /// The standard battery alone: no manifest, no gate.
@@ -943,20 +947,23 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
         &target,
         &crate::standard::StandardOptions {
             confirm_read_only: options.confirm_read_only,
+            skip_tools: options.skip_tools,
         },
-    );
+    )?;
     Ok(report)
 }
 
 /// Run the standard battery into `report`; a battery that cannot start
-/// leaves readiness unmeasured with its transport reason.
+/// leaves readiness unmeasured with its transport reason. A usage error
+/// (an unknown `--skip-tool`) ends the run.
 fn measure_standard(
     report: &mut ProbeReport,
     target: &ClientTarget,
     options: &crate::standard::StandardOptions,
-) {
+) -> anyhow::Result<()> {
     match crate::standard::run(target, options) {
         Ok(readiness) => report.readiness = Some(readiness),
+        Err(error) if crate::exit::code(&error) == crate::exit::USAGE => return Err(error),
         Err(error) => {
             let reason = transport_reason(&error);
             // Diagnostics only: a closed stderr must not end the run.
@@ -968,6 +975,7 @@ fn measure_standard(
             report.readiness_error = Some(reason);
         }
     }
+    Ok(())
 }
 
 /// The validated manifest and the SHA-256 of the exact bytes it was parsed

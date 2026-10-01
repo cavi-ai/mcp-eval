@@ -431,6 +431,7 @@
             "reliability.contention",
             "reliability.payload",
             "reliability.none-exercised",
+            "reliability.skipped",
             "coverage.exercised",
             "catalog.description",
             "catalog.params-described",

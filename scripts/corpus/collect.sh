@@ -42,9 +42,11 @@ if [ ! -x "$BIN" ]; then
 fi
 
 # Keeps the full JSON report per server; a failing battery still prints
-# its report, so only a server that could not run leaves no score.
+# its report, so only a server that could not run leaves no score. The
+# corpus records the battery's pass rate, so the standard battery is
+# skipped until the corpus is recollected under the readiness standard.
 probe_report() {
-  "$BIN" probe --server "$1" --manifest "$MANIFEST" --format json \
+  "$BIN" probe --server "$1" --manifest "$MANIFEST" --gate-only --format json \
     -- "${@:2}" > "$REPORTS/$1.json" 2>/dev/null || true
 }
 
@@ -116,13 +118,18 @@ def measurement(report, probe, key):
             return value
     return None
 
+def battery_score(report):
+    # The battery's pass rate, rounded half up like the drift check.
+    gate = report["gate"]
+    return (200 * gate["passed"] + gate["total"]) // (2 * gate["total"])
+
 observations = []
 for name in sorted(os.listdir(reports_dir)):
     server = name[: -len(".json")]
     try:
         report = json.load(open(os.path.join(reports_dir, name)))
-        observation = {"server": server, "score": report["readiness"]["score"]}
-    except (ValueError, KeyError, TypeError):
+        observation = {"server": server, "score": battery_score(report)}
+    except (ValueError, KeyError, TypeError, ZeroDivisionError):
         print(f"   {server}: skipped (battery could not run)")
         continue
     if any((case.get("reason") or "").startswith("transport-") for case in report["cases"]):

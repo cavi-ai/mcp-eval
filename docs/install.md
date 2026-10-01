@@ -271,8 +271,9 @@ they never contain actual arguments, responses, or errors. Probe calls are recor
 as privacy-sanitized `synthetic` calls.
 
 `--format json` emits a versioned, deterministic document
-(`mcpeval.probe-report/v1`) instead of the text summary: the server label,
-per-case verdicts, fixed reason labels, and measurement numbers. It contains no
+(`mcpeval.probe-report/v2`) instead of the text summary: the server label,
+the gate counts, the readiness object, per-case verdicts, fixed reason labels,
+and measurement numbers. It contains no
 timestamps, sessions, or payloads, so it is safe to commit as a baseline or
 attach to a CI artifact.
 

@@ -138,6 +138,8 @@ doc = {
     "schema": "mcpeval.readiness-corpus/v2",
     "source": "mcpeval standard battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services run without them",
     "standard": standards.pop(),
+    # Tool descriptions can differ by OS; the drift check re-scores here.
+    "platform": sys.platform,
     "observations": sorted(observations, key=lambda o: (o["score"], o["server"])),
 }
 os.makedirs(os.path.dirname(out_path), exist_ok=True)

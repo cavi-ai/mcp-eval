@@ -109,6 +109,19 @@ export {
  * that moved beyond its allowance (`"catalog 64→65"`); empty when it
  * reproduces. An observation without areas compares its score.
  */
+/**
+ * Why the corpus cannot be re-scored here, or null. Servers may describe
+ * their tools per operating system (desktop-commander does), so a catalog
+ * reproduces only on the platform it was collected on.
+ */
+export function platformMismatch(corpus, platform) {
+  if (!corpus.platform) return "corpus names no platform; recollect with scripts/corpus/collect.sh";
+  if (corpus.platform !== platform) {
+    return `corpus was collected on ${corpus.platform}; re-score it on ${corpus.platform}, not ${platform}`;
+  }
+  return null;
+}
+
 export function driftOf(expected, observed) {
   const areas = expected.areas ?? {};
   if (Object.keys(areas).length === 0) {
@@ -226,6 +239,10 @@ export async function verifyCorpus(options = {}) {
   const corpus = JSON.parse(await readFile(path.join(ROOT, CORPUS_REL), "utf8"));
   if (corpus.schema !== "mcpeval.readiness-corpus/v2" || !corpus.standard) {
     throw new Error(`unsupported corpus schema ${corpus.schema}`);
+  }
+  const mismatch = platformMismatch(corpus, process.platform);
+  if (mismatch) {
+    throw new Error(mismatch);
   }
   const work = options.work ?? (await mkdtemp(path.join(os.tmpdir(), "mcpeval-corpus-verify-")));
   const results = [];

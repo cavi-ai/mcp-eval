@@ -2,6 +2,7 @@
   "schema": "mcpeval.readiness-corpus/v2",
   "source": "mcpeval standard battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services run without them",
   "standard": "mcpeval-standard/1",
+  "platform": "darwin",
   "observations": [
     {
       "server": "postgres",

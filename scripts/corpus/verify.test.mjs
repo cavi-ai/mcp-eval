@@ -13,6 +13,7 @@ import {
   UVX_SERVERS,
   RELIABILITY_TOLERANCE,
   commandFor,
+  platformMismatch,
   driftOf,
   readinessScore,
   scoreArguments,
@@ -113,6 +114,14 @@ test("drift: every area but reliability must match; reliability may move one lat
   assert.equal(RELIABILITY_TOLERANCE, 10);
 });
 
+test("drift is checked on the platform the corpus was collected on", () => {
+  // desktop-commander writes OS-specific notes into its tool descriptions,
+  // so its catalog, and its context score, differ by platform.
+  assert.equal(platformMismatch({ platform: "darwin" }, "darwin"), null);
+  assert.match(platformMismatch({ platform: "darwin" }, "linux"), /collected on darwin.*linux/u);
+  assert.match(platformMismatch({}, "linux"), /names no platform/u);
+});
+
 test("both scripts keep servers away from this machine's cluster and containers", async () => {
   const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
   assert.ok(Object.keys(ISOLATION).length >= 2);
@@ -188,6 +197,7 @@ test("collector records readiness, areas, and catalog measurements", async () =>
   const document = JSON.parse(await readFile(out, "utf8"));
   assert.equal(document.schema, "mcpeval.readiness-corpus/v2");
   assert.equal(document.standard, STANDARD);
+  assert.equal(document.platform, process.platform);
   assert.equal(document.battery, undefined);
   assert.deepEqual(
     document.observations.find((observation) => observation.server === "server-2"),

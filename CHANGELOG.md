@@ -21,7 +21,9 @@
   read. `scripts/corpus/collect.sh` and the drift check run every server
   with no Kubernetes context and no Docker daemon. The drift check fails
   when any area other than reliability moves, or reliability moves by more
-  than 10 (one latency band on every tool).
+  than 10 (one latency band on every tool). The corpus records the
+  platform it was collected on, and the drift check runs on that platform
+  only.
 - README and installation docs list the Homebrew, npm, and Cargo install
   commands, and the quickstart runs the installed `mcpeval` and
   `mcpeval-demo` instead of `./target/release` paths.

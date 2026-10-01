@@ -14,8 +14,10 @@ use crate::probe::{estimate_tokens, ClientTarget, FailureReason, ProbeClient};
 use crate::score::{CheckId, CheckReason, Readiness};
 
 /// Per-call response timeout, pinned by the standard: it bounds what a
-/// hung tool costs and is part of what a score means.
-pub const CALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// hung tool costs and is part of what a score means. It sits clear of
+/// round operation durations: a tool that works for exactly 10 s must not
+/// pass or fail on a few milliseconds of scheduling.
+pub const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 /// Calls per exercised tool.
 pub const REPEATS: usize = 3;
 /// `tools/list` pages followed before the catalog is taken as complete.
@@ -845,6 +847,13 @@ mod tests {
         definition(
             json!({"name": "t", "inputSchema": {"type": "object"}, "annotations": annotations}),
         )
+    }
+
+    #[test]
+    fn the_call_timeout_clears_round_operation_durations() {
+        // The reference server's long-running tool works for its default
+        // 10 s; a 10 s timeout made it a coin flip on every machine.
+        assert!(CALL_TIMEOUT >= Duration::from_secs(15));
     }
 
     #[test]

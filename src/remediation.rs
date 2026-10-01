@@ -293,7 +293,7 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
         }
         CheckReason::CoverageCallFailed => {
             "the call timed out, closed the connection, or broke the protocol exchange; a \
-             read-only tool must answer within 10 seconds without ending the session"
+             read-only tool must answer within 15 seconds without ending the session"
         }
         CheckReason::NoReadOnlyTools => {
             "the server declares no read-only tools, so behavior cannot be measured without \
@@ -377,7 +377,7 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
         }
         CheckReason::ProtocolCallFailed => {
             "a protocol request timed out, closed the connection, or broke the exchange; answer \
-             every request within 10 seconds without ending the session"
+             every request within 15 seconds without ending the session"
         }
     }
 }

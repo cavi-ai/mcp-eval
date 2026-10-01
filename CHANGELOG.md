@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.4.0 - 2026-10-01
+
 ### Changed
 
 - `readiness` is an absolute score under `mcpeval-standard/1`: after the

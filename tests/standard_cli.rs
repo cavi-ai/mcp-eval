@@ -517,3 +517,96 @@ fn report_rerenders_a_v2_document_with_its_lost_points() {
         "{stdout}"
     );
 }
+
+#[test]
+fn a_failed_later_tools_page_ends_the_listing_not_the_battery() {
+    for mode in ["page-error", "invalid"] {
+        let (output, document) = run(
+            &home(),
+            &[
+                "score",
+                "--server",
+                "paged",
+                "--format",
+                "json",
+                "--",
+                "python3",
+                "tests/fixtures/probe_paged_server.py",
+                mode,
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            document["readiness"]["surface"]["tools"], 3,
+            "{mode}: the first page's tools are kept"
+        );
+    }
+}
+
+/// Runs one manifest case under --gate-only and returns its text line.
+fn gate_case(case: &str, server: &[&str]) -> String {
+    let dir = home();
+    let manifest = dir.join("m.json");
+    std::fs::write(&manifest, format!(r#"{{"version":1,"probes":[{case}]}}"#)).unwrap();
+    let output = Command::new(bin())
+        .args(["probe", "--server", "s", "--gate-only", "--manifest"])
+        .arg(&manifest)
+        .arg("--")
+        .args(server)
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[test]
+fn server_cases_decline_requests_the_tool_sends_mid_call() {
+    // sampled_read issues sampling/createMessage before it answers.
+    let payload = gate_case(
+        r#"{"id":"big","probe":"payload-bounds","tool":"sampled_read","access":"read_only","arguments":{},"field":"note","size_bytes":5000,"expect_handled":true}"#,
+        &[demo()],
+    );
+    assert!(payload.contains("big payload-bounds pass"), "{payload}");
+    let contention = gate_case(
+        r#"{"id":"both","probe":"contention","tool":"sampled_read","access":"read_only","arguments":{}}"#,
+        &[demo()],
+    );
+    assert!(contention.contains("both contention pass"), "{contention}");
+}
+
+#[test]
+fn contention_finds_a_tool_listed_on_a_later_page() {
+    // Every page-one tool fails, so contention runs on gamma_reset, which
+    // only the second page lists.
+    let (output, document) = run(
+        &home(),
+        &[
+            "score",
+            "--server",
+            "paged",
+            "--format",
+            "json",
+            "--confirm-read-only",
+            "--",
+            "python3",
+            "tests/fixtures/probe_paged_server.py",
+            "late",
+        ],
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(document["readiness"]["surface"]["tools"], 5);
+    assert!(
+        !lost_in(&document, "reliability")
+            .iter()
+            .any(|(id, _, _)| id == "reliability.contention"),
+        "{document:#}"
+    );
+}

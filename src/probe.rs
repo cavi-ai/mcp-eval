@@ -108,13 +108,6 @@ impl ProbeClient {
         }
     }
 
-    fn list_tools(&mut self) -> anyhow::Result<Vec<String>> {
-        match self {
-            Self::Stdio(client) => client.list_tools(),
-            Self::Http(client) => client.list_tools(),
-        }
-    }
-
     fn list_tools_catalog(&mut self) -> anyhow::Result<ToolCatalog> {
         match self {
             Self::Stdio(client) => client.list_tools_catalog(),
@@ -1342,8 +1335,7 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
     let worker = std::thread::spawn(move || -> anyhow::Result<(ToolResponse, u64)> {
         let mut client = target.connect(timeout)?;
         client.initialize()?;
-        let tools = client.list_tools()?;
-        if !tools.iter().any(|name| name == &worker_tool) {
+        if !lists_tool(&mut client, &worker_tool)? {
             bail!("contended client is missing the probe tool");
         }
         ready_tx
@@ -1351,14 +1343,22 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
             .map_err(|_| anyhow::anyhow!("contention coordinator closed"))?;
         worker_barrier.wait();
         let started = Instant::now();
-        let response = client.call_tool(&worker_tool, &worker_arguments)?;
+        let response = call_declining(&mut client, &worker_tool, &worker_arguments)?;
         Ok((response, started.elapsed().as_millis() as u64))
     });
     ready_rx
         .recv_timeout(std::time::Duration::from_secs(30))
         .map_err(|_| anyhow::anyhow!("contended client failed to initialize"))?;
     barrier.wait();
-    let primary = call_named_and_record(&tool, &arguments, context)?;
+    let started = Instant::now();
+    let primary = call_declining(context.client, &tool, &arguments)?;
+    record_response(
+        &tool,
+        &arguments,
+        started.elapsed().as_millis() as u64,
+        &primary,
+        context,
+    )?;
     let (secondary, latency_ms) = worker
         .join()
         .map_err(|_| anyhow::anyhow!("contended client terminated unexpectedly"))??;
@@ -1369,6 +1369,58 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
     } else {
         Ok(failed_case(case, 2, FailureReason::ContendedClientFailed))
     }
+}
+
+/// A `tools/call` that declines any request the server sends before it
+/// answers, as a client without sampling or elicitation does.
+fn call_declining(
+    client: &mut ProbeClient,
+    tool: &str,
+    arguments: &Value,
+) -> anyhow::Result<ToolResponse> {
+    let (response, _) = client.call_tool_observing(
+        tool,
+        arguments,
+        &mut |_, _| None,
+        crate::standard::MAX_SERVER_REQUESTS,
+    )?;
+    Ok(response)
+}
+
+/// Whether `tool` is listed on any `tools/list` page, following cursors up
+/// to the standard's page bound.
+fn lists_tool(client: &mut ProbeClient, tool: &str) -> anyhow::Result<bool> {
+    let mut cursor: Option<String> = None;
+    for _ in 0..crate::standard::MAX_PAGES {
+        let params = match &cursor {
+            Some(cursor) => json!({"cursor": cursor}),
+            None => json!({}),
+        };
+        let response = client.raw_request("tools/list", params)?;
+        let result = response
+            .get("result")
+            .context("tools/list returned an error")?;
+        let listed = result
+            .get("tools")
+            .and_then(Value::as_array)
+            .is_some_and(|entries| {
+                entries
+                    .iter()
+                    .any(|entry| entry.get("name").and_then(Value::as_str) == Some(tool))
+            });
+        if listed {
+            return Ok(true);
+        }
+        cursor = result
+            .get("nextCursor")
+            .and_then(Value::as_str)
+            .filter(|cursor| !cursor.is_empty())
+            .map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(false)
 }
 
 fn run_error_honesty(
@@ -1754,9 +1806,11 @@ fn run_payload_bounds(
         Value::String("a".repeat(size_bytes as usize)),
     );
     let started = Instant::now();
-    let outcome = context
-        .client
-        .call_tool(case.tool().expect("payload case has a tool"), &arguments);
+    let outcome = call_declining(
+        context.client,
+        case.tool().expect("payload case has a tool"),
+        &arguments,
+    );
     let latency_ms = started.elapsed().as_millis() as u64;
     let (response, reason) = match outcome {
         // The transport died: crash, hang, or non-JSON output under load.

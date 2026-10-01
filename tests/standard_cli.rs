@@ -87,7 +87,7 @@ fn the_clean_demo_loses_points_only_for_its_deliberate_fixtures() {
     assert_eq!(document["schema"], "mcpeval.probe-report/v2");
     assert_eq!(document["gate"], Value::Null);
     let readiness = &document["readiness"];
-    assert_eq!(readiness["standard"], "mcpeval-standard/1-draft");
+    assert_eq!(readiness["standard"], "mcpeval-standard/1");
     assert_eq!(
         readiness["surface"],
         json!({"tools": 12, "read_only": 10, "writers": 2, "exercised": 10})
@@ -401,7 +401,7 @@ fn text_output_names_every_lost_point_with_its_hint() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft"),
+        stdout.contains("demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1"),
         "{stdout}"
     );
     assert!(
@@ -819,4 +819,38 @@ fn synthesized_arguments_reach_required_argument_tools() {
             "coverage-unsynthesizable"
         )])
     );
+}
+
+#[test]
+fn score_places_readiness_only_among_a_corpus_of_its_own_standard() {
+    let dir = home();
+    let (_, document) = score(&dir, &[demo()]);
+    let standard = document["readiness"]["standard"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let corpus = |standard: &str| {
+        format!(
+            r#"{{"schema":"mcpeval.readiness-corpus/v2","source":"test","standard":"{standard}",
+                "observations":[{{"server":"a","score":40}},{{"server":"b","score":100}}]}}"#
+        )
+    };
+    let text = |dir: &Path| {
+        let output = Command::new(bin())
+            .args(["score", "--server", "demo", "--", demo()])
+            .env("MCPEVAL_HOME", dir)
+            .output()
+            .unwrap();
+        String::from_utf8(output.stdout).unwrap()
+    };
+    std::fs::write(dir.join("corpus.json"), corpus(&standard)).unwrap();
+    let stdout = text(&dir);
+    assert!(
+        stdout.contains(&format!(
+            "\n  standard corpus ({standard}): above 1, tied 0, below 1 of 2 observed servers\n"
+        )),
+        "{stdout}"
+    );
+    std::fs::write(dir.join("corpus.json"), corpus("mcpeval-standard/0")).unwrap();
+    assert!(!text(&dir).contains("standard corpus"));
 }

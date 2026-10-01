@@ -318,6 +318,23 @@ pub fn render_probe_markdown(
         writeln!(out, "**Gate:** {passed}/{total} cases passed\n").ok();
     }
     if let Some(corpus) = corpus {
+        if let Some(readiness) = report
+            .readiness
+            .as_ref()
+            .filter(|readiness| readiness.standard == corpus.standard)
+        {
+            let placement = corpus.placement(readiness.score);
+            writeln!(
+                out,
+                "*Standard corpus ({}): above {}, tied {}, below {} of {} observed servers.*\n",
+                corpus.standard,
+                placement.above,
+                placement.tied,
+                placement.below,
+                corpus.observations.len()
+            )
+            .ok();
+        }
         if let (Some(tokens), Some(tools)) = (
             crate::score::catalog_tokens(report),
             crate::score::catalog_tool_count(report),

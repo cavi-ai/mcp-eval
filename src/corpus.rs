@@ -1,29 +1,31 @@
 //! Score calibration against the observed distribution of real servers.
 //!
 //! A score without a referent is a number; against a population it has a
-//! place. The corpus is a checked-in JSON document of observations gathered
-//! by running one fixed battery over popular public servers (see
-//! scripts/corpus). A report is placed on that battery's cases only, and
-//! placement counts ties explicitly, so a perfect score among perfect
-//! scores reads as tied rather than as a middling share. Calibration is
-//! deterministic: same score against same corpus, same placement.
+//! place. The corpus is a checked-in JSON document of readiness scores
+//! gathered by running mcpeval's standard battery over popular public
+//! servers (see scripts/corpus). A report is placed only against a corpus
+//! scored under its own standard, and placement counts ties explicitly, so
+//! a perfect score among perfect scores reads as tied rather than as a
+//! middling share. Calibration is deterministic: same score against same
+//! corpus, same placement.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Context;
 use serde::Deserialize;
 
-use crate::manifest::ProbeKind;
+/// The corpus document version this build reads.
+pub const SCHEMA: &str = "mcpeval.readiness-corpus/v2";
 
 #[derive(Debug, Deserialize)]
 pub struct Corpus {
-    /// e.g. "mcpeval.readiness-corpus/v1".
+    /// "mcpeval.readiness-corpus/v2".
     pub schema: String,
     /// Where the observations came from; informational.
     pub source: String,
-    /// Probe kinds every observation was scored on.
-    #[serde(default = "default_battery", deserialize_with = "probe_kinds")]
-    pub battery: Vec<ProbeKind>,
+    /// The readiness standard every observation was scored under.
+    pub standard: String,
     pub observations: Vec<Observation>,
 }
 
@@ -31,10 +33,13 @@ pub struct Corpus {
 pub struct Observation {
     pub server: String,
     pub score: u64,
+    /// Area scores by area name.
+    #[serde(default)]
+    pub areas: BTreeMap<String, u64>,
     /// Tools the server listed, when the collector recorded it.
     #[serde(default)]
     pub tool_count: Option<u64>,
-    /// The server's token-cost catalog estimate, when recorded.
+    /// The server's catalog token estimate, when recorded.
     #[serde(default)]
     pub catalog_tokens: Option<u64>,
 }
@@ -62,29 +67,6 @@ pub struct CatalogPlacement {
     pub median_tokens: u64,
 }
 
-/// The battery every v1 corpus without a `battery` field was collected with.
-fn default_battery() -> Vec<ProbeKind> {
-    vec![
-        ProbeKind::DiscoveryCost,
-        ProbeKind::TokenCost,
-        ProbeKind::Pagination,
-        ProbeKind::SurfaceListing,
-    ]
-}
-
-fn probe_kinds<'de, D>(deserializer: D) -> Result<Vec<ProbeKind>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Vec::<String>::deserialize(deserializer)?
-        .iter()
-        .map(|label| {
-            ProbeKind::from_report_label(label)
-                .ok_or_else(|| serde::de::Error::custom(format!("unknown probe kind {label}")))
-        })
-        .collect()
-}
-
 impl Corpus {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let body = std::fs::read_to_string(path)
@@ -95,25 +77,16 @@ impl Corpus {
     }
 
     fn validate(&self) -> anyhow::Result<()> {
-        if self.schema != "mcpeval.readiness-corpus/v1" {
+        if self.schema != SCHEMA {
             anyhow::bail!("unsupported corpus schema {}", self.schema);
         }
-        if self.battery.is_empty() {
-            anyhow::bail!("corpus battery is empty");
+        if self.standard.is_empty() {
+            anyhow::bail!("corpus names no standard");
         }
         if self.observations.is_empty() {
             anyhow::bail!("corpus has no observations");
         }
         Ok(())
-    }
-
-    /// The battery's probe kinds, comma-separated, for report lines.
-    pub fn battery_label(&self) -> String {
-        self.battery
-            .iter()
-            .map(ProbeKind::as_str)
-            .collect::<Vec<_>>()
-            .join(", ")
     }
 
     pub fn placement(&self, score: u64) -> Placement {
@@ -176,15 +149,16 @@ mod tests {
 
     fn corpus(scores: &[u64]) -> Corpus {
         Corpus {
-            schema: "mcpeval.readiness-corpus/v1".into(),
+            schema: SCHEMA.into(),
             source: "test".into(),
-            battery: default_battery(),
+            standard: "mcpeval-standard/1".into(),
             observations: scores
                 .iter()
                 .enumerate()
                 .map(|(index, &score)| Observation {
                     server: format!("server-{index}"),
                     score,
+                    areas: BTreeMap::new(),
                     tool_count: None,
                     catalog_tokens: None,
                 })
@@ -258,40 +232,34 @@ mod tests {
     }
 
     #[test]
-    fn battery_defaults_to_the_v1_collection_battery_and_rejects_empty() {
-        let legacy = parse(
+    fn a_v2_corpus_names_its_standard_and_carries_area_scores() {
+        let corpus = parse(
+            r#"{"schema":"mcpeval.readiness-corpus/v2","source":"s","standard":"mcpeval-standard/1",
+                "observations":[{"server":"a","score":71,"areas":{"protocol":100,"coverage":40},
+                                 "tool_count":9,"catalog_tokens":2688}]}"#,
+        )
+        .unwrap();
+        assert_eq!(corpus.standard, "mcpeval-standard/1");
+        let observation = &corpus.observations[0];
+        assert_eq!(observation.areas["protocol"], 100);
+        assert_eq!(observation.areas["coverage"], 40);
+        assert_eq!(observation.tool_count, Some(9));
+        assert_eq!(observation.catalog_tokens, Some(2688));
+
+        // A v1 corpus holds manifest pass rates, not readiness: refused.
+        assert!(parse(
             r#"{"schema":"mcpeval.readiness-corpus/v1","source":"s",
                 "observations":[{"server":"a","score":100}]}"#,
         )
-        .unwrap();
-        assert_eq!(legacy.battery, default_battery());
-        assert_eq!(
-            legacy.battery_label(),
-            "discovery-cost, token-cost, pagination, surface-listing"
-        );
-        assert_eq!(legacy.observations[0].tool_count, None);
-        assert_eq!(legacy.observations[0].catalog_tokens, None);
-
-        let explicit = parse(
-            r#"{"schema":"mcpeval.readiness-corpus/v1","source":"s",
-                "battery":["token-cost","latency-budget"],
-                "observations":[{"server":"a","score":90,"tool_count":12,"catalog_tokens":566}]}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            explicit.battery,
-            [ProbeKind::TokenCost, ProbeKind::LatencyBudget]
-        );
-        assert_eq!(explicit.observations[0].tool_count, Some(12));
-        assert_eq!(explicit.observations[0].catalog_tokens, Some(566));
-
+        .is_err());
+        // The standard is required and named.
         assert!(parse(
-            r#"{"schema":"mcpeval.readiness-corpus/v1","source":"s","battery":[],
+            r#"{"schema":"mcpeval.readiness-corpus/v2","source":"s",
                 "observations":[{"server":"a","score":100}]}"#,
         )
         .is_err());
         assert!(parse(
-            r#"{"schema":"mcpeval.readiness-corpus/v1","source":"s","battery":["not-a-probe"],
+            r#"{"schema":"mcpeval.readiness-corpus/v2","source":"s","standard":"",
                 "observations":[{"server":"a","score":100}]}"#,
         )
         .is_err());
@@ -302,7 +270,7 @@ mod tests {
         let corpus =
             Corpus::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("data/readiness-corpus.json"))
                 .unwrap();
-        assert!(!corpus.battery.is_empty());
+        assert_eq!(corpus.standard, crate::score::STANDARD);
         assert!(!corpus.observations.is_empty());
     }
 

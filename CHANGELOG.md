@@ -4,7 +4,7 @@
 
 ### Changed
 
-- `readiness` is an absolute score under `mcpeval-standard/1-draft`: after
+- `readiness` is an absolute score under `mcpeval-standard/1`: after
   the manifest's cases, a read-only standard battery scores the server's
   whole catalog on fixed curves (protocol, catalog, context, error honesty,
   reliability, coverage). Surface it cannot test counts against the score. The manifest

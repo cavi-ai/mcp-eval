@@ -9,7 +9,7 @@ The default format prints one line per case — verdict, attempts, first-failure
 ```text
 literal-status instruction-fidelity pass attempts=1
 demo gate 1/1 passed
-demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
+demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1
   surface: 12 tools, 10 read-only, 2 writers, 10 exercised
   lost catalog.description score=0 tool=describe_status observed=37 reason=catalog-short-description
     hint: describe what the tool does, when to use it, and what it returns in at least 40 characters; agents choose tools from this text
@@ -59,7 +59,7 @@ mcpeval explain        # list every fixed reason
   "passed": false,
   "gate": {"passed": 0, "total": 1},
   "readiness": {
-    "standard": "mcpeval-standard/1-draft",
+    "standard": "mcpeval-standard/1",
     "score": 91,
     "badge": "https://img.shields.io/badge/mcpeval-91%2F100-brightgreen",
     "attested_read_only": false,
@@ -95,7 +95,7 @@ mcpeval explain        # list every fixed reason
 
 ## The readiness score
 
-Readiness (0-100) is the weighted mean of the standard's areas, each scored on fixed curves that mcpeval defines. The weights, curves, bands, and checks are the standard; the report names it (`mcpeval-standard/1-draft` in this build), and any change to them changes the name. No area ever drops out: surface the standard could not test counts against the score.
+Readiness (0-100) is the weighted mean of the standard's areas, each scored on fixed curves that mcpeval defines. The weights, curves, bands, and checks are the standard; the report names it (`mcpeval-standard/1` in this build), and any change to them changes the name. No area ever drops out: surface the standard could not test counts against the score.
 
 | Area | Weight | Scored as |
 | --- | --- | --- |

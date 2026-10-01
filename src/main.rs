@@ -145,6 +145,21 @@ fn render_probe_text(
         (None, None, None) => println!("{server} readiness not measured"),
     }
     if let Some(corpus) = corpus {
+        if let Some(readiness) = report
+            .readiness
+            .as_ref()
+            .filter(|readiness| readiness.standard == corpus.standard)
+        {
+            let placement = corpus.placement(readiness.score);
+            println!(
+                "  standard corpus ({}): above {}, tied {}, below {} of {} observed servers",
+                corpus.standard,
+                placement.above,
+                placement.tied,
+                placement.below,
+                corpus.observations.len()
+            );
+        }
         if let (Some(tokens), Some(tools)) = (
             mcpeval::score::catalog_tokens(report),
             mcpeval::score::catalog_tool_count(report),
@@ -280,6 +295,7 @@ fn run() -> anyhow::Result<()> {
                 confirm_read_only,
                 skip_tools,
             })?;
+            let corpus = mcpeval::corpus::resolve(None, &mcpeval::store::Store::resolve_root(None));
             match format {
                 cli::ScoreFormat::Json => {
                     println!(
@@ -289,9 +305,11 @@ fn run() -> anyhow::Result<()> {
                 }
                 cli::ScoreFormat::Markdown => print!(
                     "{}",
-                    mcpeval::report::render_probe_markdown(&server, &report, None, None)
+                    mcpeval::report::render_probe_markdown(&server, &report, corpus.as_ref(), None)
                 ),
-                cli::ScoreFormat::Text => render_probe_text(&server, &report, brief, None, None),
+                cli::ScoreFormat::Text => {
+                    render_probe_text(&server, &report, brief, corpus.as_ref(), None)
+                }
             }
             exit_for_report(&report);
             Ok(())

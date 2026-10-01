@@ -60,7 +60,7 @@ mcpeval init --server demo --confirm-read-only \
 mcpeval probe --server demo \
   --manifest demo.manifest.json -- mcpeval-demo
 # demo gate 25/25 passed
-# demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
+# demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1
 mcpeval probe --server demo --manifest demo.manifest.json \
   -- mcpeval-demo --broken stalled-cursor
 # pagination-stalled-cursor
@@ -217,7 +217,7 @@ The manifest is the **gate**: its cases set `passed` and the exit code. The
 runs its own read-only standard battery over the server's whole catalog and
 scores it on fixed curves, so two servers' scores mean the same thing whatever
 their manifests declare. The report names the standard
-(`mcpeval-standard/1-draft` in this build) and lists every lost point with a
+(`mcpeval-standard/1` in this build) and lists every lost point with a
 remediation hint. Surface the standard cannot test counts against the score.
 The battery never calls a tool annotated as a writer (`readOnlyHint: false` or
 `destructiveHint: true`), calls a tool with neither annotation only under

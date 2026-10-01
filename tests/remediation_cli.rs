@@ -187,37 +187,56 @@ fn measured(stdout: &str, case: &str, key: &str) -> u64 {
         .unwrap()
 }
 
+/// The standard named on the readiness line.
+fn standard_of(stdout: &str) -> String {
+    stdout
+        .lines()
+        .find(|line| line.starts_with("demo readiness "))
+        .and_then(|line| line.split(" standard=").nth(1))
+        .unwrap_or_else(|| panic!("no readiness line: {stdout}"))
+        .to_owned()
+}
+
 #[test]
 fn calibration_context_appears_when_the_corpus_resolves() {
-    // The repository corpus resolves even from a bare temp home.
+    // The repository corpus resolves even from a bare temp home and is
+    // scored under this build's standard.
     let dir = home();
     let (passed, stdout) = probe_demo(&dir, DISCOVERY, &[]);
     assert!(passed, "{stdout}");
     assert!(stdout.contains("\ndemo gate 1/1 passed\n"), "{stdout}");
+    let standard = standard_of(&stdout);
+    assert!(
+        stdout.contains(&format!("\n  standard corpus ({standard}): above ")),
+        "{stdout}"
+    );
     assert!(stdout.contains("\n  catalog: "), "{stdout}");
-    // Battery placement waits for a corpus collected under the standard.
-    assert!(!stdout.contains("corpus battery"), "{stdout}");
-    assert!(!stdout.contains("beats"), "{stdout}");
 
     // A home corpus overrides the repository default; its catalog
     // measurements drive the catalog line.
     std::fs::write(
         dir.join("corpus.json"),
-        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus",
-            "battery":["discovery-cost","token-cost"],
+        format!(
+            r#"{{"schema":"mcpeval.readiness-corpus/v2","source":"test corpus","standard":"{standard}",
             "observations":[
-                {"server":"a","score":100,"tool_count":3,"catalog_tokens":1},
-                {"server":"b","score":100,"tool_count":90,"catalog_tokens":1000000},
-                {"server":"c","score":50,"tool_count":200,"catalog_tokens":2000000},
-                {"server":"d","score":25}
-        ]}"#,
+                {{"server":"a","score":100,"tool_count":3,"catalog_tokens":1}},
+                {{"server":"b","score":100,"tool_count":90,"catalog_tokens":1000000}},
+                {{"server":"c","score":50,"tool_count":200,"catalog_tokens":2000000}},
+                {{"server":"d","score":25}}
+        ]}}"#
+        ),
     )
     .unwrap();
     let (passed, stdout) = probe_demo(&dir, &format!("{DISCOVERY},{TOKENS}"), &[]);
     assert!(passed, "{stdout}");
     let tokens = measured(&stdout, "t", "total_tokens");
     let tools = measured(&stdout, "t", "tools");
-    assert!(!stdout.contains("corpus battery"), "{stdout}");
+    assert!(
+        stdout.contains(&format!(
+            "\n  standard corpus ({standard}): above 2, tied 0, below 2 of 4 observed servers\n"
+        )),
+        "{stdout}"
+    );
     assert!(
         stdout.contains(&format!(
             "\n  catalog: {tokens} tokens over {tools} tools, lighter than 2 of 3 observed servers (median 1000000 tokens)\n"
@@ -225,47 +244,58 @@ fn calibration_context_appears_when_the_corpus_resolves() {
         "{stdout}"
     );
 
-    // A v1 corpus without measurements: the catalog line is omitted.
+    // A corpus without measurements: the catalog line is omitted.
+    std::fs::write(
+        dir.join("corpus.json"),
+        format!(
+            r#"{{"schema":"mcpeval.readiness-corpus/v2","source":"test corpus","standard":"{standard}",
+            "observations":[{{"server":"a","score":0}},{{"server":"b","score":100}}]}}"#
+        ),
+    )
+    .unwrap();
+    let (passed, stdout) = probe_demo(&dir, &format!("{DISCOVERY},{TOKENS}"), &[]);
+    assert!(passed, "{stdout}");
+    assert!(!stdout.contains("catalog:"), "{stdout}");
+
+    // A v1 corpus holds manifest pass rates: no line places against it.
     std::fs::write(
         dir.join("corpus.json"),
         r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus","observations":[
-            {"server":"a","score":0},{"server":"b","score":100}
+            {"server":"a","score":0,"catalog_tokens":1},{"server":"b","score":100}
         ]}"#,
     )
     .unwrap();
     let (passed, stdout) = probe_demo(&dir, &format!("{DISCOVERY},{TOKENS}"), &[]);
     assert!(passed, "{stdout}");
-    assert!(!stdout.contains("corpus battery"), "{stdout}");
+    assert!(!stdout.contains("standard corpus"), "{stdout}");
     assert!(!stdout.contains("catalog:"), "{stdout}");
 }
 
 #[test]
 fn a_failing_gate_leaves_readiness_to_the_standard() {
     // The manifest's failing case costs the gate, never the readiness
-    // score, and no corpus battery line prints until the corpus is
-    // collected under the standard.
+    // score or its corpus placement.
     let dir = home();
-    std::fs::write(
-        dir.join("corpus.json"),
-        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus","observations":[
-            {"server":"a","score":75},{"server":"b","score":100}
-        ]}"#,
-    )
-    .unwrap();
     let slow = r#"{"id":"slow","probe":"latency-budget","tool":"slow_read","access":"read_only","arguments":{},"attempts":2,"max_latency_ms":50}"#;
     let (passed, failing) = probe_demo(&dir, &format!("{DISCOVERY},{slow}"), &["--broken", "slow"]);
     assert!(!passed, "{failing}");
     assert!(failing.contains("\ndemo gate 1/2 passed\n"), "{failing}");
-    assert!(!failing.contains("corpus battery"), "{failing}");
     let (passed, clean) = probe_demo(&dir, DISCOVERY, &["--broken", "slow"]);
     assert!(passed, "{clean}");
-    let readiness = |stdout: &str| {
+    let line = |stdout: &str, prefix: &str| {
         stdout
             .lines()
-            .find(|line| line.starts_with("demo readiness "))
+            .find(|line| line.starts_with(prefix))
             .map(str::to_owned)
     };
-    assert_eq!(readiness(&failing), readiness(&clean));
+    assert_eq!(
+        line(&failing, "demo readiness "),
+        line(&clean, "demo readiness ")
+    );
+    assert_eq!(
+        line(&failing, "  standard corpus "),
+        line(&clean, "  standard corpus ")
+    );
 }
 
 #[test]

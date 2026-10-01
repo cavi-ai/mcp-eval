@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Collect readiness scores from popular public MCP servers into
-# data/readiness-corpus.json. Each server is probed with a generic
-# manifest (discovery + token budget + pagination + surface listing) so
-# the corpus is comparable across heterogeneous servers. The document
-# records that manifest's probe kinds as its battery, and each observation
-# carries the catalog's tool count and token estimate beside the score.
+# data/readiness-corpus.json. Each server is scored by mcpeval's standard
+# battery (`mcpeval score`, no manifest), so the corpus is comparable
+# across heterogeneous servers. The document names the standard, and each
+# observation carries its area scores, tool count, and catalog token
+# estimate beside the score.
 #
 # Servers that require live credentials or services (gdrive, slack,
 # sentry, supabase, ...) are skipped by the harness and must be probed
@@ -23,15 +23,11 @@ WORK="${CORPUS_WORK:-$(mktemp -d)}"
 mkdir -p "$WORK"
 WORK="$(cd "$WORK" && pwd)"
 
-MANIFEST="$WORK/corpus.manifest.json"
-cat > "$MANIFEST" <<'EOF'
-{"version":1,"probes":[
-  {"id":"discovery-budget","probe":"discovery-cost","access":"read_only","max_tools":80,"max_schema_bytes":400000},
-  {"id":"token-budget","probe":"token-cost","access":"read_only","max_total_tokens":200000,"max_tool_tokens":40000},
-  {"id":"pages","probe":"pagination","access":"read_only","max_pages":5},
-  {"id":"surfaces","probe":"surface-listing","access":"read_only","max_pages":5}
-]}
-EOF
+# Every server runs with no Kubernetes context and no Docker daemon, so the
+# battery's read-only calls never reach this machine's cluster or
+# containers; scripts/corpus/verify.mjs uses the same ISOLATION.
+export KUBECONFIG=/dev/null
+export DOCKER_HOST=unix:///nonexistent/docker.sock
 
 REPORTS="$(mktemp -d "$WORK/reports.XXXXXX")"
 
@@ -41,12 +37,10 @@ if [ ! -x "$BIN" ]; then
   exit 1
 fi
 
-# Keeps the full JSON report per server; a failing battery still prints
-# its report, so only a server that could not run leaves no score. The
-# corpus records the battery's pass rate, so the standard battery is
-# skipped until the corpus is recollected under the readiness standard.
+# Keeps the full JSON report per server; only a server whose standard
+# battery could not start leaves no score.
 probe_report() {
-  "$BIN" probe --server "$1" --manifest "$MANIFEST" --gate-only --format json \
+  "$BIN" score --server "$1" --format json \
     -- "${@:2}" > "$REPORTS/$1.json" 2>/dev/null || true
 }
 
@@ -106,59 +100,49 @@ for entry in "${UVX_SERVERS[@]}"; do
   probe_report "$label" uvx "$package" $args
 done
 
-python3 - "$REPORTS" "$MANIFEST" "$OUT" <<'PYEOF'
+python3 - "$REPORTS" "$OUT" <<'PYEOF'
 import json, sys, os
-reports_dir, manifest_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
-battery = [probe["probe"] for probe in json.load(open(manifest_path))["probes"]]
-
-def measurement(report, probe, key):
-    for case in report["cases"]:
-        value = case.get("measurements", {}).get(key)
-        if case["probe"] == probe and value is not None:
-            return value
-    return None
-
-def battery_score(report):
-    # The battery's pass rate, rounded half up like the drift check.
-    gate = report["gate"]
-    return (200 * gate["passed"] + gate["total"]) // (2 * gate["total"])
+reports_dir, out_path = sys.argv[1], sys.argv[2]
 
 observations = []
+standards = set()
 for name in sorted(os.listdir(reports_dir)):
     server = name[: -len(".json")]
     try:
-        report = json.load(open(os.path.join(reports_dir, name)))
-        observation = {"server": server, "score": battery_score(report)}
-    except (ValueError, KeyError, TypeError, ZeroDivisionError):
-        print(f"   {server}: skipped (battery could not run)")
+        readiness = json.load(open(os.path.join(reports_dir, name)))["readiness"]
+        observation = {
+            "server": server,
+            "score": readiness["score"],
+            "areas": {area["name"]: area["score"] for area in readiness["areas"]},
+            "tool_count": readiness["surface"]["tools"],
+        }
+        standard = readiness["standard"]
+    except (ValueError, KeyError, TypeError):
+        print(f"   {server}: skipped (standard battery could not run)")
         continue
-    if any((case.get("reason") or "").startswith("transport-") for case in report["cases"]):
-        print(f"   {server}: skipped (transport failure)")
-        continue
-    for field, probe, key in (
-        ("tool_count", "discovery-cost", "tool_count"),
-        ("catalog_tokens", "token-cost", "total_tokens"),
-    ):
-        value = measurement(report, probe, key)
-        if value is not None:
-            observation[field] = value
-    ran_discovery = any(case["probe"] == "discovery-cost" for case in report["cases"])
-    if ran_discovery and not observation.get("tool_count"):
+    if not observation["tool_count"]:
         print(f"   {server}: skipped (no tools listed)")
         continue
+    for area in readiness["areas"]:
+        tokens = area.get("measurements", {}).get("catalog_tokens")
+        if area["name"] == "context" and tokens is not None:
+            observation["catalog_tokens"] = tokens
+    standards.add(standard)
     observations.append(observation)
     print(f"   {server}: score={observation['score']}")
 if len(observations) < 10:
     sys.exit(f"only {len(observations)} observations collected; refusing to ship a thin corpus")
+if len(standards) != 1:
+    sys.exit(f"observations span standards {sorted(standards)}; collect with one build")
 doc = {
-    "schema": "mcpeval.readiness-corpus/v1",
-    "source": "readiness battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services are re-run before each release",
-    "battery": battery,
+    "schema": "mcpeval.readiness-corpus/v2",
+    "source": "mcpeval standard battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services run without them",
+    "standard": standards.pop(),
     "observations": sorted(observations, key=lambda o: (o["score"], o["server"])),
 }
 os.makedirs(os.path.dirname(out_path), exist_ok=True)
 json.dump(doc, open(out_path, "w"), indent=2)
 open(out_path, "a").write("\n")
 scores = sorted(o["score"] for o in observations)
-print(f"wrote {len(observations)} observations to {out_path} (median {scores[len(scores)//2]}, min {scores[0]})")
+print(f"wrote {len(observations)} observations to {out_path} (median {scores[len(scores)//2]}, min {scores[0]}, at 100: {scores.count(100)})")
 PYEOF

@@ -1,16 +1,16 @@
 #!/usr/bin/env node
-// Corpus drift check: re-probe every observation in
-// data/readiness-corpus.json with the current binary and the same generic
-// manifest the collector uses, and fail on any score that moved. The
-// corpus's only claim is "deterministic verdict, reproducible by anyone";
-// this is the check that keeps the claim honest between releases.
+// Corpus drift check: re-score every observation in
+// data/readiness-corpus.json with the current binary's standard battery
+// (`mcpeval score`, as the collector runs it) and fail on any score that
+// moved. The corpus's only claim is "deterministic verdict, reproducible by
+// anyone"; this is the check that keeps the claim honest between releases.
 //
-// Each observation's score is the battery's pass rate (`gate`), run with
-// `--gate-only`: the corpus predates the readiness standard and records the
-// manifest's verdicts only, until it is recollected under the standard.
+// Both scripts run every server with the same ISOLATION environment, so no
+// server reaches the machine's Kubernetes context or Docker daemon and a
+// re-run sees what the collector saw.
 //
-// Observations may also carry `tool_count` and `catalog_tokens`; those move
-// with every upstream release, are informational, and are not compared.
+// Observations also carry `areas`, `tool_count`, and `catalog_tokens`;
+// those are informational and are not compared.
 //
 // A server that legitimately fixed or broke something moves its score —
 // that is a deliberate corpus refresh: run scripts/corpus/collect.sh and
@@ -20,7 +20,7 @@
 // Usage: node scripts/corpus/verify.mjs [--json]
 //   --json   emit the per-server result document instead of prose
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,16 +28,14 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const CORPUS_REL = "data/readiness-corpus.json";
 const BINARY = path.join(ROOT, "target/release/mcpeval");
-const TIMEOUT_MS = 120_000;
+// The standard battery calls every read-only tool; a server whose calls
+// all time out costs at most a few minutes.
+const TIMEOUT_MS = 600_000;
 
-const MANIFEST = {
-  version: 1,
-  probes: [
-    { id: "discovery-budget", probe: "discovery-cost", access: "read_only", max_tools: 80, max_schema_bytes: 400000 },
-    { id: "token-budget", probe: "token-cost", access: "read_only", max_total_tokens: 200000, max_tool_tokens: 40000 },
-    { id: "pages", probe: "pagination", access: "read_only", max_pages: 5 },
-    { id: "surfaces", probe: "surface-listing", access: "read_only", max_pages: 5 },
-  ],
+/** Environment both scripts give every server; collect.sh exports the same. */
+const ISOLATION = {
+  KUBECONFIG: "/dev/null",
+  DOCKER_HOST: "unix:///nonexistent/docker.sock",
 };
 
 const NPM_SERVERS = new Map([
@@ -90,17 +88,16 @@ function commandFor(server) {
   return null;
 }
 
-export { commandFor, MANIFEST, NPM_PACKAGES, UVX_PACKAGES, NPM_SERVERS, UVX_SERVERS };
+export { commandFor, ISOLATION, NPM_PACKAGES, UVX_PACKAGES, NPM_SERVERS, UVX_SERVERS };
 
-/** The battery's pass rate, 0-100; null when no manifest case ran. */
-export function batteryScore(document) {
-  const gate = document?.gate;
-  if (!gate || !(gate.total > 0)) return null;
-  return Math.round((100 * gate.passed) / gate.total);
+/** The readiness score; null when the standard battery could not start. */
+export function readinessScore(document) {
+  const score = document?.readiness?.score;
+  return Number.isInteger(score) ? score : null;
 }
 
-export function probeArguments(server, manifestPath) {
-  return ["probe", "--server", server, "--manifest", manifestPath, "--gate-only", "--format", "json"];
+export function scoreArguments(server) {
+  return ["score", "--server", server, "--format", "json"];
 }
 
 // label -> package name; kept here rather than re-parsed from collect.sh so
@@ -151,7 +148,7 @@ function packageFor(server) {
 }
 
 function observed(document) {
-  const score = batteryScore(document);
+  const score = readinessScore(document);
   return score === null
     ? { status: "could-not-run", observed: null }
     : { status: "observed", observed: score };
@@ -160,21 +157,19 @@ function observed(document) {
 async function probeScore(server, work) {
   const command = commandFor(server);
   if (!command) return { status: "unknown-server", expected: null, observed: null };
-  const manifestPath = path.join(work, `${server}.manifest.json`);
-  await writeFile(manifestPath, JSON.stringify(MANIFEST));
   const home = path.join(work, `${server}-home`);
   try {
-    const stdout = execFileSync(BINARY, [...probeArguments(server, manifestPath), "--", ...command], {
+    const stdout = execFileSync(BINARY, [...scoreArguments(server), "--", ...command], {
       timeout: TIMEOUT_MS,
       encoding: "utf8",
       cwd: work,
-      env: { ...process.env, MCPEVAL_HOME: home },
+      env: { ...process.env, ...ISOLATION, MCPEVAL_HOME: home },
       stdio: ["ignore", "pipe", "ignore"],
     });
     return observed(JSON.parse(stdout));
   } catch (error) {
-    // A failing battery exits non-zero but still prints the JSON report on
-    // stdout; only a missing report counts as "could not run".
+    // A non-zero exit can still print the JSON report on stdout; only a
+    // missing report or readiness counts as "could not run".
     if (error.stdout) {
       try {
         return observed(JSON.parse(error.stdout));
@@ -192,7 +187,7 @@ export async function verifyCorpus(options = {}) {
     throw new Error("build the release binary first: cargo build --release");
   }
   const corpus = JSON.parse(await readFile(path.join(ROOT, CORPUS_REL), "utf8"));
-  if (corpus.schema !== "mcpeval.readiness-corpus/v1") {
+  if (corpus.schema !== "mcpeval.readiness-corpus/v2" || !corpus.standard) {
     throw new Error(`unsupported corpus schema ${corpus.schema}`);
   }
   const work = options.work ?? (await mkdtemp(path.join(os.tmpdir(), "mcpeval-corpus-verify-")));

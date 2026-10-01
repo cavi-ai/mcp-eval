@@ -6,14 +6,14 @@ import path from "node:path";
 import test from "node:test";
 
 import {
-  MANIFEST,
+  ISOLATION,
   NPM_PACKAGES,
   NPM_SERVERS,
   UVX_PACKAGES,
   UVX_SERVERS,
-  batteryScore,
   commandFor,
-  probeArguments,
+  readinessScore,
+  scoreArguments,
 } from "./verify.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -78,20 +78,26 @@ function packageFromEntry(collect, name, label) {
   return entry.split("|")[1];
 }
 
-test("the corpus score is the battery's pass rate, not the readiness standard", async () => {
-  assert.equal(batteryScore({ gate: { passed: 3, total: 4 }, readiness: { score: 30 } }), 75);
-  assert.equal(batteryScore({ gate: { passed: 4, total: 4 } }), 100);
-  assert.equal(batteryScore({ gate: { passed: 1, total: 8 } }), 13);
-  assert.equal(batteryScore({ gate: null }), null);
-  assert.equal(batteryScore({ gate: { passed: 0, total: 0 } }), null);
-  assert.equal(batteryScore({}), null);
+test("the corpus score is the standard's readiness", async () => {
+  assert.equal(readinessScore({ gate: null, readiness: { score: 71, standard: "s" } }), 71);
+  assert.equal(readinessScore({ readiness: { score: 0, standard: "s" } }), 0);
+  assert.equal(readinessScore({ readiness: null, readiness_error: "transport-closed" }), null);
+  assert.equal(readinessScore({}), null);
 
-  // Both scripts skip the standard battery: the corpus records the
-  // manifest's verdicts only.
-  assert.ok(probeArguments("demo", "m.json").includes("--gate-only"));
+  // Both scripts run the standard battery with no manifest.
+  assert.deepEqual(scoreArguments("demo"), ["score", "--server", "demo", "--format", "json"]);
   const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
-  const probeLine = collect.split("\n").find((line) => line.includes('"$BIN" probe'));
-  assert.ok(probeLine?.includes("--gate-only"), `collector probe line: ${probeLine}`);
+  const scoreLine = collect.split("\n").find((line) => line.includes('"$BIN" score'));
+  assert.ok(scoreLine?.includes("--format json"), `collector score line: ${scoreLine}`);
+  assert.ok(!collect.includes("--manifest"), "collector still runs a manifest");
+});
+
+test("both scripts keep servers away from this machine's cluster and containers", async () => {
+  const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
+  assert.ok(Object.keys(ISOLATION).length >= 2);
+  for (const [name, value] of Object.entries(ISOLATION)) {
+    assert.ok(collect.includes(`export ${name}=${value}\n`), `collector does not export ${name}=${value}`);
+  }
 });
 
 test("every corpus observation has a launch command", async () => {
@@ -115,57 +121,58 @@ function heredoc(collect, opener, terminator) {
   return collect.slice(body, end);
 }
 
-test("collector writes the drift check's battery and catalog measurements", async () => {
+test("collector records readiness, areas, and catalog measurements", async () => {
   const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
-  const manifest = heredoc(collect, `cat > "$MANIFEST" <<'EOF'`, "EOF");
-  const writer = heredoc(collect, `python3 - "$REPORTS" "$MANIFEST" "$OUT" <<'PYEOF'`, "PYEOF");
+  const writer = heredoc(collect, `python3 - "$REPORTS" "$OUT" <<'PYEOF'`, "PYEOF");
 
   const work = await mkdtemp(path.join(os.tmpdir(), "mcpeval-corpus-collect-"));
   const reports = path.join(work, "reports");
   await mkdir(reports);
-  const manifestPath = path.join(work, "corpus.manifest.json");
-  await writeFile(manifestPath, manifest);
-  // The standard's readiness is present but never recorded.
-  const report = (passed, total, cases) =>
-    JSON.stringify({ gate: { passed, total }, readiness: { score: 30 }, cases });
+  const STANDARD = "mcpeval-standard/1";
+  const report = (score, tools, tokens) =>
+    JSON.stringify({
+      schema: "mcpeval.probe-report/v2",
+      gate: null,
+      readiness: {
+        standard: STANDARD,
+        score,
+        surface: { tools, read_only: tools, writers: 0, exercised: 0 },
+        areas: [
+          { name: "protocol", weight: 15, score: 100, measurements: {}, checks: [] },
+          { name: "context", weight: 15, score: 90, measurements: { catalog_tokens: tokens }, checks: [] },
+          { name: "coverage", weight: 15, score: score, measurements: {}, checks: [] },
+        ],
+      },
+      cases: [],
+    });
   for (let index = 0; index < 10; index += 1) {
-    await writeFile(
-      path.join(reports, `server-${index}.json`),
-      report(100 - index, 100, [
-        { probe: "discovery-cost", measurements: { tool_count: index + 1, schema_bytes: 10 } },
-        { probe: "token-cost", measurements: { tool_count: index + 1, total_tokens: 100 * (index + 1) } },
-        { probe: "pagination", measurements: { pages: 1 } },
-      ]),
-    );
+    await writeFile(path.join(reports, `server-${index}.json`), report(90 - index, index + 1, 100 * (index + 1)));
   }
-  await writeFile(path.join(reports, "unmeasured.json"), report(1, 2, [{ probe: "pagination", measurements: {} }]));
   await writeFile(path.join(reports, "could-not-run.json"), "");
-  await writeFile(path.join(reports, "no-gate.json"), JSON.stringify({ gate: null, cases: [] }));
   await writeFile(
-    path.join(reports, "transport.json"),
-    report(1, 2, [{ probe: "pagination", reason: "transport-timeout", measurements: {} }]),
+    path.join(reports, "unmeasured.json"),
+    JSON.stringify({ schema: "mcpeval.probe-report/v2", gate: null, readiness: null, readiness_error: "transport-closed", cases: [] }),
   );
-  await writeFile(
-    path.join(reports, "empty.json"),
-    report(1, 1, [{ probe: "discovery-cost", measurements: { tool_count: 0 } }]),
-  );
+  await writeFile(path.join(reports, "empty.json"), report(20, 0, 0));
   const out = path.join(work, "corpus.json");
-  execFileSync("python3", ["-", reports, manifestPath, out], { input: writer, stdio: ["pipe", "ignore", "inherit"] });
+  execFileSync("python3", ["-", reports, out], { input: writer, stdio: ["pipe", "ignore", "inherit"] });
 
   const document = JSON.parse(await readFile(out, "utf8"));
-  assert.deepEqual(document.battery, MANIFEST.probes.map((probe) => probe.probe));
-  assert.equal(document.schema, "mcpeval.readiness-corpus/v1");
+  assert.equal(document.schema, "mcpeval.readiness-corpus/v2");
+  assert.equal(document.standard, STANDARD);
+  assert.equal(document.battery, undefined);
   assert.deepEqual(
     document.observations.find((observation) => observation.server === "server-2"),
-    { server: "server-2", score: 98, tool_count: 3, catalog_tokens: 300 },
+    {
+      server: "server-2",
+      score: 88,
+      areas: { protocol: 100, context: 90, coverage: 88 },
+      tool_count: 3,
+      catalog_tokens: 300,
+    },
   );
-  assert.deepEqual(
-    document.observations.find((observation) => observation.server === "unmeasured"),
-    { server: "unmeasured", score: 50 },
-  );
-  assert.equal(document.observations.length, 11);
-  assert.ok(!document.observations.some((observation) => observation.server === "could-not-run"));
-  assert.ok(!document.observations.some((observation) => observation.server === "no-gate"));
-  assert.ok(!document.observations.some((observation) => observation.server === "transport"));
-  assert.ok(!document.observations.some((observation) => observation.server === "empty"));
+  assert.equal(document.observations.length, 10);
+  for (const skipped of ["could-not-run", "unmeasured", "empty"]) {
+    assert.ok(!document.observations.some((observation) => observation.server === skipped), skipped);
+  }
 });

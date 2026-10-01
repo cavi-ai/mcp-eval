@@ -12,9 +12,8 @@ use serde_json::{json, Value};
 use crate::probe::ProbeReport;
 use crate::standard::{Exercise, Honesty, Observations, ToolClass, ToolObservation};
 
-/// The standard this build scores against. `-draft` until every area of
-/// standard/1 has landed; no release carries a draft.
-pub const STANDARD: &str = "mcpeval-standard/1-draft";
+/// The standard this build scores against.
+pub const STANDARD: &str = "mcpeval-standard/1";
 
 /// Catalog tokens at or under this earn full marks (1% of a 200k window).
 pub const CATALOG_FULL_TOKENS: u64 = 2_000;

@@ -11,7 +11,9 @@ import {
   NPM_SERVERS,
   UVX_PACKAGES,
   UVX_SERVERS,
+  batteryScore,
   commandFor,
+  probeArguments,
 } from "./verify.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -76,6 +78,22 @@ function packageFromEntry(collect, name, label) {
   return entry.split("|")[1];
 }
 
+test("the corpus score is the battery's pass rate, not the readiness standard", async () => {
+  assert.equal(batteryScore({ gate: { passed: 3, total: 4 }, readiness: { score: 30 } }), 75);
+  assert.equal(batteryScore({ gate: { passed: 4, total: 4 } }), 100);
+  assert.equal(batteryScore({ gate: { passed: 1, total: 8 } }), 13);
+  assert.equal(batteryScore({ gate: null }), null);
+  assert.equal(batteryScore({ gate: { passed: 0, total: 0 } }), null);
+  assert.equal(batteryScore({}), null);
+
+  // Both scripts skip the standard battery: the corpus records the
+  // manifest's verdicts only.
+  assert.ok(probeArguments("demo", "m.json").includes("--gate-only"));
+  const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
+  const probeLine = collect.split("\n").find((line) => line.includes('"$BIN" probe'));
+  assert.ok(probeLine?.includes("--gate-only"), `collector probe line: ${probeLine}`);
+});
+
 test("every corpus observation has a launch command", async () => {
   const corpus = JSON.parse(
     await readFile(path.join(ROOT, "data/readiness-corpus.json"), "utf8"),
@@ -107,26 +125,29 @@ test("collector writes the drift check's battery and catalog measurements", asyn
   await mkdir(reports);
   const manifestPath = path.join(work, "corpus.manifest.json");
   await writeFile(manifestPath, manifest);
-  const report = (score, cases) => JSON.stringify({ readiness: { score }, cases });
+  // The standard's readiness is present but never recorded.
+  const report = (passed, total, cases) =>
+    JSON.stringify({ gate: { passed, total }, readiness: { score: 30 }, cases });
   for (let index = 0; index < 10; index += 1) {
     await writeFile(
       path.join(reports, `server-${index}.json`),
-      report(100 - index, [
+      report(100 - index, 100, [
         { probe: "discovery-cost", measurements: { tool_count: index + 1, schema_bytes: 10 } },
         { probe: "token-cost", measurements: { tool_count: index + 1, total_tokens: 100 * (index + 1) } },
         { probe: "pagination", measurements: { pages: 1 } },
       ]),
     );
   }
-  await writeFile(path.join(reports, "unmeasured.json"), report(50, [{ probe: "pagination", measurements: {} }]));
+  await writeFile(path.join(reports, "unmeasured.json"), report(1, 2, [{ probe: "pagination", measurements: {} }]));
   await writeFile(path.join(reports, "could-not-run.json"), "");
+  await writeFile(path.join(reports, "no-gate.json"), JSON.stringify({ gate: null, cases: [] }));
   await writeFile(
     path.join(reports, "transport.json"),
-    report(50, [{ probe: "pagination", reason: "transport-timeout", measurements: {} }]),
+    report(1, 2, [{ probe: "pagination", reason: "transport-timeout", measurements: {} }]),
   );
   await writeFile(
     path.join(reports, "empty.json"),
-    report(100, [{ probe: "discovery-cost", measurements: { tool_count: 0 } }]),
+    report(1, 1, [{ probe: "discovery-cost", measurements: { tool_count: 0 } }]),
   );
   const out = path.join(work, "corpus.json");
   execFileSync("python3", ["-", reports, manifestPath, out], { input: writer, stdio: ["pipe", "ignore", "inherit"] });
@@ -144,6 +165,7 @@ test("collector writes the drift check's battery and catalog measurements", asyn
   );
   assert.equal(document.observations.length, 11);
   assert.ok(!document.observations.some((observation) => observation.server === "could-not-run"));
+  assert.ok(!document.observations.some((observation) => observation.server === "no-gate"));
   assert.ok(!document.observations.some((observation) => observation.server === "transport"));
   assert.ok(!document.observations.some((observation) => observation.server === "empty"));
 });

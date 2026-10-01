@@ -70,8 +70,14 @@ jobs:
           MARKDOWN: ${{ steps.probe.outputs.markdown }}
         run: |
           test "$PASSED" = true
-          test "$READINESS" = 100
-          test "$(jq -r .schema "$REPORT")" = mcpeval.probe-report/v1
+          test "$(jq -r .schema "$REPORT")" = mcpeval.probe-report/v2
+          test "$(jq -r .gate.passed "$REPORT")" = "$(jq -r .gate.total "$REPORT")"
+          # The clean demo loses points by design; the output must be the
+          # report's own score under a named standard.
+          test "$READINESS" = "$(jq -r .readiness.score "$REPORT")"
+          test "$READINESS" -ge 1
+          test "$READINESS" -le 100
+          jq -e '.readiness.standard | startswith("mcpeval-standard/")' "$REPORT" > /dev/null
           grep -q -x -F '## mcp-eval report — demo' "$MARKDOWN"
 
   action-scripts:

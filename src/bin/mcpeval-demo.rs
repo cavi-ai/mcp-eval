@@ -39,10 +39,11 @@ enum Aspect {
     Flaky,
     Undescribed,
     UnknownMethod,
+    LyingErrors,
 }
 
 impl Aspect {
-    const ALL: [Aspect; 18] = [
+    const ALL: [Aspect; 19] = [
         Aspect::Schema,
         Aspect::Fidelity,
         Aspect::UnstableErrors,
@@ -61,6 +62,7 @@ impl Aspect {
         Aspect::Flaky,
         Aspect::Undescribed,
         Aspect::UnknownMethod,
+        Aspect::LyingErrors,
     ];
 
     fn as_str(self) -> &'static str {
@@ -83,6 +85,7 @@ impl Aspect {
             Aspect::Flaky => "flaky",
             Aspect::Undescribed => "undescribed",
             Aspect::UnknownMethod => "unknown-method",
+            Aspect::LyingErrors => "lying-errors",
         }
     }
 
@@ -592,6 +595,28 @@ struct ToolCall<'a> {
     stdout: &'a mut dyn Write,
 }
 
+/// The first argument whose JSON type contradicts the declared property
+/// type, as a refusal message.
+fn invalid_argument(tool: &str, arguments: &Value, broken: Option<Aspect>) -> Option<String> {
+    let entry = catalog(broken)
+        .into_iter()
+        .find(|entry| entry["name"] == tool)?;
+    let properties = entry["inputSchema"]["properties"].as_object()?.clone();
+    arguments.as_object()?.iter().find_map(|(key, value)| {
+        let expected = properties.get(key)?.get("type")?.as_str()?;
+        let matches = match expected {
+            "string" => value.is_string(),
+            "integer" => value.is_i64() || value.is_u64(),
+            "number" => value.is_number(),
+            "boolean" => value.is_boolean(),
+            "object" => value.is_object(),
+            "array" => value.is_array(),
+            _ => true,
+        };
+        (!matches).then(|| format!("invalid arguments: {key} must be {expected}"))
+    })
+}
+
 fn call_tool(
     ToolCall {
         params,
@@ -611,6 +636,12 @@ fn call_tool(
         .unwrap_or_default()
         .to_owned();
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
+    // The defect under test skips validation: invalid input "succeeds".
+    if broken != Some(Aspect::LyingErrors) {
+        if let Some(message) = invalid_argument(&name, &arguments, broken) {
+            return Err((-32602, message, false));
+        }
+    }
     *calls += 1;
     if name == "slow_read" {
         // A cancellable long-running call: sleep in short slices while

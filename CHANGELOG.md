@@ -19,7 +19,9 @@
   markdown reports (`probe` and `score`) place a readiness score among it
   only when the corpus names the report's standard; v1 corpora are not
   read. `scripts/corpus/collect.sh` and the drift check run every server
-  with no Kubernetes context and no Docker daemon.
+  with no Kubernetes context and no Docker daemon. The drift check fails
+  when any area other than reliability moves, or reliability moves by more
+  than 10 (one latency band on every tool).
 - README and installation docs list the Homebrew, npm, and Cargo install
   commands, and the quickstart runs the installed `mcpeval` and
   `mcpeval-demo` instead of `./target/release` paths.

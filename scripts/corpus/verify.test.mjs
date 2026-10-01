@@ -11,7 +11,9 @@ import {
   NPM_SERVERS,
   UVX_PACKAGES,
   UVX_SERVERS,
+  RELIABILITY_TOLERANCE,
   commandFor,
+  driftOf,
   readinessScore,
   scoreArguments,
 } from "./verify.mjs";
@@ -90,6 +92,25 @@ test("the corpus score is the standard's readiness", async () => {
   const scoreLine = collect.split("\n").find((line) => line.includes('"$BIN" score'));
   assert.ok(scoreLine?.includes("--format json"), `collector score line: ${scoreLine}`);
   assert.ok(!collect.includes("--manifest"), "collector still runs a manifest");
+});
+
+test("drift: every area but reliability must match; reliability may move one latency band", () => {
+  const areas = { protocol: 100, catalog: 64, context: 32, "error-honesty": 0, reliability: 91, coverage: 100 };
+  const expected = { server: "notion", score: 66, areas };
+  const observed = (changes) => ({ score: 66, areas: { ...areas, ...changes } });
+  assert.deepEqual(driftOf(expected, observed({})), []);
+  // Latency depends on the machine and network: one band on every tool.
+  assert.deepEqual(driftOf(expected, { ...observed({ reliability: 100 }), score: 67 }), []);
+  assert.deepEqual(driftOf(expected, observed({ reliability: 91 - RELIABILITY_TOLERANCE })), []);
+  assert.deepEqual(driftOf(expected, observed({ reliability: 91 - RELIABILITY_TOLERANCE - 1 })), [
+    `reliability 91→${90 - RELIABILITY_TOLERANCE}`,
+  ]);
+  // Every other area is a function of the server's code: exact.
+  assert.deepEqual(driftOf(expected, observed({ catalog: 65 })), ["catalog 64→65"]);
+  assert.deepEqual(driftOf(expected, observed({ coverage: undefined })), ["coverage 100→none"]);
+  // An observation without areas compares the score.
+  assert.deepEqual(driftOf({ server: "a", score: 40 }, { score: 41, areas: {} }), ["score 40→41"]);
+  assert.equal(RELIABILITY_TOLERANCE, 10);
 });
 
 test("both scripts keep servers away from this machine's cluster and containers", async () => {

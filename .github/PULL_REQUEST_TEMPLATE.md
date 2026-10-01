@@ -19,4 +19,4 @@
 ## Contract impact
 
 - [ ] No report or manifest schema change
-- [ ] `mcpeval.probe-report/v1` or manifest `version` handling updated
+- [ ] `mcpeval.probe-report/v2`, `mcpeval.probe-diff/v2`, or manifest `version` handling updated

@@ -5,6 +5,10 @@
 // corpus's only claim is "deterministic verdict, reproducible by anyone";
 // this is the check that keeps the claim honest between releases.
 //
+// Each observation's score is the battery's pass rate (`gate`), run with
+// `--gate-only`: the corpus predates the readiness standard and records the
+// manifest's verdicts only, until it is recollected under the standard.
+//
 // Observations may also carry `tool_count` and `catalog_tokens`; those move
 // with every upstream release, are informational, and are not compared.
 //
@@ -88,6 +92,17 @@ function commandFor(server) {
 
 export { commandFor, MANIFEST, NPM_PACKAGES, UVX_PACKAGES, NPM_SERVERS, UVX_SERVERS };
 
+/** The battery's pass rate, 0-100; null when no manifest case ran. */
+export function batteryScore(document) {
+  const gate = document?.gate;
+  if (!gate || !(gate.total > 0)) return null;
+  return Math.round((100 * gate.passed) / gate.total);
+}
+
+export function probeArguments(server, manifestPath) {
+  return ["probe", "--server", server, "--manifest", manifestPath, "--gate-only", "--format", "json"];
+}
+
 // label -> package name; kept here rather than re-parsed from collect.sh so
 // the drift check is explicit about what each label launches. collect.sh's
 // arrays and these maps must agree; the tests below cross-check them.
@@ -135,6 +150,13 @@ function packageFor(server) {
   return NPM_PACKAGES.get(server) ?? UVX_PACKAGES.get(server);
 }
 
+function observed(document) {
+  const score = batteryScore(document);
+  return score === null
+    ? { status: "could-not-run", observed: null }
+    : { status: "observed", observed: score };
+}
+
 async function probeScore(server, work) {
   const command = commandFor(server);
   if (!command) return { status: "unknown-server", expected: null, observed: null };
@@ -142,32 +164,20 @@ async function probeScore(server, work) {
   await writeFile(manifestPath, JSON.stringify(MANIFEST));
   const home = path.join(work, `${server}-home`);
   try {
-    const stdout = execFileSync(BINARY, [
-      "probe",
-      "--server",
-      server,
-      "--manifest",
-      manifestPath,
-      "--format",
-      "json",
-      "--",
-      ...command,
-    ], {
+    const stdout = execFileSync(BINARY, [...probeArguments(server, manifestPath), "--", ...command], {
       timeout: TIMEOUT_MS,
       encoding: "utf8",
       cwd: work,
       env: { ...process.env, MCPEVAL_HOME: home },
       stdio: ["ignore", "pipe", "ignore"],
     });
-    const document = JSON.parse(stdout);
-    return { status: "observed", observed: document.readiness.score };
+    return observed(JSON.parse(stdout));
   } catch (error) {
     // A failing battery exits non-zero but still prints the JSON report on
     // stdout; only a missing report counts as "could not run".
     if (error.stdout) {
       try {
-        const document = JSON.parse(error.stdout);
-        return { status: "observed", observed: document.readiness.score };
+        return observed(JSON.parse(error.stdout));
       } catch {
         // fall through
       }

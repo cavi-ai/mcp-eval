@@ -92,10 +92,55 @@ fn the_clean_demo_loses_points_only_for_its_deliberate_fixtures() {
         readiness["surface"],
         json!({"tools": 12, "read_only": 10, "writers": 2, "exercised": 10})
     );
+    assert_eq!(area(&document, "catalog"), 63);
     assert_eq!(area(&document, "context"), 100);
     assert_eq!(area(&document, "reliability"), 94);
     assert_eq!(area(&document, "coverage"), 100);
-    assert_eq!(readiness["score"], 98);
+    assert_eq!(readiness["score"], 88);
+    // No demo tool declares outputSchema; two descriptions are under 40
+    // characters; break_session omits readOnlyHint.
+    let no_schema = |tool| {
+        (
+            "catalog.output-schema",
+            Some(tool),
+            "catalog-no-output-schema",
+        )
+    };
+    let mut catalog = vec![
+        (
+            "catalog.description",
+            Some("describe_status"),
+            "catalog-short-description",
+        ),
+        no_schema("describe_status"),
+        no_schema("read_counter"),
+        no_schema("shared_read"),
+        no_schema("flaky_read"),
+        no_schema("slow_read"),
+        (
+            "catalog.description",
+            Some("break_session"),
+            "catalog-short-description",
+        ),
+        (
+            "catalog.read-only-declared",
+            Some("break_session"),
+            "catalog-read-only-undeclared",
+        ),
+        no_schema("break_session"),
+    ];
+    catalog.extend(
+        [
+            "recover_session",
+            "session_status",
+            "report_weather",
+            "sampled_read",
+            "elicited_read",
+            "publish_status",
+        ]
+        .map(no_schema),
+    );
+    assert_eq!(lost_in(&document, "catalog"), owned(&catalog));
     // sampled_read and elicited_read issue server-to-client requests
     // mid-call; declined, they still count as ordinary successful calls.
     assert_eq!(
@@ -118,7 +163,7 @@ fn two_runs_of_one_build_score_the_same() {
     let (_, first) = score(&home(), &[demo()]);
     let (_, second) = score(&home(), &[demo()]);
     assert_eq!(first["readiness"]["score"], second["readiness"]["score"]);
-    for name in ["context", "reliability", "coverage"] {
+    for name in ["catalog", "context", "reliability", "coverage"] {
         assert_eq!(area(&first, name), area(&second, name), "{name}");
     }
     assert_eq!(lost(&first), lost(&second));
@@ -133,10 +178,33 @@ fn each_new_demo_aspect_lowers_only_reliability() {
             "{aspect}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
+        assert_eq!(area(&document, "catalog"), 63, "{aspect}");
         assert_eq!(area(&document, "context"), 100, "{aspect}");
         assert_eq!(area(&document, "coverage"), 100, "{aspect}");
         assert_eq!(area(&document, "reliability"), reliability, "{aspect}");
     }
+}
+
+#[test]
+fn undescribed_lowers_only_the_catalog() {
+    let (_, clean) = score(&home(), &[demo()]);
+    let (output, document) = score(&home(), &[demo(), "--broken", "undescribed"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(area(&document, "catalog"), 35);
+    for name in ["context", "reliability", "coverage"] {
+        assert_eq!(area(&document, name), area(&clean, name), "{name}");
+    }
+    assert!(lost_in(&document, "catalog").contains(
+        &owned(&[(
+            "catalog.params-described",
+            Some("report_weather"),
+            "catalog-undescribed-params"
+        )])[0]
+    ));
 }
 
 #[test]
@@ -255,7 +323,7 @@ fn probe_reports_the_gate_and_the_standard_separately_and_journals_neither_stand
     assert_eq!(document["passed"], false);
     assert_eq!(document["gate"], json!({"passed": 0, "total": 1}));
     assert_eq!(
-        document["readiness"]["score"], 98,
+        document["readiness"]["score"], 88,
         "the gate does not move the standard"
     );
     let journaled = std::fs::read_dir(dir.join("store"))
@@ -314,7 +382,7 @@ fn text_output_names_every_lost_point_with_its_hint() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("demo readiness 98/100 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft"),
+        stdout.contains("demo readiness 88/100 catalog=63 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft"),
         "{stdout}"
     );
     assert!(
@@ -331,6 +399,52 @@ fn text_output_names_every_lost_point_with_its_hint() {
     assert!(
         !stdout.contains(" gate "),
         "score runs no manifest: {stdout}"
+    );
+    // Twelve tools lose catalog.output-schema; its hint prints once.
+    assert_eq!(
+        stdout
+            .matches("lost catalog.output-schema score=0 tool=")
+            .count(),
+        12,
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .matches("hint: declare outputSchema and return structuredContent")
+            .count(),
+        1,
+        "{stdout}"
+    );
+}
+
+#[test]
+fn markdown_lost_points_give_each_hint_once() {
+    let output = Command::new(bin())
+        .args([
+            "score",
+            "--server",
+            "demo",
+            "--format",
+            "markdown",
+            "--",
+            demo(),
+        ])
+        .env("MCPEVAL_HOME", home())
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("### Lost points"), "{stdout}");
+    assert_eq!(
+        stdout.matches("- **`catalog.output-schema`** `").count(),
+        12,
+        "{stdout}"
+    );
+    assert_eq!(
+        stdout
+            .matches("declare outputSchema and return structuredContent")
+            .count(),
+        1,
+        "{stdout}"
     );
 }
 
@@ -381,7 +495,7 @@ fn committed_v1_baselines_render_and_diff_as_not_comparable() {
     assert_eq!(document["schema"], "mcpeval.probe-diff/v2");
     assert_eq!(document["readiness"]["comparable"], false);
     assert_eq!(document["readiness"]["baseline"], 100);
-    assert_eq!(document["readiness"]["current"], 98);
+    assert_eq!(document["readiness"]["current"], 88);
 }
 
 #[test]
@@ -397,7 +511,7 @@ fn report_rerenders_a_v2_document_with_its_lost_points() {
         .output()
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("demo readiness 98/100"), "{stdout}");
+    assert!(stdout.contains("demo readiness 88/100"), "{stdout}");
     assert!(
         stdout.contains("lost reliability.latency score=50 tool=slow_read"),
         "{stdout}"

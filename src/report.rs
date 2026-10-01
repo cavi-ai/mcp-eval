@@ -275,19 +275,27 @@ pub fn render_probe_markdown(
                 .collect();
             if !lost.is_empty() {
                 out.push_str("### Lost points\n\n");
+                // One hint per reason: a catalog-wide defect loses a check on
+                // every tool.
+                let mut hinted = Vec::new();
                 for check in lost {
                     let tool = check
                         .tool
                         .as_deref()
                         .map(|tool| format!(" `{tool}`"))
                         .unwrap_or_default();
+                    let hint = if hinted.contains(&check.reason) {
+                        String::new()
+                    } else {
+                        hinted.push(check.reason);
+                        format!(": {}", crate::remediation::check_hint(check.reason))
+                    };
                     writeln!(
                         out,
-                        "- **`{}`**{tool} scored {} (`{}`): {}",
+                        "- **`{}`**{tool} scored {} (`{}`){hint}",
                         check.id.as_str(),
                         check.score,
                         check.reason.as_str(),
-                        crate::remediation::check_hint(check.reason)
                     )
                     .ok();
                 }

@@ -435,6 +435,7 @@ fn run_probe_tool_call(arguments: &Value) -> anyhow::Result<Value> {
             allow_remote_http: false,
             standard: true,
             confirm_read_only: false,
+            skip_tools: Vec::new(),
         },
         &mut store,
     )?;

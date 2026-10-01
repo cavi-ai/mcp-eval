@@ -148,6 +148,10 @@ pub enum Command {
         /// destructiveHint are read-only, so the standard battery calls them.
         #[arg(long)]
         confirm_read_only: bool,
+        /// Never call this tool in the standard battery; it scores as
+        /// unexercised. Repeat for each tool.
+        #[arg(long = "skip-tool", value_name = "NAME")]
+        skip_tools: Vec<String>,
         /// Streamable HTTP endpoint instead of a stdio command.
         #[arg(long)]
         url: Option<String>,
@@ -174,6 +178,10 @@ pub enum Command {
         /// destructiveHint are read-only, so the standard battery calls them.
         #[arg(long)]
         confirm_read_only: bool,
+        /// Never call this tool in the standard battery; it scores as
+        /// unexercised. Repeat for each tool.
+        #[arg(long = "skip-tool", value_name = "NAME")]
+        skip_tools: Vec<String>,
         /// Streamable HTTP endpoint instead of a stdio command.
         #[arg(long)]
         url: Option<String>,

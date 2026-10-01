@@ -12,9 +12,8 @@ use serde_json::{json, Value};
 use crate::probe::ProbeReport;
 use crate::standard::{Exercise, Honesty, Observations, ToolClass, ToolObservation};
 
-/// The standard this build scores against. `-draft` until every area of
-/// standard/1 has landed; no release carries a draft.
-pub const STANDARD: &str = "mcpeval-standard/1-draft";
+/// The standard this build scores against.
+pub const STANDARD: &str = "mcpeval-standard/1";
 
 /// Catalog tokens at or under this earn full marks (1% of a 200k window).
 pub const CATALOG_FULL_TOKENS: u64 = 2_000;
@@ -91,6 +90,7 @@ pub enum CheckId {
     ReliabilityContention,
     ReliabilityPayload,
     ReliabilityNoneExercised,
+    ReliabilitySkipped,
     CoverageExercised,
     CatalogDescription,
     CatalogParamsDescribed,
@@ -119,6 +119,7 @@ impl CheckId {
         Self::ReliabilityContention,
         Self::ReliabilityPayload,
         Self::ReliabilityNoneExercised,
+        Self::ReliabilitySkipped,
         Self::CoverageExercised,
         Self::CatalogDescription,
         Self::CatalogParamsDescribed,
@@ -147,6 +148,7 @@ impl CheckId {
             Self::ReliabilityContention => "reliability.contention",
             Self::ReliabilityPayload => "reliability.payload",
             Self::ReliabilityNoneExercised => "reliability.none-exercised",
+            Self::ReliabilitySkipped => "reliability.skipped",
             Self::CoverageExercised => "coverage.exercised",
             Self::CatalogDescription => "catalog.description",
             Self::CatalogParamsDescribed => "catalog.params-described",
@@ -182,7 +184,8 @@ pub enum CheckReason {
     ReliabilityPayloadUnhandled,
     ReliabilityNoneExercised,
     CoverageUnannotated,
-    CoverageRequiredArguments,
+    CoverageUnsynthesizable,
+    CoverageSkipped,
     CoverageRejectedArguments,
     CoverageCallFailed,
     NoReadOnlyTools,
@@ -220,7 +223,8 @@ impl CheckReason {
         Self::ReliabilityPayloadUnhandled,
         Self::ReliabilityNoneExercised,
         Self::CoverageUnannotated,
-        Self::CoverageRequiredArguments,
+        Self::CoverageUnsynthesizable,
+        Self::CoverageSkipped,
         Self::CoverageRejectedArguments,
         Self::CoverageCallFailed,
         Self::NoReadOnlyTools,
@@ -258,7 +262,8 @@ impl CheckReason {
             Self::ReliabilityPayloadUnhandled => "reliability-payload-unhandled",
             Self::ReliabilityNoneExercised => "reliability-none-exercised",
             Self::CoverageUnannotated => "coverage-unannotated",
-            Self::CoverageRequiredArguments => "coverage-required-arguments",
+            Self::CoverageUnsynthesizable => "coverage-unsynthesizable",
+            Self::CoverageSkipped => "coverage-skipped",
             Self::CoverageRejectedArguments => "coverage-rejected-arguments",
             Self::CoverageCallFailed => "coverage-call-failed",
             Self::NoReadOnlyTools => "no-read-only-tools",
@@ -634,7 +639,25 @@ fn error_honesty(tools: &[ToolObservation]) -> AreaScore {
 fn reliability(observations: &Observations) -> AreaScore {
     let mut entries: Vec<f64> = Vec::new();
     let mut checks = Vec::new();
+    // A skipped tool the battery would have called scores 0, and so do the
+    // server-level cases it could have carried: skipping never pays.
+    let skipped = |tool: &&ToolObservation| {
+        tool.exercise == Some(Exercise::NotExercised(CheckReason::CoverageSkipped))
+    };
+    let any_skipped = observations.tools.iter().any(|tool| skipped(&tool));
     for tool in &observations.tools {
+        let name = Some(tool.name.as_str());
+        if skipped(&tool) {
+            entries.push(0.0);
+            checks.extend(lost(
+                CheckId::ReliabilitySkipped,
+                name,
+                0.0,
+                None,
+                CheckReason::CoverageSkipped,
+            ));
+            continue;
+        }
         let Some(Exercise::Exercised {
             consistent,
             median_latency_ms,
@@ -643,7 +666,6 @@ fn reliability(observations: &Observations) -> AreaScore {
         else {
             continue;
         };
-        let name = Some(tool.name.as_str());
         let consistency = if *consistent { 100.0 } else { 0.0 };
         let latency = latency_band(*median_latency_ms) as f64;
         checks.extend(lost(
@@ -689,7 +711,10 @@ fn reliability(observations: &Observations) -> AreaScore {
             CheckReason::ReliabilityPayloadUnhandled,
         ),
     ] {
-        if let Some(passed) = outcome {
+        if any_skipped {
+            entries.push(0.0);
+            checks.extend(lost(id, None, 0.0, None, CheckReason::CoverageSkipped));
+        } else if let Some(passed) = outcome {
             let value = if passed { 100.0 } else { 0.0 };
             entries.push(value);
             checks.extend(lost(id, None, value, None, reason));
@@ -1365,6 +1390,83 @@ mod tests {
                 observed: None,
                 reason: CheckReason::HonestyUntestable,
             }]
+        );
+    }
+
+    #[test]
+    fn skipping_a_tool_never_raises_the_score() {
+        // Ten read-only tools; `bad` fails both reliability checks and
+        // accepts invalid input. Skipping it must not pay off.
+        let base = |bad: Option<Exercise>, honesty| {
+            let mut tools: Vec<ToolObservation> = (0..9)
+                .map(|index| ToolObservation {
+                    honesty: Some(Honesty::Honest),
+                    ..tool(
+                        &format!("t{index}"),
+                        10,
+                        ToolClass::ReadOnly,
+                        exercised(true, 1),
+                    )
+                })
+                .collect();
+            tools.push(ToolObservation {
+                honesty,
+                ..tool("bad", 10, ToolClass::ReadOnly, bad)
+            });
+            Observations {
+                tools,
+                contention: Some(true),
+                payload: Some(true),
+                ..clean_demo()
+            }
+        };
+        let called = fold(&base(
+            exercised(false, 5_000),
+            Some(Honesty::Dishonest(CheckReason::HonestyAcceptedInvalid)),
+        ));
+        let skipped = fold(&base(
+            Some(Exercise::NotExercised(CheckReason::CoverageSkipped)),
+            Some(Honesty::Dishonest(CheckReason::CoverageSkipped)),
+        ));
+        assert!(
+            skipped.score <= called.score,
+            "skipped {} > called {}",
+            skipped.score,
+            called.score
+        );
+        for name in [Area::Reliability, Area::ErrorHonesty, Area::Coverage] {
+            assert!(
+                area(&skipped, name).score <= area(&called, name).score,
+                "{name:?}"
+            );
+        }
+        // The skipped tool and the server-level cases it could have
+        // carried score 0, each with the skip as the reason.
+        let reliability = area(&skipped, Area::Reliability);
+        assert_eq!(reliability.score, 75);
+        assert_eq!(
+            reliability
+                .checks
+                .iter()
+                .map(|check| (check.id, check.tool.as_deref(), check.reason))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    CheckId::ReliabilitySkipped,
+                    Some("bad"),
+                    CheckReason::CoverageSkipped
+                ),
+                (
+                    CheckId::ReliabilityContention,
+                    None,
+                    CheckReason::CoverageSkipped
+                ),
+                (
+                    CheckId::ReliabilityPayload,
+                    None,
+                    CheckReason::CoverageSkipped
+                ),
+            ]
         );
     }
 

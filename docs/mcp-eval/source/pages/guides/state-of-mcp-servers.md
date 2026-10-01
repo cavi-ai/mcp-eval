@@ -1,26 +1,67 @@
 # State of MCP servers
 
-How healthy are the MCP servers that agents actually use? This page is produced by running the mcp-eval deterministic battery — the same probes described in the evaluation-dimensions reference — against popular public servers, and publishing the raw distribution. No self-reported scores, no vendor claim: every number here is a deterministic verdict from the battery, reproducible by anyone with the CLI.
+How healthy are the MCP servers that agents actually use? This page is produced by scoring popular public servers with mcpeval's read-only standard battery (`mcpeval score`, readiness standard `mcpeval-standard/1`) and publishing the raw distribution. No self-reported scores, no vendor claim: every number here comes from the battery and is reproducible by anyone with the CLI.
 
 ## The corpus
 
-{{PRODUCT_VERSION}} ships a corpus of **33 public MCP servers** collected across the npm and uvx ecosystems (the reference servers plus the most-downloaded community servers that run without live credentials). Each server was probed with the same generic battery: discovery bounds, token budget, cursor pagination, and declared-surface listing.
+{{PRODUCT_VERSION}} ships a corpus of **33 public MCP servers** collected across the npm and uvx ecosystems (the reference servers plus the most-downloaded community servers). Each server ran as installed, without credentials, with no Kubernetes context and no Docker daemon.
 
 | Observation | Count |
 | --- | --- |
-| Battery pass rate 100/100 | 32 |
-| Battery pass rate below 100 | 1 |
-| Servers that could not complete the battery unaided | many require live credentials or services and are excluded |
+| Readiness 100/100 | 0 |
+| Readiness below 100 | 33 |
+| Median readiness | 42 |
+| Servers whose tools the battery may not call (no `readOnlyHint: true`) | 20 |
+
+| Server | Readiness | Protocol | Catalog | Context | Error honesty | Reliability | Coverage | Tools | Catalog tokens |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `sequential-thinking` | 99 | 100 | 100 | 91 | 100 | 100 | 100 | 1 | 1160 |
+| `memory` | 97 | 100 | 89 | 93 | 100 | 100 | 100 | 9 | 2688 |
+| `wikipedia-uvx` | 96 | 100 | 83 | 100 | 100 | 98 | 100 | 7 | 1021 |
+| `filesystem` | 95 | 100 | 84 | 88 | 100 | 100 | 100 | 14 | 3246 |
+| `searxng` | 95 | 100 | 80 | 93 | 100 | 100 | 100 | 4 | 1745 |
+| `context7` | 93 | 100 | 80 | 95 | 100 | 91 | 100 | 2 | 1216 |
+| `everything` | 93 | 100 | 72 | 100 | 100 | 95 | 100 | 13 | 1915 |
+| `arxiv` | 89 | 83 | 76 | 80 | 100 | 97 | 100 | 19 | 4463 |
+| `time` | 89 | 80 | 60 | 100 | 100 | 100 | 100 | 2 | 307 |
+| `git` | 87 | 80 | 52 | 100 | 100 | 100 | 100 | 12 | 1479 |
+| `desktop-commander` | 77 | 100 | 63 | 36 | 64 | 99 | 100 | 26 | 14361 |
+| `kubernetes` | 73 | 100 | 62 | 65 | 33 | 100 | 70 | 23 | 5965 |
+| `notion` | 65 | 100 | 64 | 32 | 0 | 89 | 100 | 24 | 19057 |
+| `airbnb` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 2 | 538 |
+| `docker` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 1 | 93 |
+| `markitdown` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 1 | 105 |
+| `terraform` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 10 | 1618 |
+| `browserbase` | 41 | 100 | 54 | 100 | 0 | 0 | 0 | 9 | 1334 |
+| `tavily` | 41 | 100 | 60 | 96 | 0 | 0 | 0 | 5 | 1923 |
+| `pandoc` | 40 | 100 | 60 | 88 | 0 | 0 | 0 | 1 | 1507 |
+| `puppeteer` | 40 | 100 | 49 | 100 | 0 | 0 | 0 | 7 | 614 |
+| `calculator` | 39 | 80 | 60 | 100 | 0 | 0 | 0 | 1 | 123 |
+| `docker-mcp` | 39 | 100 | 46 | 100 | 0 | 0 | 0 | 10 | 906 |
+| `fetch` | 39 | 83 | 60 | 100 | 0 | 0 | 0 | 1 | 276 |
+| `sqlite` | 39 | 100 | 46 | 100 | 0 | 0 | 0 | 10 | 1186 |
+| `sqlite-npx` | 38 | 100 | 38 | 100 | 0 | 0 | 0 | 8 | 775 |
+| `wikipedia-npm` | 38 | 100 | 40 | 100 | 0 | 0 | 0 | 2 | 141 |
+| `github` | 37 | 100 | 48 | 83 | 0 | 0 | 0 | 26 | 3967 |
+| `playwright` | 37 | 100 | 47 | 86 | 0 | 0 | 0 | 33 | 3467 |
+| `todoist` | 36 | 100 | 28 | 100 | 0 | 0 | 0 | 5 | 408 |
+| `mermaid` | 35 | 100 | 23 | 100 | 0 | 0 | 0 | 4 | 411 |
+| `ollama` | 35 | 100 | 24 | 100 | 0 | 0 | 0 | 9 | 775 |
+| `postgres` | 31 | 83 | 20 | 100 | 0 | 0 | 0 | 1 | 33 |
 
 ## What the data says
 
-**The catalog tax is universal — and measurable.** Every session pays the full `tools/list` catalog before the first tool call. Measured token budgets across the corpus (deterministic estimate: encoded bytes / 4): the reference `everything` server costs 1,915 tokens per session with 13 tools, `notion` costs 19,057 with 24 tools, `desktop-commander` 15,320 with 26 tools, while `markitdown` costs 105 with one tool. The corpus median is 1,186 catalog tokens. At $3/Mtok, `notion`'s catalog is $0.057 per session — $57 per 1,000 sessions of pure context tax before any useful work happens. `token-cost` is the headline number for anyone running agents at scale.
+**Missing annotations cost the most.** 20 of 33 servers mark no tool `readOnlyHint: true`, so the standard battery calls none of their tools: error honesty, reliability, and coverage score 0, and these servers land between 31 and 42. Across the corpus, 173 of 302 tools declare no `readOnlyHint` at all. The annotation is one line per tool, and it is what lets any client tell a read from a write.
 
-**Perfection is the norm for active servers — which makes the exceptions information-rich.** 32 of 33 servers score 100/100: maintainers who ship coherent schemas, stable error codes, and bounded pagination are already meeting the contract this battery verifies. The single sub-100 score (`postgres`, 75) is the declared-surface defect class: the server advertises surfaces whose listing does not answer — exactly what the `surface-listing` probe exists to catch, and it is invisible to every client that never asks.
+**Where tools can be called, most servers behave.** The 13 servers with callable tools score 65 to 99. Ten of them refuse every schema-violating call with -32602 or an `isError` result that says why. `notion` accepted invalid arguments on 11 tools, `desktop-commander` on 5, and `kubernetes` refused 4 with a JSON-RPC code other than -32602.
 
-**Cursor pagination is where trust breaks.** Servers that paginate tool catalogs must do so without repeating entries and with terminating cursors. The battery treats a re-served page and an unending cursor as distinct, named defects; both were found in the wild while developing the probe.
+**Catalogs rarely describe their results.** 269 of 302 tools declare no `outputSchema`, and 27 of 33 servers declare none on any tool; 96 tools leave input parameters undescribed and 70 have descriptions under 40 characters. Only `sequential-thinking` scores 100 on the catalog area; the median is 60.
 
-**The 2025-06-18 interactive surface is barely adopted.** A capability sweep over the corpus found `sampling` on zero servers, `elicitation` on zero servers, and `resources.subscribe` on two (the reference `everything` server and `memory`). The new `protocol-negotiation`, `sampling`, `elicitation`, and `resource-subscription` probes therefore pass trivially on nearly all of the corpus — the interesting finding is what is *conditionally declared*: the reference server's `instructions` string unconditionally references `trigger-sampling-request` and `trigger-elicitation-request`, but those tools only enter the catalog when the client declares the matching capability (13 tools for a capability-less client, 16 with sampling and elicitation declared). Instructions that promise tools an agent cannot see in its own catalog are exactly the coherence class the battery is built to expose; the finding was filed upstream as [modelcontextprotocol/servers#4792](https://github.com/modelcontextprotocol/servers/issues/4792).
+**The catalog tax is universal — and measurable.** Every session pays the full `tools/list` catalog before the first tool call (deterministic estimate: encoded bytes / 4): the reference `everything` server costs 1,915 tokens with 13 tools, `notion` 19,057 with 24 tools, `desktop-commander` 14,361 with 26 tools, while `markitdown` costs 105 with one tool. The corpus median is 1,186 catalog tokens. At $3/Mtok, `notion`'s catalog is $0.057 per session — $57 per 1,000 sessions before any useful work happens.
+
+**Protocol basics mostly hold.** 27 of 33 servers score 100 on the protocol area. `arxiv`, `fetch`, `git`, and `time` answer an unknown JSON-RPC method with a result instead of error -32601; `calculator` echoes a protocol version it does not support; `postgres` declares a surface whose listing does not answer.
+
+**The 2025-06-18 interactive surface is barely adopted.** A capability sweep over the corpus found `sampling` on zero servers, `elicitation` on zero servers, and `resources.subscribe` on two (the reference `everything` server and `memory`). The reference server's `instructions` string references `trigger-sampling-request` and `trigger-elicitation-request`, but those tools only enter the catalog when the client declares the matching capability (13 tools for a capability-less client, 16 with sampling and elicitation declared). Instructions that promise tools an agent cannot see in its own catalog are a coherence defect; the finding was filed upstream as [modelcontextprotocol/servers#4792](https://github.com/modelcontextprotocol/servers/issues/4792).
 
 ## Reproduce it
 
@@ -29,14 +70,19 @@ Every number on this page can be regenerated:
 ```sh
 cargo build --release
 scripts/corpus/collect.sh          # rebuilds data/readiness-corpus.json
-mcpeval probe --server your-server --format markdown -- your-mcp-server --flags
+mcpeval score --server your-server -- your-mcp-server --flags
 ```
 
-These observations are manifest pass rates over the generic battery, collected before the readiness standard existed; that 32 of 33 servers pass it is why readiness is now an absolute standard instead. Reports place your catalog's token estimate among the observed servers, and they do not place a readiness score among these pass rates until the corpus is recollected under the standard.
+Text and markdown reports place a readiness score among these servers when it was scored under the same standard. The clean `mcpeval-demo` scores 91:
+
+```text
+  standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers
+```
 
 ## Method notes
 
-- The battery is purely structural and read-only: catalog shape, schema coherence, pagination, cursor termination, declared-surface listings, and protocol-version selection. It never calls mutating tools and never inspects payload content. The interactive-surface probes (`sampling`, `elicitation`) declare the corresponding client capability so servers may exercise their sub-request flow, but they never provide model inference or user input beyond deterministic stubs.
-- Scores are deterministic — the same server and the same battery produce the same verdict. Corpus refreshes happen at release time; a server that fixes its defects moves up when its observation is refreshed.
-- Reproducibility is enforced, not assumed: a scheduled workflow re-probes every corpus observation with the current binary and fails on any score that moved (`node scripts/corpus/verify.mjs` locally). A moved score means the server changed — refreshes are deliberate and explained in the pull request that commits them.
-- Servers requiring live credentials or backing services are probed with real credentials by the maintainers where possible and excluded where not; the corpus only claims what the battery actually ran against.
+- The standard battery is read-only: it calls only tools annotated `readOnlyHint: true` (never `readOnlyHint: false` or `destructiveHint: true`), with arguments synthesized from each tool's input schema, plus one schema-violating call per judged tool, protocol requests, and the paged listings. Unannotated tools count as unexercised. The readiness-reporting guide lists every area and check.
+- Servers that need credentials or backing services ran without them, so their tools may answer with errors; `mcp-atlassian` lists no tools without credentials and is not in the corpus.
+- Every server runs with an empty kubeconfig and an unreachable Docker host, so no call reaches a real cluster or container daemon.
+- Re-runs on one machine moved only reliability, by at most 3 points: latency bands depend on the machine and network, and they move more between machines. Some servers also describe their tools per operating system — `desktop-commander`'s descriptions name the platform and its shell — so the corpus records the platform it was collected on (macOS) and is re-scored there.
+- `node scripts/corpus/verify.mjs` re-scores every corpus observation with the current binary and fails when any area other than reliability moved, or reliability moved by more than 10 points (one latency band on every tool). A moved area means the server changed — refreshes are deliberate and explained in the pull request that commits them.

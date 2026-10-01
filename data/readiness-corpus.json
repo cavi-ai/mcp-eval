@@ -1,210 +1,470 @@
 {
-  "schema": "mcpeval.readiness-corpus/v1",
-  "source": "readiness battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services are re-run before each release",
-  "battery": [
-    "discovery-cost",
-    "token-cost",
-    "pagination",
-    "surface-listing"
-  ],
+  "schema": "mcpeval.readiness-corpus/v2",
+  "source": "mcpeval standard battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services run without them",
+  "standard": "mcpeval-standard/1",
+  "platform": "darwin",
   "observations": [
     {
       "server": "postgres",
-      "score": 75,
+      "score": 31,
+      "areas": {
+        "protocol": 83,
+        "catalog": 20,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
       "tool_count": 1,
       "catalog_tokens": 33
     },
     {
-      "server": "airbnb",
-      "score": 100,
-      "tool_count": 2,
-      "catalog_tokens": 538
-    },
-    {
-      "server": "arxiv",
-      "score": 100,
-      "tool_count": 19,
-      "catalog_tokens": 4428
-    },
-    {
-      "server": "browserbase",
-      "score": 100,
-      "tool_count": 9,
-      "catalog_tokens": 1334
-    },
-    {
-      "server": "calculator",
-      "score": 100,
-      "tool_count": 1,
-      "catalog_tokens": 123
-    },
-    {
-      "server": "context7",
-      "score": 100,
-      "tool_count": 2,
-      "catalog_tokens": 1216
-    },
-    {
-      "server": "desktop-commander",
-      "score": 100,
-      "tool_count": 26,
-      "catalog_tokens": 15320
-    },
-    {
-      "server": "docker",
-      "score": 100,
-      "tool_count": 1,
-      "catalog_tokens": 93
-    },
-    {
-      "server": "docker-mcp",
-      "score": 100,
-      "tool_count": 10,
-      "catalog_tokens": 906
-    },
-    {
-      "server": "everything",
-      "score": 100,
-      "tool_count": 13,
-      "catalog_tokens": 1915
-    },
-    {
-      "server": "fetch",
-      "score": 100,
-      "tool_count": 1,
-      "catalog_tokens": 276
-    },
-    {
-      "server": "filesystem",
-      "score": 100,
-      "tool_count": 14,
-      "catalog_tokens": 3246
-    },
-    {
-      "server": "git",
-      "score": 100,
-      "tool_count": 12,
-      "catalog_tokens": 1479
-    },
-    {
-      "server": "github",
-      "score": 100,
-      "tool_count": 26,
-      "catalog_tokens": 3967
-    },
-    {
-      "server": "kubernetes",
-      "score": 100,
-      "tool_count": 23,
-      "catalog_tokens": 5965
-    },
-    {
-      "server": "markitdown",
-      "score": 100,
-      "tool_count": 1,
-      "catalog_tokens": 105
-    },
-    {
-      "server": "memory",
-      "score": 100,
-      "tool_count": 9,
-      "catalog_tokens": 2688
-    },
-    {
       "server": "mermaid",
-      "score": 100,
+      "score": 35,
+      "areas": {
+        "protocol": 100,
+        "catalog": 23,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
       "tool_count": 4,
       "catalog_tokens": 411
     },
     {
-      "server": "notion",
-      "score": 100,
-      "tool_count": 24,
-      "catalog_tokens": 19057
-    },
-    {
       "server": "ollama",
-      "score": 100,
+      "score": 35,
+      "areas": {
+        "protocol": 100,
+        "catalog": 24,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
       "tool_count": 9,
       "catalog_tokens": 775
     },
     {
-      "server": "pandoc",
-      "score": 100,
-      "tool_count": 1,
-      "catalog_tokens": 1507
-    },
-    {
-      "server": "playwright",
-      "score": 100,
-      "tool_count": 33,
-      "catalog_tokens": 3467
-    },
-    {
-      "server": "puppeteer",
-      "score": 100,
-      "tool_count": 7,
-      "catalog_tokens": 614
-    },
-    {
-      "server": "searxng",
-      "score": 100,
-      "tool_count": 4,
-      "catalog_tokens": 1745
-    },
-    {
-      "server": "sequential-thinking",
-      "score": 100,
-      "tool_count": 1,
-      "catalog_tokens": 1160
-    },
-    {
-      "server": "sqlite",
-      "score": 100,
-      "tool_count": 10,
-      "catalog_tokens": 1186
-    },
-    {
-      "server": "sqlite-npx",
-      "score": 100,
-      "tool_count": 8,
-      "catalog_tokens": 775
-    },
-    {
-      "server": "tavily",
-      "score": 100,
-      "tool_count": 5,
-      "catalog_tokens": 1923
-    },
-    {
-      "server": "terraform",
-      "score": 100,
-      "tool_count": 10,
-      "catalog_tokens": 1618
-    },
-    {
-      "server": "time",
-      "score": 100,
-      "tool_count": 2,
-      "catalog_tokens": 307
-    },
-    {
       "server": "todoist",
-      "score": 100,
+      "score": 36,
+      "areas": {
+        "protocol": 100,
+        "catalog": 28,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
       "tool_count": 5,
       "catalog_tokens": 408
     },
     {
+      "server": "github",
+      "score": 37,
+      "areas": {
+        "protocol": 100,
+        "catalog": 48,
+        "context": 83,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 26,
+      "catalog_tokens": 3967
+    },
+    {
+      "server": "playwright",
+      "score": 37,
+      "areas": {
+        "protocol": 100,
+        "catalog": 47,
+        "context": 86,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 33,
+      "catalog_tokens": 3467
+    },
+    {
+      "server": "sqlite-npx",
+      "score": 38,
+      "areas": {
+        "protocol": 100,
+        "catalog": 38,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 8,
+      "catalog_tokens": 775
+    },
+    {
       "server": "wikipedia-npm",
-      "score": 100,
+      "score": 38,
+      "areas": {
+        "protocol": 100,
+        "catalog": 40,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
       "tool_count": 2,
       "catalog_tokens": 141
     },
     {
+      "server": "calculator",
+      "score": 39,
+      "areas": {
+        "protocol": 80,
+        "catalog": 60,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 1,
+      "catalog_tokens": 123
+    },
+    {
+      "server": "docker-mcp",
+      "score": 39,
+      "areas": {
+        "protocol": 100,
+        "catalog": 46,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 10,
+      "catalog_tokens": 906
+    },
+    {
+      "server": "fetch",
+      "score": 39,
+      "areas": {
+        "protocol": 83,
+        "catalog": 60,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 1,
+      "catalog_tokens": 276
+    },
+    {
+      "server": "sqlite",
+      "score": 39,
+      "areas": {
+        "protocol": 100,
+        "catalog": 46,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 10,
+      "catalog_tokens": 1186
+    },
+    {
+      "server": "pandoc",
+      "score": 40,
+      "areas": {
+        "protocol": 100,
+        "catalog": 60,
+        "context": 88,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 1,
+      "catalog_tokens": 1507
+    },
+    {
+      "server": "puppeteer",
+      "score": 40,
+      "areas": {
+        "protocol": 100,
+        "catalog": 49,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 7,
+      "catalog_tokens": 614
+    },
+    {
+      "server": "browserbase",
+      "score": 41,
+      "areas": {
+        "protocol": 100,
+        "catalog": 54,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 9,
+      "catalog_tokens": 1334
+    },
+    {
+      "server": "tavily",
+      "score": 41,
+      "areas": {
+        "protocol": 100,
+        "catalog": 60,
+        "context": 96,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 5,
+      "catalog_tokens": 1923
+    },
+    {
+      "server": "airbnb",
+      "score": 42,
+      "areas": {
+        "protocol": 100,
+        "catalog": 60,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 2,
+      "catalog_tokens": 538
+    },
+    {
+      "server": "docker",
+      "score": 42,
+      "areas": {
+        "protocol": 100,
+        "catalog": 60,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 1,
+      "catalog_tokens": 93
+    },
+    {
+      "server": "markitdown",
+      "score": 42,
+      "areas": {
+        "protocol": 100,
+        "catalog": 60,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 1,
+      "catalog_tokens": 105
+    },
+    {
+      "server": "terraform",
+      "score": 42,
+      "areas": {
+        "protocol": 100,
+        "catalog": 60,
+        "context": 100,
+        "error-honesty": 0,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 10,
+      "catalog_tokens": 1618
+    },
+    {
+      "server": "notion",
+      "score": 65,
+      "areas": {
+        "protocol": 100,
+        "catalog": 64,
+        "context": 32,
+        "error-honesty": 0,
+        "reliability": 89,
+        "coverage": 100
+      },
+      "tool_count": 24,
+      "catalog_tokens": 19057
+    },
+    {
+      "server": "kubernetes",
+      "score": 73,
+      "areas": {
+        "protocol": 100,
+        "catalog": 62,
+        "context": 65,
+        "error-honesty": 33,
+        "reliability": 100,
+        "coverage": 70
+      },
+      "tool_count": 23,
+      "catalog_tokens": 5965
+    },
+    {
+      "server": "desktop-commander",
+      "score": 77,
+      "areas": {
+        "protocol": 100,
+        "catalog": 63,
+        "context": 36,
+        "error-honesty": 64,
+        "reliability": 99,
+        "coverage": 100
+      },
+      "tool_count": 26,
+      "catalog_tokens": 14361
+    },
+    {
+      "server": "git",
+      "score": 87,
+      "areas": {
+        "protocol": 80,
+        "catalog": 52,
+        "context": 100,
+        "error-honesty": 100,
+        "reliability": 100,
+        "coverage": 100
+      },
+      "tool_count": 12,
+      "catalog_tokens": 1479
+    },
+    {
+      "server": "arxiv",
+      "score": 89,
+      "areas": {
+        "protocol": 83,
+        "catalog": 76,
+        "context": 80,
+        "error-honesty": 100,
+        "reliability": 97,
+        "coverage": 100
+      },
+      "tool_count": 19,
+      "catalog_tokens": 4463
+    },
+    {
+      "server": "time",
+      "score": 89,
+      "areas": {
+        "protocol": 80,
+        "catalog": 60,
+        "context": 100,
+        "error-honesty": 100,
+        "reliability": 100,
+        "coverage": 100
+      },
+      "tool_count": 2,
+      "catalog_tokens": 307
+    },
+    {
+      "server": "context7",
+      "score": 93,
+      "areas": {
+        "protocol": 100,
+        "catalog": 80,
+        "context": 95,
+        "error-honesty": 100,
+        "reliability": 91,
+        "coverage": 100
+      },
+      "tool_count": 2,
+      "catalog_tokens": 1216
+    },
+    {
+      "server": "everything",
+      "score": 93,
+      "areas": {
+        "protocol": 100,
+        "catalog": 72,
+        "context": 100,
+        "error-honesty": 100,
+        "reliability": 95,
+        "coverage": 100
+      },
+      "tool_count": 13,
+      "catalog_tokens": 1915
+    },
+    {
+      "server": "filesystem",
+      "score": 95,
+      "areas": {
+        "protocol": 100,
+        "catalog": 84,
+        "context": 88,
+        "error-honesty": 100,
+        "reliability": 100,
+        "coverage": 100
+      },
+      "tool_count": 14,
+      "catalog_tokens": 3246
+    },
+    {
+      "server": "searxng",
+      "score": 95,
+      "areas": {
+        "protocol": 100,
+        "catalog": 80,
+        "context": 93,
+        "error-honesty": 100,
+        "reliability": 100,
+        "coverage": 100
+      },
+      "tool_count": 4,
+      "catalog_tokens": 1745
+    },
+    {
       "server": "wikipedia-uvx",
-      "score": 100,
+      "score": 96,
+      "areas": {
+        "protocol": 100,
+        "catalog": 83,
+        "context": 100,
+        "error-honesty": 100,
+        "reliability": 98,
+        "coverage": 100
+      },
       "tool_count": 7,
       "catalog_tokens": 1021
+    },
+    {
+      "server": "memory",
+      "score": 97,
+      "areas": {
+        "protocol": 100,
+        "catalog": 89,
+        "context": 93,
+        "error-honesty": 100,
+        "reliability": 100,
+        "coverage": 100
+      },
+      "tool_count": 9,
+      "catalog_tokens": 2688
+    },
+    {
+      "server": "sequential-thinking",
+      "score": 99,
+      "areas": {
+        "protocol": 100,
+        "catalog": 100,
+        "context": 91,
+        "error-honesty": 100,
+        "reliability": 100,
+        "coverage": 100
+      },
+      "tool_count": 1,
+      "catalog_tokens": 1160
     }
   ]
 }

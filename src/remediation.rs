@@ -280,9 +280,12 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
              call it safely; declare readOnlyHint: true on read-only tools and destructiveHint on \
              writers"
         }
-        CheckReason::CoverageRequiredArguments => {
-            "the tool requires arguments the standard does not construct yet; give required \
-             parameters defaults, enums, or examples an agent can use"
+        CheckReason::CoverageUnsynthesizable => {
+            "a required parameter has no type, enum, default, or example the standard can build a \
+             value from (a bare pattern counts as none); add an enum, a default, or examples"
+        }
+        CheckReason::CoverageSkipped => {
+            "the operator skipped this tool with --skip-tool, so it counts as unexercised"
         }
         CheckReason::CoverageRejectedArguments => {
             "the tool rejected arguments built from its own input schema (-32602); make the \
@@ -290,7 +293,7 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
         }
         CheckReason::CoverageCallFailed => {
             "the call timed out, closed the connection, or broke the protocol exchange; a \
-             read-only tool must answer within 10 seconds without ending the session"
+             read-only tool must answer within 15 seconds without ending the session"
         }
         CheckReason::NoReadOnlyTools => {
             "the server declares no read-only tools, so behavior cannot be measured without \
@@ -374,7 +377,7 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
         }
         CheckReason::ProtocolCallFailed => {
             "a protocol request timed out, closed the connection, or broke the exchange; answer \
-             every request within 10 seconds without ending the session"
+             every request within 15 seconds without ending the session"
         }
     }
 }

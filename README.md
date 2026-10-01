@@ -60,7 +60,7 @@ mcpeval init --server demo --confirm-read-only \
 mcpeval probe --server demo \
   --manifest demo.manifest.json -- mcpeval-demo
 # demo gate 25/25 passed
-# demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
+# demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1
 mcpeval probe --server demo --manifest demo.manifest.json \
   -- mcpeval-demo --broken stalled-cursor
 # pagination-stalled-cursor
@@ -217,28 +217,34 @@ The manifest is the **gate**: its cases set `passed` and the exit code. The
 runs its own read-only standard battery over the server's whole catalog and
 scores it on fixed curves, so two servers' scores mean the same thing whatever
 their manifests declare. The report names the standard
-(`mcpeval-standard/1-draft` in this build) and lists every lost point with a
+(`mcpeval-standard/1` in this build) and lists every lost point with a
 remediation hint. Surface the standard cannot test counts against the score.
 The battery never calls a tool annotated as a writer (`readOnlyHint: false` or
 `destructiveHint: true`), calls a tool with neither annotation only under
-`--confirm-read-only`, and never writes to the call journal. `mcpeval score`
-runs it without a manifest; `--gate-only` skips it. Areas in this build:
-context (catalog and heaviest-tool token cost), reliability (repeat
+`--confirm-read-only`, and never writes to the call journal; arguments are
+synthesized from each tool's input schema, and `--skip-tool <NAME>` keeps a
+tool uncalled without raising the score. `mcpeval score` runs it without a
+manifest; `--gate-only` skips it. Areas: protocol (unknown methods, `ping`,
+unknown tools, paging, declared surfaces, version negotiation), catalog
+(descriptions, described and typed parameters, declared annotations and
+output schemas), context (catalog and heaviest-tool token cost), error
+honesty (schema-violating arguments refused with words), reliability (repeat
 consistency, median latency band, declared output schema, contention, payload
 bounds), and coverage (exercised read-only tools over all read-only tools).
 
-When the shipped corpus (`data/readiness-corpus.json`, refreshed by
-`scripts/corpus/collect.sh`) records catalog sizes, text and markdown reports
-place your catalog among the observed servers — *"catalog: 566 tokens over 12
-tools, lighter than 23 of 33 observed servers (median 1186 tokens)"*. The
-corpus's scores are manifest pass rates collected before the standard, so
-readiness is not placed among them until the corpus is recollected. A personal
-corpus at `<MCPEVAL_HOME>/corpus.json` overrides the shipped one.
+The shipped corpus (`data/readiness-corpus.json`, refreshed by
+`scripts/corpus/collect.sh`) holds readiness scores under the standard, so
+text and markdown reports place your score and your catalog among the
+observed servers — *"standard corpus (mcpeval-standard/1): above 26, tied 0,
+below 7 of 33 observed servers"* and *"catalog: 566 tokens over 12 tools,
+lighter than 23 of 33 observed servers (median 1186 tokens)"*. A score is
+placed only against a corpus of its own standard. A personal corpus at
+`<MCPEVAL_HOME>/corpus.json` overrides the shipped one.
 
 **[State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md)** —
 the corpus is also published: how healthy are the MCP servers agents actually
-use? 33 popular public servers, probed with the same battery, distribution
-published with full method notes. Reproduce it locally with one script; add
+use? 33 popular public servers, scored by the same standard battery,
+distribution published with full method notes. Reproduce it locally with one script; add
 your server by PR.
 
 Every full-battery run that measured readiness appends a content-free record

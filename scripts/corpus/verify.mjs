@@ -1,16 +1,19 @@
 #!/usr/bin/env node
-// Corpus drift check: re-probe every observation in
-// data/readiness-corpus.json with the current binary and the same generic
-// manifest the collector uses, and fail on any score that moved. The
-// corpus's only claim is "deterministic verdict, reproducible by anyone";
-// this is the check that keeps the claim honest between releases.
+// Corpus drift check: re-score every observation in
+// data/readiness-corpus.json with the current binary's standard battery
+// (`mcpeval score`, as the collector runs it) and fail when an area moved.
+// Every area but reliability is a function of the server's code and must
+// match exactly; reliability includes latency bands, which depend on the
+// machine and network, so it may move by RELIABILITY_TOLERANCE. The
+// corpus's claim is "reproducible by anyone"; this is the check that keeps
+// it honest between releases.
 //
-// Each observation's score is the battery's pass rate (`gate`), run with
-// `--gate-only`: the corpus predates the readiness standard and records the
-// manifest's verdicts only, until it is recollected under the standard.
+// Both scripts run every server with the same ISOLATION environment, so no
+// server reaches the machine's Kubernetes context or Docker daemon and a
+// re-run sees what the collector saw.
 //
-// Observations may also carry `tool_count` and `catalog_tokens`; those move
-// with every upstream release, are informational, and are not compared.
+// Observations also carry `tool_count` and `catalog_tokens`; those are
+// informational and are not compared.
 //
 // A server that legitimately fixed or broke something moves its score —
 // that is a deliberate corpus refresh: run scripts/corpus/collect.sh and
@@ -20,7 +23,7 @@
 // Usage: node scripts/corpus/verify.mjs [--json]
 //   --json   emit the per-server result document instead of prose
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,16 +31,17 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const CORPUS_REL = "data/readiness-corpus.json";
 const BINARY = path.join(ROOT, "target/release/mcpeval");
-const TIMEOUT_MS = 120_000;
+// The standard battery calls every read-only tool; a server whose calls
+// all time out costs at most a few minutes.
+const TIMEOUT_MS = 600_000;
 
-const MANIFEST = {
-  version: 1,
-  probes: [
-    { id: "discovery-budget", probe: "discovery-cost", access: "read_only", max_tools: 80, max_schema_bytes: 400000 },
-    { id: "token-budget", probe: "token-cost", access: "read_only", max_total_tokens: 200000, max_tool_tokens: 40000 },
-    { id: "pages", probe: "pagination", access: "read_only", max_pages: 5 },
-    { id: "surfaces", probe: "surface-listing", access: "read_only", max_pages: 5 },
-  ],
+/** One latency band (100 → 80 → 50 …) on every exercised tool. */
+const RELIABILITY_TOLERANCE = 10;
+
+/** Environment both scripts give every server; collect.sh exports the same. */
+const ISOLATION = {
+  KUBECONFIG: path.join(ROOT, "scripts/corpus/empty-kubeconfig.yaml"),
+  DOCKER_HOST: "unix:///nonexistent/docker.sock",
 };
 
 const NPM_SERVERS = new Map([
@@ -90,17 +94,58 @@ function commandFor(server) {
   return null;
 }
 
-export { commandFor, MANIFEST, NPM_PACKAGES, UVX_PACKAGES, NPM_SERVERS, UVX_SERVERS };
+export {
+  commandFor,
+  ISOLATION,
+  NPM_PACKAGES,
+  RELIABILITY_TOLERANCE,
+  UVX_PACKAGES,
+  NPM_SERVERS,
+  UVX_SERVERS,
+};
 
-/** The battery's pass rate, 0-100; null when no manifest case ran. */
-export function batteryScore(document) {
-  const gate = document?.gate;
-  if (!gate || !(gate.total > 0)) return null;
-  return Math.round((100 * gate.passed) / gate.total);
+/**
+ * How a re-scored observation differs from the corpus: one entry per area
+ * that moved beyond its allowance (`"catalog 64→65"`); empty when it
+ * reproduces. An observation without areas compares its score.
+ */
+/**
+ * Why the corpus cannot be re-scored here, or null. Servers may describe
+ * their tools per operating system (desktop-commander does), so a catalog
+ * reproduces only on the platform it was collected on.
+ */
+export function platformMismatch(corpus, platform) {
+  if (!corpus.platform) return "corpus names no platform; recollect with scripts/corpus/collect.sh";
+  if (corpus.platform !== platform) {
+    return `corpus was collected on ${corpus.platform}; re-score it on ${corpus.platform}, not ${platform}`;
+  }
+  return null;
 }
 
-export function probeArguments(server, manifestPath) {
-  return ["probe", "--server", server, "--manifest", manifestPath, "--gate-only", "--format", "json"];
+export function driftOf(expected, observed) {
+  const areas = expected.areas ?? {};
+  if (Object.keys(areas).length === 0) {
+    return expected.score === observed.score ? [] : [`score ${expected.score}→${observed.score}`];
+  }
+  const moved = [];
+  for (const [name, before] of Object.entries(areas)) {
+    const after = observed.areas?.[name];
+    const allowance = name === "reliability" ? RELIABILITY_TOLERANCE : 0;
+    if (!Number.isInteger(after) || Math.abs(after - before) > allowance) {
+      moved.push(`${name} ${before}→${after ?? "none"}`);
+    }
+  }
+  return moved;
+}
+
+/** The readiness score; null when the standard battery could not start. */
+export function readinessScore(document) {
+  const score = document?.readiness?.score;
+  return Number.isInteger(score) ? score : null;
+}
+
+export function scoreArguments(server) {
+  return ["score", "--server", server, "--format", "json"];
 }
 
 // label -> package name; kept here rather than re-parsed from collect.sh so
@@ -151,30 +196,30 @@ function packageFor(server) {
 }
 
 function observed(document) {
-  const score = batteryScore(document);
-  return score === null
-    ? { status: "could-not-run", observed: null }
-    : { status: "observed", observed: score };
+  const score = readinessScore(document);
+  if (score === null) return { status: "could-not-run", observed: null };
+  const areas = Object.fromEntries(
+    (document.readiness.areas ?? []).map((area) => [area.name, area.score]),
+  );
+  return { status: "observed", observed: score, areas };
 }
 
 async function probeScore(server, work) {
   const command = commandFor(server);
   if (!command) return { status: "unknown-server", expected: null, observed: null };
-  const manifestPath = path.join(work, `${server}.manifest.json`);
-  await writeFile(manifestPath, JSON.stringify(MANIFEST));
   const home = path.join(work, `${server}-home`);
   try {
-    const stdout = execFileSync(BINARY, [...probeArguments(server, manifestPath), "--", ...command], {
+    const stdout = execFileSync(BINARY, [...scoreArguments(server), "--", ...command], {
       timeout: TIMEOUT_MS,
       encoding: "utf8",
       cwd: work,
-      env: { ...process.env, MCPEVAL_HOME: home },
+      env: { ...process.env, ...ISOLATION, MCPEVAL_HOME: home },
       stdio: ["ignore", "pipe", "ignore"],
     });
     return observed(JSON.parse(stdout));
   } catch (error) {
-    // A failing battery exits non-zero but still prints the JSON report on
-    // stdout; only a missing report counts as "could not run".
+    // A non-zero exit can still print the JSON report on stdout; only a
+    // missing report or readiness counts as "could not run".
     if (error.stdout) {
       try {
         return observed(JSON.parse(error.stdout));
@@ -192,16 +237,29 @@ export async function verifyCorpus(options = {}) {
     throw new Error("build the release binary first: cargo build --release");
   }
   const corpus = JSON.parse(await readFile(path.join(ROOT, CORPUS_REL), "utf8"));
-  if (corpus.schema !== "mcpeval.readiness-corpus/v1") {
+  if (corpus.schema !== "mcpeval.readiness-corpus/v2" || !corpus.standard) {
     throw new Error(`unsupported corpus schema ${corpus.schema}`);
+  }
+  const mismatch = platformMismatch(corpus, process.platform);
+  if (mismatch) {
+    throw new Error(mismatch);
   }
   const work = options.work ?? (await mkdtemp(path.join(os.tmpdir(), "mcpeval-corpus-verify-")));
   const results = [];
   for (const observation of corpus.observations) {
     const outcome = await probeScore(observation.server, work);
-    const drifted =
-      outcome.status === "observed" && outcome.observed !== observation.score;
-    results.push({ server: observation.server, expected: observation.score, ...outcome, drifted });
+    const moved =
+      outcome.status === "observed"
+        ? driftOf(observation, { score: outcome.observed, areas: outcome.areas })
+        : [];
+    results.push({
+      server: observation.server,
+      expected: observation.score,
+      expectedAreas: observation.areas ?? {},
+      ...outcome,
+      moved,
+      drifted: moved.length > 0,
+    });
   }
   if (!options.keepWork) {
     await rm(work, { recursive: true, force: true });
@@ -222,7 +280,14 @@ if (process.argv[1] && import.meta.filename === process.argv[1]) {
       for (const result of results) {
         const mark = result.drifted ? "DRIFT" : result.status === "could-not-run" ? "UNRUN" : "ok";
         const score = result.status === "observed" ? result.observed : "-";
-        console.log(`${mark.padEnd(5)} ${result.server.padEnd(20)} expected=${result.expected} observed=${score}`);
+        // Every area that changed, within its allowance or not.
+        const changed = Object.entries(result.expectedAreas)
+          .filter(([name, before]) => result.areas && result.areas[name] !== before)
+          .map(([name, before]) => `${name} ${before}→${result.areas[name] ?? "none"}`);
+        const moved = changed.length ? ` (${changed.join(", ")})` : "";
+        console.log(
+          `${mark.padEnd(5)} ${result.server.padEnd(20)} expected=${result.expected} observed=${score}${moved}`,
+        );
       }
     }
     const bad = driftedResults(results);

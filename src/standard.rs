@@ -14,8 +14,10 @@ use crate::probe::{estimate_tokens, ClientTarget, FailureReason, ProbeClient};
 use crate::score::{CheckId, CheckReason, Readiness};
 
 /// Per-call response timeout, pinned by the standard: it bounds what a
-/// hung tool costs and is part of what a score means.
-pub const CALL_TIMEOUT: Duration = Duration::from_secs(10);
+/// hung tool costs and is part of what a score means. It sits clear of
+/// round operation durations: a tool that works for exactly 10 s must not
+/// pass or fail on a few milliseconds of scheduling.
+pub const CALL_TIMEOUT: Duration = Duration::from_secs(15);
 /// Calls per exercised tool.
 pub const REPEATS: usize = 3;
 /// `tools/list` pages followed before the catalog is taken as complete.
@@ -28,6 +30,8 @@ const PAYLOAD_BYTES: u64 = 1_000_000;
 pub struct StandardOptions {
     /// Attest that unannotated tools are read-only, so they are called.
     pub confirm_read_only: bool,
+    /// Tools never to call; each must be one the server lists.
+    pub skip_tools: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -189,6 +193,15 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
     let mut client = Some(connect(target).context("connecting for the standard battery")?);
     let catalog = list_catalog(client.as_mut().expect("just connected"))
         .context("listing tools for the standard battery")?;
+    if let Some(name) = options
+        .skip_tools
+        .iter()
+        .find(|name| !catalog.tools.iter().any(|tool| &tool.name == *name))
+    {
+        return Err(crate::exit::usage(anyhow::anyhow!(
+            "--skip-tool {name} is not a tool the server lists"
+        )));
+    }
     let mut tools = Vec::with_capacity(catalog.tools.len());
     // Tools whose three calls all succeeded, with the arguments used: the
     // server-level cases run on the first of them.
@@ -200,7 +213,13 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             ToolClass::Unannotated => options.confirm_read_only,
             ToolClass::ReadOnly => true,
         };
-        let honesty = if callable {
+        // A skipped tool is never called; it scores as the worst call it
+        // could have made (see score.rs), so skipping never pays.
+        let skipped = callable && options.skip_tools.contains(&tool.name);
+        let honesty = if skipped {
+            invalid_arguments(&tool.input_schema)
+                .map(|_| Honesty::Dishonest(CheckReason::CoverageSkipped))
+        } else if callable {
             probe_honesty(&mut client, target, tool)
         } else {
             None
@@ -210,18 +229,18 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             ToolClass::Unannotated if !options.confirm_read_only => {
                 Some(Exercise::NotExercised(CheckReason::CoverageUnannotated))
             }
-            _ if !crate::init::zero_required(&tool.input_schema) => Some(Exercise::NotExercised(
-                CheckReason::CoverageRequiredArguments,
-            )),
-            _ => {
-                let arguments = json!({});
-                let (exercise, all_succeeded) =
-                    exercise_tool(&mut client, target, tool, &arguments);
-                if all_succeeded {
-                    succeeded.push((tool, arguments));
+            _ => match synthesize(&tool.input_schema) {
+                Some(_) if skipped => Some(Exercise::NotExercised(CheckReason::CoverageSkipped)),
+                Some(arguments) => {
+                    let (exercise, all_succeeded) =
+                        exercise_tool(&mut client, target, tool, &arguments);
+                    if all_succeeded {
+                        succeeded.push((tool, arguments));
+                    }
+                    Some(exercise)
                 }
-                Some(exercise)
-            }
+                None => Some(Exercise::NotExercised(CheckReason::CoverageUnsynthesizable)),
+            },
         };
         tools.push(ToolObservation {
             name: tool.name.clone(),
@@ -231,6 +250,14 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             catalog: CatalogFacts::of(tool),
             honesty,
         });
+    }
+    // With a tool skipped, the server-level cases score 0 (score.rs) and
+    // are not run.
+    let any_skipped = tools
+        .iter()
+        .any(|tool| tool.exercise == Some(Exercise::NotExercised(CheckReason::CoverageSkipped)));
+    if any_skipped {
+        succeeded.clear();
     }
     let contention = succeeded.first().map(|(tool, arguments)| {
         server_case(
@@ -307,6 +334,135 @@ fn list_catalog(client: &mut ProbeClient) -> anyhow::Result<ToolCatalog> {
         tools,
         encoded_bytes,
     })
+}
+
+/// Nesting followed while synthesizing, `$ref` hops included.
+const MAX_SCHEMA_DEPTH: usize = 8;
+
+/// Valid arguments built from `schema` alone: every required property,
+/// deterministically. None when a required property has no rule.
+pub fn synthesize(schema: &Value) -> Option<Value> {
+    object_value(schema, schema, 0)
+}
+
+fn object_value(schema: &Value, root: &Value, depth: usize) -> Option<Value> {
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let mut arguments = serde_json::Map::new();
+    for name in schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let name = name.as_str()?;
+        let property = properties?.get(name)?;
+        arguments.insert(
+            name.to_owned(),
+            synthesize_value(property, root, depth + 1)?,
+        );
+    }
+    Some(Value::Object(arguments))
+}
+
+/// One value, first rule that applies: `$ref`; `const`, the first `enum`
+/// member, `default`, or the first of `examples`; the first `anyOf` or
+/// `oneOf` branch; then by type.
+fn synthesize_value(schema: &Value, root: &Value, depth: usize) -> Option<Value> {
+    if depth > MAX_SCHEMA_DEPTH {
+        return None;
+    }
+    if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+        let target = root.pointer(reference.strip_prefix('#')?)?;
+        return synthesize_value(target, root, depth + 1);
+    }
+    for key in ["const", "enum", "default", "examples"] {
+        let Some(value) = schema.get(key) else {
+            continue;
+        };
+        return match key {
+            "enum" | "examples" => value.as_array()?.first().cloned(),
+            _ => Some(value.clone()),
+        };
+    }
+    if let Some(branch) = schema
+        .get("anyOf")
+        .or_else(|| schema.get("oneOf"))
+        .and_then(Value::as_array)
+        .and_then(|branches| branches.first())
+    {
+        return synthesize_value(branch, root, depth + 1);
+    }
+    let kind = match schema.get("type") {
+        Some(Value::String(kind)) => kind.as_str(),
+        Some(Value::Array(kinds)) => kinds
+            .iter()
+            .filter_map(Value::as_str)
+            .find(|kind| *kind != "null")?,
+        _ => return None,
+    };
+    match kind {
+        "string" => string_value(schema),
+        "integer" | "number" => Some(number_value(schema)),
+        "boolean" => Some(json!(false)),
+        "array" => {
+            let count = schema.get("minItems").and_then(Value::as_u64).unwrap_or(0) as usize;
+            if count == 0 {
+                return Some(json!([]));
+            }
+            let item = synthesize_value(schema.get("items")?, root, depth + 1)?;
+            Some(Value::Array(vec![item; count]))
+        }
+        "object" => object_value(schema, root, depth),
+        "null" => Some(Value::Null),
+        _ => None,
+    }
+}
+
+fn string_value(schema: &Value) -> Option<Value> {
+    let formatted = match schema.get("format").and_then(Value::as_str) {
+        Some("date-time") => Some("2026-01-01T00:00:00Z"),
+        Some("date") => Some("2026-01-01"),
+        Some("uri") => Some("https://example.com"),
+        Some("email") => Some("user@example.com"),
+        Some("uuid") => Some("00000000-0000-4000-8000-000000000000"),
+        _ => None,
+    };
+    if let Some(value) = formatted {
+        return Some(json!(value));
+    }
+    if schema.get("pattern").is_some() {
+        return None;
+    }
+    let min = schema.get("minLength").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let max = schema
+        .get("maxLength")
+        .and_then(Value::as_u64)
+        .map(|max| max as usize);
+    let mut value = String::from("mcpeval");
+    while value.len() < min {
+        value.push('x');
+    }
+    if let Some(max) = max {
+        value.truncate(max);
+    }
+    Some(json!(value))
+}
+
+fn number_value(schema: &Value) -> Value {
+    let minimum = schema.get("minimum").and_then(Value::as_f64);
+    let exclusive = schema
+        .get("exclusiveMinimum")
+        .and_then(Value::as_f64)
+        .map(|bound| bound + 1.0);
+    let mut value = minimum.or(exclusive).unwrap_or(1.0);
+    if let Some(maximum) = schema.get("maximum").and_then(Value::as_f64) {
+        value = value.min(maximum);
+    }
+    if value.fract() == 0.0 {
+        json!(value as i64)
+    } else {
+        json!(value)
+    }
 }
 
 /// Arguments that violate `schema`, first rule that applies: omit the
@@ -694,6 +850,13 @@ mod tests {
     }
 
     #[test]
+    fn the_call_timeout_clears_round_operation_durations() {
+        // The reference server's long-running tool works for its default
+        // 10 s; a 10 s timeout made it a coin flip on every machine.
+        assert!(CALL_TIMEOUT >= Duration::from_secs(15));
+    }
+
+    #[test]
     fn writers_are_declared_by_either_annotation() {
         assert_eq!(
             ToolClass::of(&annotated(json!({"readOnlyHint": false}))),
@@ -780,6 +943,58 @@ mod tests {
                 output_schema: false,
             }
         );
+    }
+
+    #[test]
+    fn synthesis_follows_the_standard_rules_in_order() {
+        let schema = json!({
+            "type": "object",
+            "required": ["kind", "fixed", "day", "at", "site", "mail", "key", "limit", "ratio",
+                         "flag", "tags", "empty", "name", "filter", "pick", "code_or"],
+            "properties": {
+                "kind": {"type": "string", "enum": ["alpha", "beta"]},
+                "fixed": {"const": 7},
+                "day": {"type": "string", "format": "date"},
+                "at": {"type": "string", "format": "date-time"},
+                "site": {"type": "string", "format": "uri"},
+                "mail": {"type": "string", "format": "email"},
+                "key": {"type": "string", "format": "uuid"},
+                "limit": {"type": "integer", "minimum": 5},
+                "ratio": {"type": "number", "exclusiveMinimum": 0},
+                "flag": {"type": "boolean"},
+                "tags": {"type": "array", "minItems": 2, "items": {"type": "string", "default": "t"}},
+                "empty": {"type": "array", "items": {"type": "string"}},
+                "name": {"type": "string", "minLength": 10},
+                "filter": {"$ref": "#/$defs/filter"},
+                "pick": {"anyOf": [{"type": "integer"}, {"type": "string"}]},
+                "code_or": {"type": ["null", "string"], "examples": ["x"]}
+            },
+            "$defs": {"filter": {"type": "object", "required": ["field"],
+                                 "properties": {"field": {"type": "string"}}}}
+        });
+        assert_eq!(
+            synthesize(&schema),
+            Some(json!({
+                "kind": "alpha", "fixed": 7, "day": "2026-01-01", "at": "2026-01-01T00:00:00Z",
+                "site": "https://example.com", "mail": "user@example.com",
+                "key": "00000000-0000-4000-8000-000000000000", "limit": 5, "ratio": 1,
+                "flag": false, "tags": ["t", "t"], "empty": [], "name": "mcpevalxxx",
+                "filter": {"field": "mcpeval"}, "pick": 1, "code_or": "x"
+            }))
+        );
+        let patterned = json!({"type": "object", "required": ["code"],
+                               "properties": {"code": {"type": "string", "pattern": "^[A-Z]{3}$"}}});
+        assert_eq!(synthesize(&patterned), None);
+        let undeclared = json!({"type": "object", "required": ["ghost"], "properties": {}});
+        assert_eq!(synthesize(&undeclared), None);
+        let short = json!({"type": "object", "required": ["s"],
+                           "properties": {"s": {"type": "string", "maxLength": 3}}});
+        assert_eq!(synthesize(&short), Some(json!({"s": "mcp"})));
+        // A self-referencing schema stops at the depth bound.
+        let endless = json!({"type": "object", "required": ["next"],
+                             "properties": {"next": {"$ref": "#"}}});
+        assert_eq!(synthesize(&endless), None);
+        assert_eq!(synthesize(&json!({"type": "object"})), Some(json!({})));
     }
 
     #[test]

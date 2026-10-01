@@ -61,19 +61,10 @@ fn markdown_report_is_pull_request_ready_and_scored() {
 #[test]
 fn markdown_report_places_the_catalog_against_the_corpus() {
     let dir = home();
-    std::fs::write(
-        dir.join("corpus.json"),
-        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus",
-            "battery":["discovery-cost","token-cost","pagination","surface-listing"],
-            "observations":[
-                {"server":"a","score":100,"tool_count":3,"catalog_tokens":1},
-                {"server":"b","score":100,"tool_count":90,"catalog_tokens":1000000},
-                {"server":"c","score":75,"tool_count":200,"catalog_tokens":2000000}
-        ]}"#,
-    )
-    .unwrap();
     let json = probe_in(&dir, CLEAN, "json");
     let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+    let standard = report["readiness"]["standard"].as_str().unwrap().to_owned();
+    let score = report["readiness"]["score"].as_u64().unwrap();
     let token_case = report["cases"]
         .as_array()
         .unwrap()
@@ -83,11 +74,30 @@ fn markdown_report_places_the_catalog_against_the_corpus() {
     let tokens = token_case["measurements"]["total_tokens"].as_u64().unwrap();
     let tools = token_case["measurements"]["tool_count"].as_u64().unwrap();
 
+    // One observation below the fixture's score, one tied, one above.
+    std::fs::write(
+        dir.join("corpus.json"),
+        format!(
+            r#"{{"schema":"mcpeval.readiness-corpus/v2","source":"test corpus","standard":"{standard}",
+            "observations":[
+                {{"server":"a","score":{},"tool_count":3,"catalog_tokens":1}},
+                {{"server":"b","score":{score},"tool_count":90,"catalog_tokens":1000000}},
+                {{"server":"c","score":{},"tool_count":200,"catalog_tokens":2000000}}
+        ]}}"#,
+            score - 1,
+            score + 1
+        ),
+    )
+    .unwrap();
     let output = probe_in(&dir, CLEAN, "markdown");
     assert!(output.status.success());
     let body = String::from_utf8(output.stdout).unwrap();
-    // Battery placement waits for a corpus collected under the standard.
-    assert!(!body.contains("Corpus battery"), "{body}");
+    assert!(
+        body.contains(&format!(
+            "\n*Standard corpus ({standard}): above 1, tied 1, below 1 of 3 observed servers.*\n"
+        )),
+        "{body}"
+    );
     assert!(
         body.contains(&format!(
             "\n*Catalog: {tokens} tokens over {tools} tools — lighter than 2 of 3 observed servers (median 1000000 tokens).*\n"
@@ -95,16 +105,17 @@ fn markdown_report_places_the_catalog_against_the_corpus() {
         "{body}"
     );
 
-    // Without measurements in the corpus, the catalog line is omitted.
+    // Without measurements in the corpus, the catalog line is omitted; a
+    // corpus of another standard places no score.
     std::fs::write(
         dir.join("corpus.json"),
-        r#"{"schema":"mcpeval.readiness-corpus/v1","source":"test corpus","observations":[
-            {"server":"a","score":100}
-        ]}"#,
+        r#"{"schema":"mcpeval.readiness-corpus/v2","source":"test corpus","standard":"mcpeval-standard/0",
+            "observations":[{"server":"a","score":100}]}"#,
     )
     .unwrap();
     let body = String::from_utf8(probe_in(&dir, CLEAN, "markdown").stdout).unwrap();
     assert!(!body.contains("*Catalog:"), "{body}");
+    assert!(!body.contains("Standard corpus"), "{body}");
 }
 
 #[test]

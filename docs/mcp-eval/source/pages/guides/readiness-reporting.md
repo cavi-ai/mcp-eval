@@ -9,7 +9,7 @@ The default format prints one line per case — verdict, attempts, first-failure
 ```text
 literal-status instruction-fidelity pass attempts=1
 demo gate 1/1 passed
-demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
+demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1
   surface: 12 tools, 10 read-only, 2 writers, 10 exercised
   lost catalog.description score=0 tool=describe_status observed=37 reason=catalog-short-description
     hint: describe what the tool does, when to use it, and what it returns in at least 40 characters; agents choose tools from this text
@@ -21,6 +21,7 @@ demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reli
     hint: the same read-only call with the same arguments ended differently across three calls; make read paths deterministic, or return a retryable error with a stable code
   lost reliability.latency score=50 tool=slow_read reason=reliability-slow
     hint: median latency is above 100 ms (score 80: up to 300 ms, 50: up to 1 s, 20: up to 3 s, 0: slower); cache or precompute the read, or page large results
+  standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers
   catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
 ```
 
@@ -59,7 +60,7 @@ mcpeval explain        # list every fixed reason
   "passed": false,
   "gate": {"passed": 0, "total": 1},
   "readiness": {
-    "standard": "mcpeval-standard/1-draft",
+    "standard": "mcpeval-standard/1",
     "score": 91,
     "badge": "https://img.shields.io/badge/mcpeval-91%2F100-brightgreen",
     "attested_read_only": false,
@@ -95,7 +96,7 @@ mcpeval explain        # list every fixed reason
 
 ## The readiness score
 
-Readiness (0-100) is the weighted mean of the standard's areas, each scored on fixed curves that mcpeval defines. The weights, curves, bands, and checks are the standard; the report names it (`mcpeval-standard/1-draft` in this build), and any change to them changes the name. No area ever drops out: surface the standard could not test counts against the score.
+Readiness (0-100) is the weighted mean of the standard's areas, each scored on fixed curves that mcpeval defines. The weights, curves, bands, and checks are the standard; the report names it (`mcpeval-standard/1` in this build), and any change to them changes the name. No area ever drops out: surface the standard could not test counts against the score.
 
 | Area | Weight | Scored as |
 | --- | --- | --- |
@@ -106,19 +107,20 @@ Readiness (0-100) is the weighted mean of the standard's areas, each scored on f
 | error-honesty | 15 | the share of judged read-only tools that refuse one call with arguments violating their input schema — the required properties omitted, else the first typed property (by name) given the wrong type, else an unknown property when `additionalProperties` is `false` — with error -32602 or an `isError` result whose text says why, and still answer the next request. Tools whose schema admits every input are not judged; when none can be judged the area scores 0 (`honesty-untestable`) |
 | coverage | 15 | exercised read-only tools over every read-only tool |
 
-The standard battery is read-only by construction. It never calls a tool annotated `readOnlyHint: false` or `destructiveHint: true`, and it calls a tool with neither annotation only when you pass `--confirm-read-only`; otherwise that tool stays in the surface as unexercised (`coverage-unannotated`). Tools that require arguments stay unexercised in this build (`coverage-required-arguments`). Each call waits at most 10 seconds; a call that times out or ends the connection costs that tool only, and the next tool starts on a fresh connection. The battery runs on its own connection after the gate and never writes to the call journal. Before a read-only tool's ordinary calls, the battery makes one call with schema-violating arguments for the error-honesty area. The protocol checks run last: they send an unknown method, `ping`, a `tools/call` naming a tool that does not exist, the paged listings, and extra `initialize` handshakes. A page after the first that fails ends the catalog with the tools already listed and costs `protocol.pagination`.
+The standard battery is read-only by construction. It never calls a tool annotated `readOnlyHint: false` or `destructiveHint: true`, and it calls a tool with neither annotation only when you pass `--confirm-read-only`; otherwise that tool stays in the surface as unexercised (`coverage-unannotated`). Each tool's arguments are synthesized from its input schema, every required property by the first rule that applies: `$ref`; `const`, the first `enum` member, `default`, or the first of `examples`; the first `anyOf` or `oneOf` branch; then by type: a fixed sample for the `date`, `date-time`, `uri`, `email`, and `uuid` formats, else `mcpeval` padded or cut to `minLength` and `maxLength`; the minimum (or 1) for numbers; `false`; `minItems` copies of the item; nested objects the same way. A required string with only a `pattern`, or a property with no rule, leaves the tool unexercised (`coverage-unsynthesizable`). The battery trusts `readOnlyHint`: a server that marks a writing tool read-only gets it called. `--skip-tool <NAME>` (repeatable) never calls that tool; a skipped tool the battery would have called scores 0 for reliability (`reliability.skipped`) and error honesty, and any skip scores the contention and payload cases 0, so skipping never raises the score. `--gate-only` skips the battery entirely. Each call waits at most 15 seconds; a call that times out or ends the connection costs that tool only, and the next tool starts on a fresh connection. The battery runs on its own connection after the gate and never writes to the call journal. Before a read-only tool's ordinary calls, the battery makes one call with schema-violating arguments for the error-honesty area. The protocol checks run last: they send an unknown method, `ping`, a `tools/call` naming a tool that does not exist, the paged listings, and extra `initialize` handshakes. A page after the first that fails ends the catalog with the tools already listed and costs `protocol.pagination`.
 
 It runs on full-battery `probe` runs and on `compare`; `--gate-only` skips it, and `--probe <kind>` and `verify` never run it. `mcpeval explain` covers the gate's reasons; each lost readiness check carries its own hint.
 
 ## Calibration
 
-When the corpus (`data/readiness-corpus.json`, refreshed by `scripts/corpus/collect.sh`) carries `catalog_tokens`, text and markdown reports place your catalog among the observed servers; the median is the lower middle for an even count:
+The corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v2`, refreshed by `scripts/corpus/collect.sh`) holds the readiness and area scores of popular public servers under one named standard. Text and markdown reports from `probe` and `score` place your readiness among them when your report was scored under the same standard, counting ties explicitly, and place your catalog among the servers that recorded `catalog_tokens`; the median is the lower middle for an even count:
 
 ```text
+  standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers
   catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
 ```
 
-The corpus's scores were collected as manifest pass rates, so reports do not place a readiness score among them until the corpus is recollected under the standard. A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; when no corpus is available, reports omit the line. JSON reports never carry corpus context.
+A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; a v1 corpus (manifest pass rates) is not read. When no corpus is available, reports omit both lines. JSON reports never carry corpus context.
 
 ## Session cost
 

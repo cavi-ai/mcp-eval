@@ -4,13 +4,19 @@ Every full-battery `mcpeval probe` run produces two results: the **gate**, which
 
 ## Text
 
-The default format prints one line per case — verdict, attempts, first-failure position, fixed reason label, and measurement numbers — then the gate, the readiness line with each area's score, the surface the standard saw, and every lost point with its hint:
+The default format prints one line per case — verdict, attempts, first-failure position, fixed reason label, and measurement numbers — then the gate, the readiness line with each area's score, the surface the standard saw, and every lost point. Each reason's hint prints once, under its first lost point:
 
 ```text
 literal-status instruction-fidelity pass attempts=1
 demo gate 1/1 passed
-demo readiness 98/100 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
+demo readiness 88/100 catalog=63 context=100 reliability=94 coverage=100 standard=mcpeval-standard/1-draft
   surface: 12 tools, 10 read-only, 2 writers, 10 exercised
+  lost catalog.description score=0 tool=describe_status observed=37 reason=catalog-short-description
+    hint: describe what the tool does, when to use it, and what it returns in at least 40 characters; agents choose tools from this text
+  lost catalog.output-schema score=0 tool=describe_status reason=catalog-no-output-schema
+    hint: declare outputSchema and return structuredContent so agents can read results without parsing prose
+  lost catalog.output-schema score=0 tool=read_counter reason=catalog-no-output-schema
+  …
   lost reliability.consistent score=0 tool=flaky_read reason=reliability-inconsistent
     hint: the same read-only call with the same arguments ended differently across three calls; make read paths deterministic, or return a retryable error with a stable code
   lost reliability.latency score=50 tool=slow_read reason=reliability-slow
@@ -54,11 +60,14 @@ mcpeval explain        # list every fixed reason
   "gate": {"passed": 0, "total": 1},
   "readiness": {
     "standard": "mcpeval-standard/1-draft",
-    "score": 98,
-    "badge": "https://img.shields.io/badge/mcpeval-98%2F100-brightgreen",
+    "score": 88,
+    "badge": "https://img.shields.io/badge/mcpeval-88%2F100-brightgreen",
     "attested_read_only": false,
     "surface": {"tools": 12, "read_only": 10, "writers": 2, "exercised": 10},
     "areas": [
+      {"name": "catalog", "weight": 20, "score": 63, "measurements": {},
+       "checks": [{"id": "catalog.description", "tool": "describe_status", "score": 0,
+                   "observed": 37, "reason": "catalog-short-description", "hint": "…"}, …]},
       {"name": "reliability", "weight": 20, "score": 94, "measurements": {},
        "checks": [{"id": "reliability.latency", "tool": "slow_read", "score": 50,
                    "observed": null, "reason": "reliability-slow", "hint": "…"}]}
@@ -89,6 +98,7 @@ Readiness (0-100) is the weighted mean of the standard's areas, each scored on f
 
 | Area | Weight | Scored as |
 | --- | --- | --- |
+| catalog | 20 | per tool, the share of its checks it passes, averaged over the catalog: a description of at least 40 characters; every input property described and typed (type, enum, const, `$ref`, anyOf, or oneOf), for tools with properties; `readOnlyHint` declared; `destructiveHint` declared, for writers; `outputSchema` declared. An empty catalog scores 0 |
 | context | 15 | 75% the catalog's token estimate (100 at 2,000 tokens or fewer, 0 at 40,000 or more, logarithmic between) and 25% the heaviest tool's (100 at 500 or fewer, 0 at 5,000 or more) |
 | reliability | 20 | each exercised tool's three calls: the same outcome every time, the median latency band (100 up to 100 ms, 80 up to 300 ms, 50 up to 1 s, 20 up to 3 s, else 0), and a declared `outputSchema` honored; plus one contention and one payload-bounds case on the first fully successful tool |
 | coverage | 15 | exercised read-only tools over every read-only tool |
@@ -129,8 +139,8 @@ mcpeval trends --last 5
 
 ```text
 demo
-  2026-09-30T18:03:04.761Z score=98/100 cases=1/1 manifest=0524c76b
-  2026-09-30T18:03:50.618Z score=97/100 cases=1/1 -1 manifest=0524c76b
+  2026-09-30T18:03:04.761Z score=88/100 cases=1/1 manifest=0524c76b
+  2026-09-30T18:03:50.618Z score=87/100 cases=1/1 -1 manifest=0524c76b
 ```
 
 Records written before the standard existed hold a manifest pass rate: they compare only with each other, by manifest hash.

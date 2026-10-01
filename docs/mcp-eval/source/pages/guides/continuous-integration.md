@@ -39,7 +39,7 @@ The report is rendered as markdown into the job summary and written as JSON to `
 
 With `baseline: mcp-eval.baseline.json`, the action runs `mcpeval diff --fail-on-regression` against the committed report (plus `--fail-on-change` with `fail-on-change: "true"`) and appends its markdown table to the job summary and the `markdown` output. With `sarif: "true"`, it renders `mcpeval.sarif` located at the manifest's failing cases and uploads it through `github/codeql-action/upload-sarif`, also when the probe fails; the job needs `security-events: write`. The step exits with the probe's code, or with the diff's when the probe passed and the diff failed.
 
-`baseline` and `sarif` need `mcpeval` 0.3.0 or later (`diff` and `report --manifest`). The pinned release moves when `distribution/release.json` is updated at release time; until then, set `version: '0.3.0'` or later, or the step fails fast with a usage error naming the installed version.
+`baseline` and `sarif` need `mcpeval` 0.3.0 or later (`diff` and `report --manifest`); the action's pinned release has both. A `version` input older than 0.3.0 fails fast with a usage error naming the installed version.
 
 ## Committed baselines
 

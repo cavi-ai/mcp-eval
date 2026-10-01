@@ -118,6 +118,15 @@ pub struct ToolObservation {
     /// None for writers, which are never called.
     pub exercise: Option<Exercise>,
     pub catalog: CatalogFacts,
+    /// How the tool refused schema-violating arguments; None for tools
+    /// that are not called or whose schema admits every input.
+    pub honesty: Option<Honesty>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Honesty {
+    Honest,
+    Dishonest(CheckReason),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -186,6 +195,16 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
     let mut succeeded: Vec<(&ToolDefinition, Value)> = Vec::new();
     for tool in &catalog.tools {
         let class = ToolClass::of(tool);
+        let callable = match class {
+            ToolClass::Writer => false,
+            ToolClass::Unannotated => options.confirm_read_only,
+            ToolClass::ReadOnly => true,
+        };
+        let honesty = if callable {
+            probe_honesty(&mut client, target, tool)
+        } else {
+            None
+        };
         let exercise = match class {
             ToolClass::Writer => None,
             ToolClass::Unannotated if !options.confirm_read_only => {
@@ -210,6 +229,7 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             class,
             exercise,
             catalog: CatalogFacts::of(tool),
+            honesty,
         });
     }
     let contention = succeeded.first().map(|(tool, arguments)| {
@@ -287,6 +307,94 @@ fn list_catalog(client: &mut ProbeClient) -> anyhow::Result<ToolCatalog> {
         tools,
         encoded_bytes,
     })
+}
+
+/// Arguments that violate `schema`, first rule that applies: omit the
+/// required properties; else wrong-type the first typed property by name;
+/// else an unknown property when the schema forbids extras. None when the
+/// schema admits every input.
+pub fn invalid_arguments(schema: &Value) -> Option<Value> {
+    if !crate::init::zero_required(schema) {
+        return Some(json!({}));
+    }
+    let typed = schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .find_map(|(name, property)| {
+            property
+                .get("type")
+                .and_then(Value::as_str)
+                .map(|kind| (name, kind))
+        });
+    if let Some((name, kind)) = typed {
+        let wrong = if kind == "string" {
+            json!(12345)
+        } else {
+            json!("mcpeval")
+        };
+        let mut arguments = serde_json::Map::new();
+        arguments.insert(name.clone(), wrong);
+        return Some(Value::Object(arguments));
+    }
+    (schema.get("additionalProperties") == Some(&Value::Bool(false)))
+        .then(|| json!({"mcpeval_unknown": 1}))
+}
+
+/// Invalid arguments must be refused with -32602, or with an `isError`
+/// result that says why.
+fn honesty_of(response: &ToolResponse) -> Honesty {
+    match response {
+        ToolResponse::Error { code: -32602, .. } => Honesty::Honest,
+        ToolResponse::Error { payload, .. }
+            if payload.get("code").and_then(Value::as_str) == Some("tool-error") =>
+        {
+            let message = payload
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if message.is_empty() || message == crate::mcp_client::UNTEXTED_TOOL_ERROR {
+                Honesty::Dishonest(CheckReason::HonestyEmptyError)
+            } else {
+                Honesty::Honest
+            }
+        }
+        ToolResponse::Error { .. } => Honesty::Dishonest(CheckReason::HonestyWrongCode),
+        ToolResponse::Success(_) => Honesty::Dishonest(CheckReason::HonestyAcceptedInvalid),
+    }
+}
+
+/// One call with schema-violating arguments, then `ping`: the session must
+/// answer after the refusal. Any JSON-RPC reply to `ping` counts; whether
+/// `ping` itself is implemented is the protocol area's check.
+fn probe_honesty(
+    client: &mut Option<ProbeClient>,
+    target: &ClientTarget,
+    tool: &ToolDefinition,
+) -> Option<Honesty> {
+    let arguments = invalid_arguments(&tool.input_schema)?;
+    if client.is_none() {
+        *client = connect(target).ok();
+    }
+    let failed = Some(Honesty::Dishonest(CheckReason::HonestyCallFailed));
+    let Some(active) = client.as_mut() else {
+        return failed;
+    };
+    let Ok((response, _)) = active.call_tool_observing(
+        &tool.name,
+        &arguments,
+        &mut |_, _| None,
+        MAX_SERVER_REQUESTS,
+    ) else {
+        *client = connect(target).ok();
+        return failed;
+    };
+    if active.raw_request("ping", json!({})).is_err() {
+        *client = connect(target).ok();
+        return failed;
+    }
+    Some(honesty_of(&response))
 }
 
 /// One `tools/list` page: its parsed entries and the next cursor.
@@ -671,6 +779,74 @@ mod tests {
                 destructive_declared: false,
                 output_schema: false,
             }
+        );
+    }
+
+    #[test]
+    fn invalid_arguments_follow_the_standard_order() {
+        // Omit the required properties first.
+        assert_eq!(
+            invalid_arguments(&json!({
+                "type": "object", "required": ["id"], "properties": {"id": {"type": "string"}}
+            })),
+            Some(json!({}))
+        );
+        // Else wrong-type the first typed property by name.
+        assert_eq!(
+            invalid_arguments(
+                &json!({"type": "object", "properties": {"city": {"type": "string"}}})
+            ),
+            Some(json!({"city": 12345}))
+        );
+        assert_eq!(
+            invalid_arguments(&json!({"type": "object", "properties": {
+                "port": {"type": "integer"}, "host": {"description": "untyped"}
+            }})),
+            Some(json!({"port": "mcpeval"}))
+        );
+        // Else an unknown property the schema forbids.
+        assert_eq!(
+            invalid_arguments(&json!({"type": "object", "additionalProperties": false})),
+            Some(json!({"mcpeval_unknown": 1}))
+        );
+        // A schema that admits every input cannot be violated.
+        assert_eq!(
+            invalid_arguments(&json!({"type": "object", "properties": {"x": {}}})),
+            None
+        );
+        assert_eq!(invalid_arguments(&json!({"type": "object"})), None);
+    }
+
+    #[test]
+    fn honesty_needs_a_refusal_with_words() {
+        let judge = |envelope: Value| {
+            honesty_of(&crate::mcp_client::classify_tool_response(&envelope).unwrap())
+        };
+        assert_eq!(
+            judge(json!({"error": {"code": -32602, "message": "bad"}})),
+            Honesty::Honest
+        );
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [
+                {"type": "text", "text": "city must be a string"}
+            ]}})),
+            Honesty::Honest
+        );
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": []}})),
+            Honesty::Dishonest(CheckReason::HonestyEmptyError)
+        );
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [{"type": "text", "text": ""}]}})),
+            Honesty::Dishonest(CheckReason::HonestyEmptyError)
+        );
+        assert_eq!(
+            judge(json!({"result": {"content": []}})),
+            Honesty::Dishonest(CheckReason::HonestyAcceptedInvalid)
+        );
+        assert_eq!(
+            judge(json!({"error": {"code": -32603, "message": "boom"}})),
+            Honesty::Dishonest(CheckReason::HonestyWrongCode)
         );
     }
 

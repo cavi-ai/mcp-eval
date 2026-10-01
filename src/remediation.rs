@@ -351,6 +351,27 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
             "a declared resources or prompts capability did not list cleanly; list what the \
              capability declares, or stop declaring it"
         }
+        CheckReason::HonestyAcceptedInvalid => {
+            "the tool accepted arguments that violate its input schema; validate arguments and \
+             refuse invalid ones with -32602 or an isError result that says what is wrong"
+        }
+        CheckReason::HonestyEmptyError => {
+            "the tool refused invalid arguments without saying why; put the reason in the \
+             isError result's text content"
+        }
+        CheckReason::HonestyWrongCode => {
+            "invalid arguments were refused with a JSON-RPC code other than -32602; use -32602 \
+             (invalid params) or an isError result"
+        }
+        CheckReason::HonestyCallFailed => {
+            "invalid arguments hung the call, closed the connection, or left the session unable \
+             to answer the next request; refuse bad input without ending the session"
+        }
+        CheckReason::HonestyUntestable => {
+            "no read-only tool's input schema can be violated, so error handling cannot be \
+             measured; declare required properties, property types, or additionalProperties: \
+             false"
+        }
         CheckReason::ProtocolCallFailed => {
             "a protocol request timed out, closed the connection, or broke the exchange; answer \
              every request within 10 seconds without ending the session"

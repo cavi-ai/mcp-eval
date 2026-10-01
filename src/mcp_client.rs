@@ -625,6 +625,10 @@ impl Drop for McpClient {
 /// `result.isError` is true — is a tool failure: production servers,
 /// including the official reference server, report missing or invalid
 /// arguments this way, and probes must honor it or a broken tool passes.
+/// The message given to an `isError` result whose first content item has
+/// no text.
+pub(crate) const UNTEXTED_TOOL_ERROR: &str = "tool error";
+
 pub fn classify_tool_response(response: &Value) -> anyhow::Result<ToolResponse> {
     if let Some(result) = response.get("result") {
         if result.get("isError").and_then(Value::as_bool) == Some(true) {
@@ -634,7 +638,7 @@ pub fn classify_tool_response(response: &Value) -> anyhow::Result<ToolResponse> 
                 .and_then(|content| content.first())
                 .and_then(|item| item.get("text"))
                 .and_then(Value::as_str)
-                .unwrap_or("tool error")
+                .unwrap_or(UNTEXTED_TOOL_ERROR)
                 .to_owned();
             return Ok(ToolResponse::Error {
                 code: -32000,

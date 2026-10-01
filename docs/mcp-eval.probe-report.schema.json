@@ -383,6 +383,7 @@
             "protocol",
             "catalog",
             "context",
+            "error-honesty",
             "reliability",
             "coverage"
           ]
@@ -443,7 +444,9 @@
             "protocol.ping",
             "protocol.unknown-tool",
             "protocol.pagination",
-            "protocol.surfaces"
+            "protocol.surfaces",
+            "error-honesty.invalid-arguments",
+            "error-honesty.untestable"
           ]
         },
         "tool": {
@@ -494,7 +497,12 @@
             "protocol-unknown-tool-accepted",
             "protocol-pagination-invalid",
             "protocol-surface-invalid",
-            "protocol-call-failed"
+            "protocol-call-failed",
+            "honesty-accepted-invalid",
+            "honesty-empty-error",
+            "honesty-wrong-code",
+            "honesty-call-failed",
+            "honesty-untestable"
           ]
         },
         "hint": {

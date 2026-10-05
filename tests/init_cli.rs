@@ -475,7 +475,7 @@ fn reason<'a>(report: &'a Value, id: &str) -> &'a str {
 #[test]
 fn the_quickstart_init_manifest_fails_each_broken_demo_with_its_reason() {
     let home = home();
-    let (_, manifest) = init_read_only(&home, &[demo()]);
+    let (_, mut manifest) = init_read_only(&home, &[demo()]);
     let path = home.join("demo.manifest.json");
     std::fs::write(&path, manifest.to_string()).unwrap();
 
@@ -508,6 +508,16 @@ fn the_quickstart_init_manifest_fails_each_broken_demo_with_its_reason() {
     // Only the latency-budget cases: the full 25-case manifest would call
     // slow_read 9 times at 2 s apiece (schema-guessability once,
     // degradation-over-n five times, latency-budget three times).
+    // Review the generated limit explicitly: init derives it from wall-clock
+    // timing, so a busy runner can raise it above the broken demo's 2 s delay.
+    let slow_latency = manifest["probes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|case| case["id"] == "slow_read-latency")
+        .unwrap();
+    slow_latency["max_latency_ms"] = 1000.into();
+    std::fs::write(&path, manifest.to_string()).unwrap();
     let (code, slow) = probe_json(
         &home,
         &path,

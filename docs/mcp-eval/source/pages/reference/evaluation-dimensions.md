@@ -1,6 +1,6 @@
 # Evaluation dimensions
 
-MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes fourteen supplemental probes, documented separately below.
+MCP Eval {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions. The CLI also exposes fifteen supplemental probes, documented separately below.
 
 ## Headline evaluation dimensions
 
@@ -140,5 +140,16 @@ the argument is the argument-unknown defect: the server's completion
 surface is out of sync with its own prompt declarations. A malformed
 envelope, a transport failure, or a flood of values fails the case;
 undeclared completion support passes trivially.
+
+### `workflow`
+
+Runs a declared read-only sequence in one fresh client session, with 2 through
+32 steps and 1 through 20 repetitions. Each step has explicit arguments and
+an `expect` object; the first mismatch stops the case and identifies the
+call number. All steps must pass for the workflow to pass. A transport fault
+makes the entire case incomplete. Tools annotated as writers are refused
+before any step executes. The workflow does not reuse other cases' client
+sessions; server-global or external state is not reset. See the
+[manifest example](manifest.md#read-only-workflows).
 
 All tool calls pass through the normal sanitized synthetic-record boundary.

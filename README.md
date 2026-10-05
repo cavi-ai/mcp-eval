@@ -97,7 +97,7 @@ decision (`candidate (readOnlyHint)`, `candidate (attested)`,
 `skipped: readOnlyHint=false`, `skipped: required arguments`,
 `skipped: not in --tool`); it calls no tool and writes no file.
 
-Not scaffolded: `error-honesty`, `state-recovery`, and
+Not scaffolded: `workflow`, `error-honesty`, `state-recovery`, and
 `instruction-fidelity` need expected inputs; `cancellation` needs a
 deliberately slow tool; `sampling`, `elicitation`, `resource-subscription`,
 and `completion` need declared references. Add them by hand.
@@ -262,7 +262,7 @@ to `<MCPEVAL_HOME>/store/probes/history.jsonl`; `mcpeval trends` renders the
 per-server history with score deltas between runs under the same standard and
 `standard changed` where it differs.
 
-Five probes are this release's headline evaluation dimensions — discovery-cost, schema-guessability, error-honesty, state-recovery, and contention; the other fourteen are supplemental checks. Manifest cases gate; they do not enter the readiness score.
+Five probes are this release's headline evaluation dimensions — discovery-cost, schema-guessability, error-honesty, state-recovery, and contention; the other fifteen are supplemental checks. Manifest cases gate; they do not enter the readiness score.
 
 The deterministic battery:
 
@@ -287,6 +287,7 @@ The deterministic battery:
 | `elicitation` | A tool call under a client `elicitation` capability: `elicitation/create` sub-requests must carry a message and `requestedSchema`, are answered with the declared action, and stay within `max_requests` |
 | `resource-subscription` | For a server declaring `resources.subscribe`: the declared URI is readable, subscribe succeeds, the trigger tool's call yields `notifications/resources/updated` within `max_wait_seconds`, and unsubscribe succeeds; undeclared support passes trivially |
 | `completion` | For a server declaring the `completions` capability: one `completion/complete` request must answer `completion.values` (an array of strings) within `max_values`; a structured error naming the argument, a malformed envelope, or a flood of values fails; undeclared support passes trivially |
+| `workflow` | A declared read-only sequence runs in one fresh session, checks every step's expectation, and repeats within fixed bounds; the first mismatch stops the case, and a transport fault makes the whole workflow incomplete |
 
 ## Comparing servers
 

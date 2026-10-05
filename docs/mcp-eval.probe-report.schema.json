@@ -255,7 +255,8 @@
             "sampling",
             "elicitation",
             "resource-subscription",
-            "completion"
+            "completion",
+            "workflow"
           ]
         },
         "tool": {

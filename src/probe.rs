@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 
 use crate::fingerprint::Salt;
 use crate::http_client::HttpMcpClient;
-use crate::manifest::{Access, Expectation, Manifest, OutcomeExpectation, ProbeCase, ProbeKind};
+use crate::manifest::{
+    Access, Expectation, Manifest, OutcomeExpectation, ProbeCase, ProbeKind, WorkflowStep,
+};
 use crate::mcp_client::{McpClient, ToolCatalog, ToolDefinition, ToolResponse, TransportFailure};
 use crate::record::{error_info, CallRecord};
 use crate::store::Store;
@@ -313,6 +315,7 @@ pub enum FailureReason {
 impl ProbeKind {
     pub fn from_report_label(label: &str) -> Option<Self> {
         let candidate = match label {
+            "workflow" => Self::Workflow,
             "contention" => Self::Contention,
             "error-honesty" => Self::ErrorHonesty,
             "state-recovery" => Self::StateRecovery,
@@ -876,6 +879,7 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     client.initialize()?;
     let catalog = client.list_tools_catalog()?;
     for case in &cases {
+        validate_workflow_tools(case, &catalog).map_err(crate::exit::usage)?;
         if case
             .required_tools()
             .iter()
@@ -1222,6 +1226,9 @@ fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<Ca
 
 fn run_case_inner(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
     match case {
+        ProbeCase::Workflow {
+            repetitions, steps, ..
+        } => run_workflow(case, *repetitions, steps, context),
         ProbeCase::Contention { .. } => run_contention(case, context),
         ProbeCase::ErrorHonesty {
             max_attempts,
@@ -1379,6 +1386,53 @@ fn run_case_inner(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
         ProbeCase::ResourceSubscription { .. } => run_resource_subscription(case, context),
         ProbeCase::Completion { .. } => run_completion(case, context),
     }
+}
+
+/// Workflow access is an explicit operator attestation. An annotation that
+/// contradicts it always refuses the complete workflow before any step runs.
+fn validate_workflow_tools(case: &ProbeCase, catalog: &ToolCatalog) -> anyhow::Result<()> {
+    let ProbeCase::Workflow { steps, .. } = case else {
+        return Ok(());
+    };
+    for step in steps {
+        let Some(tool) = catalog.tools.iter().find(|tool| tool.name == step.tool) else {
+            bail!("workflow tool was not declared by the server");
+        };
+        if crate::standard::ToolClass::of(tool) == crate::standard::ToolClass::Writer {
+            bail!("workflow refuses a tool annotated as a writer");
+        }
+    }
+    Ok(())
+}
+
+fn run_workflow(
+    case: &ProbeCase,
+    repetitions: u64,
+    steps: &[WorkflowStep],
+    context: &mut RunContext<'_>,
+) -> anyhow::Result<CaseReport> {
+    // Do not reuse another case's client session. Never
+    // reconnect midway: a lost exchange makes the whole workflow incomplete.
+    let mut client = context.target.connect(context.timeout)?;
+    client.initialize()?;
+    let catalog = client.list_tools_catalog()?;
+    validate_workflow_tools(case, &catalog)?;
+    let previous = std::mem::replace(context.client, client);
+    let result = (|| {
+        let mut calls = 0;
+        for _ in 0..repetitions {
+            for step in steps {
+                calls += 1;
+                let response = call_named_and_record(&step.tool, &step.arguments, context)?;
+                if let Some(reason) = check_expectation(&step.expect, &response) {
+                    return Ok(failed_case(case, calls, reason));
+                }
+            }
+        }
+        Ok(passed_case(case, calls))
+    })();
+    *context.client = previous;
+    result
 }
 
 fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {

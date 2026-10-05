@@ -14,7 +14,7 @@ Version {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions:
 
 ## Supplemental probes
 
-The CLI also exposes fourteen supplemental probes. They are useful deterministic checks, but they are not additional headline evaluation dimensions for this release:
+The CLI also exposes fifteen supplemental probes. They are useful deterministic checks, but they are not additional headline evaluation dimensions for this release:
 
 - `token-cost`
 - `degradation-over-n`
@@ -30,6 +30,7 @@ The CLI also exposes fourteen supplemental probes. They are useful deterministic
 - `elicitation`
 - `resource-subscription`
 - `completion`
+- `workflow`
 
 The system is read-only by default. A mutating probe needs both a declared sandbox in a strict version 1 manifest and an explicit `--allow-mutation` flag. Capture and probe output follows the same privacy boundary: raw request values, response bodies, tool descriptions, and raw error prose are not persisted.
 

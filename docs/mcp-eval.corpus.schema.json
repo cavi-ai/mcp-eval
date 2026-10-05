@@ -21,7 +21,7 @@
         "properties": {
           "server": { "$ref": "#/$defs/server" },
           "status": { "enum": ["observed", "untested", "errored"] },
-          "reason": { "enum": ["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report"] }
+          "reason": { "enum": ["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report", "deployment-mismatch"] }
         },
         "if": { "properties": { "status": { "const": "observed" } } },
         "then": { "not": { "required": ["reason"] } },
@@ -52,6 +52,7 @@
               "version": { "type": "string", "minLength": 1 },
               "bin": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
               "launch_sha256": { "$ref": "#/$defs/digest" }, "report_sha256": { "$ref": "#/$defs/digest" },
+              "deployment_sha256": { "$ref": "#/$defs/digest" },
               "prerequisites": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^(env|check):[A-Za-z_][A-Za-z0-9_.:-]{0,127}$" } }
             },
             "if": { "properties": { "runtime": { "const": "npm" } } },

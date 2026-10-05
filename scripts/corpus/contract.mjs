@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { spawn, execFileSync } from "node:child_process";
+import { validateDeployment, deploymentMatches } from "./deployment.mjs";
 
 export const ROOT = path.resolve(import.meta.dirname, "../..");
 export const SCHEMA = "mcpeval.readiness-corpus/v3";
@@ -26,6 +27,10 @@ export function commandFor(target) {
   require(typeof target.version === "string" && versionPattern.test(target.version), "target requires an exact package version");
   require(typeof target.bin === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(target.bin), "target requires an explicit executable name");
   require(Array.isArray(target.args) && target.args.every((arg) => typeof arg === "string" && arg.length <= 8192 && !arg.includes("\0")), "target requires an argument array");
+  if (target.deployment !== undefined) {
+    const deployment = validateDeployment(target.deployment);
+    return [path.join(deployment.root, deployment.executable), ...(deployment.entrypoint === undefined ? [] : [path.join(deployment.root, deployment.entrypoint)]), ...target.args];
+  }
   return target.runtime === "npm"
     ? ["npx", "--yes", "--package", `${target.package}@${target.version}`, "--", target.bin, ...target.args]
     : ["uvx", "--from", `${target.package}==${target.version}`, target.bin, ...target.args];
@@ -78,6 +83,7 @@ export function observationFrom(raw, target, evaluator, standard) {
   return { status: "observed", observation: { server: target.server, score: readiness.score, areas, tool_count: surface.tools, catalog_tokens: tokens,
     calls: Object.fromEntries(COUNTS.map((key) => [key, calls[key]])), provenance: {
       runtime: target.runtime, package: target.package, version: target.version, bin: target.bin,
+      ...(target.deployment === undefined ? {} : { deployment_sha256: target.deployment.sha256 }),
       launch_sha256: sha256(JSON.stringify(commandFor(target))), report_sha256: sha256(raw),
       prerequisites: [...target.prerequisites.environment.map((name) => `env:${name}`), ...target.prerequisites.checks.map((check) => `check:${check.name}`)],
     } } };
@@ -92,7 +98,7 @@ export function validateCorpus(corpus) {
   for (const entry of corpus.population) {
     require(label(entry.server) && !seen.has(entry.server) && ["observed", "untested", "errored"].includes(entry.status), "invalid or duplicate population entry"); seen.add(entry.server);
     if (entry.status === "observed") { require(entry.reason === undefined, "observed target cannot have a failure reason"); observed.add(entry.server); }
-    else require(["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report"].includes(entry.reason), "invalid unobserved reason");
+    else require(["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report", "deployment-mismatch"].includes(entry.reason), "invalid unobserved reason");
   }
   const rows = new Set();
   for (const observation of corpus.observations) {
@@ -101,6 +107,7 @@ export function validateCorpus(corpus) {
     require(count(observation.tool_count) && observation.tool_count > 0 && count(observation.catalog_tokens) && COUNTS.every((key) => count(observation.calls?.[key])) && COUNTS.slice(0, -1).some((key) => observation.calls[key] > 0), "invalid corpus measurements");
     const source = observation.provenance;
     require(source && digest(source.report_sha256) && digest(source.launch_sha256) && Array.isArray(source.prerequisites) && source.prerequisites.every((name) => /^(env|check):[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/u.test(name)), "invalid observation provenance");
+    require(source.deployment_sha256 === undefined || digest(source.deployment_sha256), "invalid deployment provenance");
     commandFor({ ...source, server: observation.server, args: [] });
   }
   require(rows.size === observed.size, "population observations are incomplete");
@@ -147,12 +154,16 @@ export function environmentFor(target, home, environment = process.env) {
 
 export async function evaluateTarget(target, context) {
   if (target.prerequisites.environment.some((name) => !context.environment[name]?.trim())) return { status: "untested", reason: "missing-environment" };
+  const mismatch = { status: "errored", reason: "deployment-mismatch" };
+  if (!await deploymentMatches(target.deployment)) return mismatch;
   const env = environmentFor(target, context.home, context.environment);
   for (const check of target.prerequisites.checks) {
     const result = await context.execute(check.command, { env, cwd: context.home, timeoutMs: 10_000, maxBytes: 1024 });
+    if (!await deploymentMatches(target.deployment)) return mismatch;
     if (result.reason || result.code !== 0) return { status: "untested", reason: "prerequisite-failed" };
   }
   const result = await context.execute([context.binary, ...scoreArguments(target.server), "--", ...commandFor(target)], { env, cwd: context.home });
+  if (!await deploymentMatches(target.deployment)) return mismatch;
   if (result.reason || ![0, 2].includes(result.code)) return { status: "errored", reason: "evaluation-failed" };
   try { return { ...observationFrom(result.stdout, target, context.evaluator, context.standard), raw: result.stdout }; }
   catch { return { status: "errored", reason: "invalid-report" }; }

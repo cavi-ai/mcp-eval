@@ -4,6 +4,9 @@
 
 ### Added
 
+- Optional prepared corpus deployments bind runtime and dependency-tree bytes.
+  Direct launches bypass package resolution; changed bundles lose observation
+  credit during collection and replay.
 - Provenance corpus v3, pinned collection targets, declared prerequisite checks,
   evaluator/report hashes, and explicit observed, untested, and errored outcomes.
   Deterministic corpus fixtures run in CI; no new public measurements are collected.

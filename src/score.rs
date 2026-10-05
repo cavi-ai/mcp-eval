@@ -13,7 +13,7 @@ use crate::probe::ProbeReport;
 use crate::standard::{Exercise, Honesty, Observations, ToolClass, ToolObservation};
 
 /// The standard this build scores against.
-pub const STANDARD: &str = "mcpeval-standard/1";
+pub const STANDARD: &str = "mcpeval-standard/2";
 
 /// Catalog tokens at or under this earn full marks (1% of a 200k window).
 pub const CATALOG_FULL_TOKENS: u64 = 2_000;
@@ -60,7 +60,7 @@ impl Area {
         }
     }
 
-    /// Weight in the overall score; standard/1's six areas sum to 100.
+    /// Weight in the overall score; standard/2's six areas sum to 100.
     pub fn weight(self) -> u64 {
         match self {
             Self::Protocol => 15,
@@ -84,6 +84,7 @@ impl Area {
 pub enum CheckId {
     ContextCatalog,
     ContextHeaviestTool,
+    ReliabilitySuccess,
     ReliabilityConsistent,
     ReliabilityLatency,
     ReliabilityOutputSchema,
@@ -113,6 +114,7 @@ impl CheckId {
     pub const ALL: &'static [CheckId] = &[
         Self::ContextCatalog,
         Self::ContextHeaviestTool,
+        Self::ReliabilitySuccess,
         Self::ReliabilityConsistent,
         Self::ReliabilityLatency,
         Self::ReliabilityOutputSchema,
@@ -142,6 +144,7 @@ impl CheckId {
         match self {
             Self::ContextCatalog => "context.catalog",
             Self::ContextHeaviestTool => "context.heaviest-tool",
+            Self::ReliabilitySuccess => "reliability.success",
             Self::ReliabilityConsistent => "reliability.consistent",
             Self::ReliabilityLatency => "reliability.latency",
             Self::ReliabilityOutputSchema => "reliability.output-schema",
@@ -177,6 +180,7 @@ impl CheckId {
 pub enum CheckReason {
     ContextCatalogHeavy,
     ContextToolHeavy,
+    ReliabilityCallFailed,
     ReliabilityInconsistent,
     ReliabilitySlow,
     ReliabilityOutputSchemaBroken,
@@ -216,6 +220,7 @@ impl CheckReason {
     pub const ALL: &'static [CheckReason] = &[
         Self::ContextCatalogHeavy,
         Self::ContextToolHeavy,
+        Self::ReliabilityCallFailed,
         Self::ReliabilityInconsistent,
         Self::ReliabilitySlow,
         Self::ReliabilityOutputSchemaBroken,
@@ -255,6 +260,7 @@ impl CheckReason {
         match self {
             Self::ContextCatalogHeavy => "context-catalog-heavy",
             Self::ContextToolHeavy => "context-tool-heavy",
+            Self::ReliabilityCallFailed => "reliability-call-failed",
             Self::ReliabilityInconsistent => "reliability-inconsistent",
             Self::ReliabilitySlow => "reliability-slow",
             Self::ReliabilityOutputSchemaBroken => "reliability-output-schema-broken",
@@ -343,7 +349,7 @@ impl Surface {
             writers,
             exercised: tools
                 .iter()
-                .filter(|tool| matches!(tool.exercise, Some(Exercise::Exercised { .. })))
+                .filter(|tool| tool.class != ToolClass::Writer && tool.calls.successful > 0)
                 .count() as u64,
         }
     }
@@ -664,8 +670,34 @@ fn reliability(observations: &Observations) -> AreaScore {
             output_schema,
         }) = &tool.exercise
         else {
+            if tool.class != ToolClass::Writer {
+                entries.push(0.0);
+                let reason = match tool.exercise {
+                    Some(Exercise::NotExercised(reason)) => reason,
+                    _ => CheckReason::ReliabilityNoneExercised,
+                };
+                checks.extend(lost(
+                    CheckId::ReliabilityNoneExercised,
+                    name,
+                    0.0,
+                    None,
+                    reason,
+                ));
+            }
             continue;
         };
+        let success = if tool.calls.total() == 0 {
+            0.0
+        } else {
+            100.0 * tool.calls.successful as f64 / tool.calls.total() as f64
+        };
+        checks.extend(lost(
+            CheckId::ReliabilitySuccess,
+            name,
+            success,
+            Some(tool.calls.successful),
+            CheckReason::ReliabilityCallFailed,
+        ));
         let consistency = if *consistent { 100.0 } else { 0.0 };
         let latency = latency_band(*median_latency_ms) as f64;
         checks.extend(lost(
@@ -696,7 +728,7 @@ fn reliability(observations: &Observations) -> AreaScore {
                 CheckReason::ReliabilityOutputSchemaBroken,
             ));
         }
-        entries.push(parts.iter().sum::<f64>() / parts.len() as f64);
+        entries.push(success / 100.0 * parts.iter().sum::<f64>() / parts.len() as f64);
     }
     let exercised = entries.len();
     for (outcome, id, reason) in [
@@ -741,7 +773,14 @@ fn reliability(observations: &Observations) -> AreaScore {
         area: Area::Reliability,
         score,
         checks,
-        measurements: serde_json::Map::new(),
+        measurements: serde_json::from_value(json!({
+            "successful_calls": observations.tools.iter().map(|t| t.calls.successful).sum::<u64>(),
+            "tool_errors": observations.tools.iter().map(|t| t.calls.tool_errors).sum::<u64>(),
+            "rpc_errors": observations.tools.iter().map(|t| t.calls.rpc_errors).sum::<u64>(),
+            "rejected_calls": observations.tools.iter().map(|t| t.calls.rejected).sum::<u64>(),
+            "transport_errors": observations.tools.iter().map(|t| t.calls.transport_errors).sum::<u64>(),
+            "untested_tools": observations.tools.iter().filter(|t| t.class != ToolClass::Writer && t.calls.total() == 0).count(),
+        })).expect("numeric measurements"),
     }
 }
 
@@ -750,8 +789,18 @@ fn coverage(tools: &[ToolObservation]) -> AreaScore {
     let mut checks = Vec::new();
     let mut exercised = 0usize;
     for tool in tools.iter().filter(|tool| tool.class != ToolClass::Writer) {
+        if tool.calls.successful > 0 {
+            exercised += 1;
+            continue;
+        }
         match &tool.exercise {
-            Some(Exercise::Exercised { .. }) => exercised += 1,
+            Some(Exercise::Exercised { .. }) => checks.extend(lost(
+                CheckId::CoverageExercised,
+                Some(tool.name.as_str()),
+                0.0,
+                None,
+                CheckReason::CoverageCallFailed,
+            )),
             Some(Exercise::NotExercised(reason)) => checks.extend(lost(
                 CheckId::CoverageExercised,
                 Some(tool.name.as_str()),
@@ -983,6 +1032,14 @@ mod tests {
         class: ToolClass,
         exercise: Option<Exercise>,
     ) -> ToolObservation {
+        let calls = if matches!(exercise, Some(Exercise::Exercised { .. })) {
+            crate::standard::CallCounts {
+                successful: 3,
+                ..Default::default()
+            }
+        } else {
+            Default::default()
+        };
         ToolObservation {
             name: name.into(),
             tokens,
@@ -990,6 +1047,7 @@ mod tests {
             exercise,
             catalog: CatalogFacts::default(),
             honesty: None,
+            calls,
         }
     }
 
@@ -1046,7 +1104,14 @@ mod tests {
                     ..read("shared_read", 56, facts(42, 1, 1, true, false))
                 },
                 with(
-                    tool("flaky_read", 45, ToolClass::ReadOnly, exercised(false, 1)),
+                    ToolObservation {
+                        calls: crate::standard::CallCounts {
+                            successful: 1,
+                            tool_errors: 2,
+                            ..Default::default()
+                        },
+                        ..tool("flaky_read", 45, ToolClass::ReadOnly, exercised(false, 1))
+                    },
                     facts(63, 0, 0, true, false),
                 ),
                 with(
@@ -1172,7 +1237,7 @@ mod tests {
         assert_eq!(area(&readiness, Area::Protocol).score, 100);
         assert_eq!(area(&readiness, Area::Catalog).score, 63);
         assert_eq!(area(&readiness, Area::Context).score, 100);
-        assert_eq!(area(&readiness, Area::Reliability).score, 94);
+        assert_eq!(area(&readiness, Area::Reliability).score, 91);
         assert_eq!(area(&readiness, Area::Coverage).score, 100);
         assert_eq!(area(&readiness, Area::ErrorHonesty).score, 100);
         assert_eq!(readiness.score, 91);
@@ -1196,6 +1261,7 @@ mod tests {
         assert_eq!(
             lost,
             vec![
+                (CheckId::ReliabilitySuccess, Some("flaky_read"), 33),
                 (CheckId::ReliabilityConsistent, Some("flaky_read"), 0),
                 (CheckId::ReliabilityLatency, Some("slow_read"), 50),
             ]
@@ -1522,7 +1588,7 @@ mod tests {
         assert_eq!(document["badge"], badge_url(91));
         assert_eq!(
             document["areas"][4]["checks"][0]["hint"],
-            crate::remediation::check_hint(CheckReason::ReliabilityInconsistent)
+            crate::remediation::check_hint(CheckReason::ReliabilityCallFailed)
         );
         assert_eq!(Readiness::from_json(&document).unwrap(), readiness);
         let mut unknown = document.clone();

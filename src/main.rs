@@ -743,12 +743,14 @@ fn run() -> anyhow::Result<()> {
         cli::Command::Share {
             dir,
             include_probe_history,
+            include_annotation_notes,
             force,
         } => {
             let summary = match mcpeval::share::run(mcpeval::share::ShareOptions {
                 output: dir,
                 force,
                 include_probe_history,
+                include_annotation_notes,
             })? {
                 mcpeval::share::ShareOutcome::Packaged(summary) => summary,
                 mcpeval::share::ShareOutcome::Refused { flagged } => {

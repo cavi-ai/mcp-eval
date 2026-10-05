@@ -87,7 +87,7 @@ fn the_clean_demo_loses_points_only_for_its_deliberate_fixtures() {
     assert_eq!(document["schema"], "mcpeval.probe-report/v2");
     assert_eq!(document["gate"], Value::Null);
     let readiness = &document["readiness"];
-    assert_eq!(readiness["standard"], "mcpeval-standard/1");
+    assert_eq!(readiness["standard"], "mcpeval-standard/2");
     assert_eq!(
         readiness["surface"],
         json!({"tools": 12, "read_only": 10, "writers": 2, "exercised": 10})
@@ -95,7 +95,7 @@ fn the_clean_demo_loses_points_only_for_its_deliberate_fixtures() {
     assert_eq!(area(&document, "protocol"), 100);
     assert_eq!(area(&document, "catalog"), 63);
     assert_eq!(area(&document, "context"), 100);
-    assert_eq!(area(&document, "reliability"), 94);
+    assert_eq!(area(&document, "reliability"), 91);
     assert_eq!(area(&document, "coverage"), 100);
     assert_eq!(area(&document, "error-honesty"), 100);
     assert_eq!(readiness["score"], 91);
@@ -151,6 +151,11 @@ fn the_clean_demo_loses_points_only_for_its_deliberate_fixtures() {
         lost_in(&document, "reliability"),
         owned(&[
             (
+                "reliability.success",
+                Some("flaky_read"),
+                "reliability-call-failed"
+            ),
+            (
                 "reliability.consistent",
                 Some("flaky_read"),
                 "reliability-inconsistent"
@@ -182,7 +187,7 @@ fn two_runs_of_one_build_score_the_same() {
 
 #[test]
 fn each_new_demo_aspect_lowers_only_reliability() {
-    for (aspect, reliability) in [("slow", 93), ("flaky", 90)] {
+    for (aspect, reliability) in [("slow", 90), ("flaky", 85)] {
         let (output, document) = score(&home(), &[demo(), "--broken", aspect]);
         assert!(
             output.status.success(),
@@ -303,12 +308,19 @@ fn a_tool_that_kills_the_connection_costs_only_itself() {
         json!({"tools": 3, "read_only": 3, "writers": 0, "exercised": 2})
     );
     assert_eq!(area(&document, "coverage"), 67);
-    assert_eq!(area(&document, "reliability"), 100);
+    assert_eq!(area(&document, "reliability"), 75);
     assert_eq!(
         lost_in(&document, "coverage"),
         owned(&[("coverage.exercised", Some("crash"), "coverage-call-failed")])
     );
-    assert_eq!(lost_in(&document, "reliability"), owned(&[]));
+    assert_eq!(
+        lost_in(&document, "reliability"),
+        owned(&[(
+            "reliability.none-exercised",
+            Some("crash"),
+            "coverage-call-failed"
+        )])
+    );
 }
 
 #[test]
@@ -401,7 +413,7 @@ fn text_output_names_every_lost_point_with_its_hint() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1"),
+        stdout.contains("demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/2"),
         "{stdout}"
     );
     assert!(

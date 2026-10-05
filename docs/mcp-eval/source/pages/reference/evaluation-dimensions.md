@@ -77,9 +77,11 @@ declare pass trivially; the probe only verifies what the server claims.
 ### `output-schema`
 
 For a tool that declares `outputSchema`, the response must carry
-`structuredContent` covering that schema's required fields. Tools without a
-declared output schema pass trivially. The probe never inspects values, only
-field presence.
+`structuredContent` satisfying the complete schema: types, nested fields,
+required properties, and constraints. Local schema references are supported;
+external references are disabled. Tools without a declared output schema pass
+trivially. Validation happens in memory; result values and schema diagnostics
+are never persisted or printed.
 
 ### `cancellation`
 

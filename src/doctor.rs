@@ -75,22 +75,13 @@ pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
             .is_some_and(|name| name.starts_with("annotations-"));
         let body =
             std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        for (index, line) in body.lines().enumerate() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let flagged = if is_annotations {
-                if line_has_nonempty_note(line) {
-                    notes_requiring_review += 1;
-                }
-                annotation_line_looks_unredacted(line)
-            } else {
-                line_looks_unredacted(line)
-            };
-            if flagged {
-                findings.push(format!("{}:{}", path.display(), index + 1));
-            }
-        }
+        let (lines, notes) = scan_body(&body, is_annotations);
+        notes_requiring_review += notes;
+        findings.extend(
+            lines
+                .into_iter()
+                .map(|line| format!("{}:{line}", path.display())),
+        );
     }
 
     Ok(Report {
@@ -99,6 +90,27 @@ pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
         notes_requiring_review,
         salt_path: root.join(SALT_FILENAME),
     })
+}
+
+/// Scan an immutable snapshot; callers must export these same bytes.
+pub(crate) fn scan_body(body: &str, is_annotations: bool) -> (Vec<usize>, usize) {
+    let mut findings = Vec::new();
+    let mut notes = 0;
+    for (index, line) in body.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let flagged = if is_annotations {
+            notes += usize::from(line_has_nonempty_note(line));
+            annotation_line_looks_unredacted(line)
+        } else {
+            line_looks_unredacted(line)
+        };
+        if flagged {
+            findings.push(index + 1);
+        }
+    }
+    (findings, notes)
 }
 
 /// Whether this annotation line carries a non-empty `note`. Used only to

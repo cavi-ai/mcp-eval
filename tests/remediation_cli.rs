@@ -199,17 +199,14 @@ fn standard_of(stdout: &str) -> String {
 
 #[test]
 fn calibration_context_appears_when_the_corpus_resolves() {
-    // The repository corpus resolves even from a bare temp home and is
-    // scored under this build's standard.
+    // The repository corpus resolves even from a bare temp home and
+    // keeps its historical standard; catalog measurements remain comparable.
     let dir = home();
     let (passed, stdout) = probe_demo(&dir, DISCOVERY, &[]);
     assert!(passed, "{stdout}");
     assert!(stdout.contains("\ndemo gate 1/1 passed\n"), "{stdout}");
     let standard = standard_of(&stdout);
-    assert!(
-        stdout.contains(&format!("\n  standard corpus ({standard}): above ")),
-        "{stdout}"
-    );
+    assert!(!stdout.contains("standard corpus"), "{stdout}");
     assert!(stdout.contains("\n  catalog: "), "{stdout}");
 
     // A home corpus overrides the repository default; its catalog

@@ -255,6 +255,7 @@ pub enum FailureReason {
     SurfaceStalledCursor,
     OutputSchemaDeclaredButMissing,
     OutputSchemaFieldMissing,
+    OutputSchemaInvalidResult,
     CancellationIgnored,
     CancellationErrored,
     NegotiationEchoedUnknown,
@@ -339,6 +340,7 @@ impl FailureReason {
         Self::SurfaceStalledCursor,
         Self::OutputSchemaDeclaredButMissing,
         Self::OutputSchemaFieldMissing,
+        Self::OutputSchemaInvalidResult,
         Self::CancellationIgnored,
         Self::CancellationErrored,
         Self::NegotiationEchoedUnknown,
@@ -389,6 +391,7 @@ impl FailureReason {
             "surface-stalled-cursor" => Self::SurfaceStalledCursor,
             "output-schema-declared-but-missing" => Self::OutputSchemaDeclaredButMissing,
             "output-schema-field-missing" => Self::OutputSchemaFieldMissing,
+            "output-schema-invalid-result" => Self::OutputSchemaInvalidResult,
             "cancellation-ignored" => Self::CancellationIgnored,
             "cancellation-errored" => Self::CancellationErrored,
             "negotiation-echoed-unknown" => Self::NegotiationEchoedUnknown,
@@ -441,6 +444,7 @@ impl FailureReason {
             Self::SurfaceStalledCursor => "surface-stalled-cursor",
             Self::OutputSchemaDeclaredButMissing => "output-schema-declared-but-missing",
             Self::OutputSchemaFieldMissing => "output-schema-field-missing",
+            Self::OutputSchemaInvalidResult => "output-schema-invalid-result",
             Self::CancellationIgnored => "cancellation-ignored",
             Self::CancellationErrored => "cancellation-errored",
             Self::NegotiationEchoedUnknown => "negotiation-echoed-unknown",
@@ -1933,7 +1937,7 @@ fn run_surface_listing(
 }
 
 /// For a tool that declares `outputSchema`, the response must carry
-/// `structuredContent` whose required fields (per that schema) are present.
+/// `structuredContent` satisfying the complete declared schema.
 fn run_output_schema(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
     let tool_name = case.tool().expect("output case has a tool").to_owned();
     let definition = context
@@ -1946,6 +1950,7 @@ fn run_output_schema(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::
         // The tool does not declare an output schema: nothing to verify.
         return Ok(passed_case(case, 0));
     };
+    let output_schema = output_schema.clone();
     let required: Vec<String> = output_schema
         .get("required")
         .and_then(Value::as_array)
@@ -1971,10 +1976,17 @@ fn run_output_schema(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::
         });
     };
     let missing = required.iter().any(|field| structured.get(field).is_none());
+    let reason = if missing {
+        Some(FailureReason::OutputSchemaFieldMissing)
+    } else if !crate::schema::conforms(&output_schema, &structured) {
+        Some(FailureReason::OutputSchemaInvalidResult)
+    } else {
+        None
+    };
     Ok(CaseReport {
         attempts: 1,
-        first_failure: missing.then_some(1),
-        reason: missing.then_some(FailureReason::OutputSchemaFieldMissing),
+        first_failure: reason.map(|_| 1),
+        reason,
         ..CaseReport::for_case(case)
     })
 }

@@ -60,7 +60,7 @@ mcpeval init --server demo --confirm-read-only \
 mcpeval probe --server demo \
   --manifest demo.manifest.json -- mcpeval-demo
 # demo gate 25/25 passed
-# demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=94 coverage=100 standard=mcpeval-standard/1
+# demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/2
 mcpeval probe --server demo --manifest demo.manifest.json \
   -- mcpeval-demo --broken stalled-cursor
 # pagination-stalled-cursor
@@ -217,7 +217,7 @@ The manifest is the **gate**: its cases set `passed` and the exit code. The
 runs its own read-only standard battery over the server's whole catalog and
 scores it on fixed curves, so two servers' scores mean the same thing whatever
 their manifests declare. The report names the standard
-(`mcpeval-standard/1` in this build) and lists every lost point with a
+(`mcpeval-standard/2` in this build) and lists every lost point with a
 remediation hint. Surface the standard cannot test counts against the score.
 The battery never calls a tool annotated as a writer (`readOnlyHint: false` or
 `destructiveHint: true`), calls a tool with neither annotation only under
@@ -229,10 +229,16 @@ unknown tools, paging, declared surfaces, version negotiation), catalog
 (descriptions, described and typed parameters, declared annotations and
 output schemas), context (catalog and heaviest-tool token cost), error
 honesty (schema-violating arguments refused with words), reliability (repeat
-consistency, median latency band, declared output schema, contention, payload
-bounds), and coverage (exercised read-only tools over all read-only tools).
+consistency and latency scaled by successful-call rate, full output-schema conformance
+on every success, contention, payload bounds), and coverage (read-only tools with
+a successful call over all read-only tools). Consistent failures receive no
+reliability credit. Reports distinguish successful calls, tool errors, RPC errors,
+rejected arguments, transport errors, and untested tools.
 
-The shipped corpus (`data/readiness-corpus.json`, refreshed by
+The shipped corpus retains historical observations under `mcpeval-standard/1`.
+It is not a readiness baseline for `mcpeval-standard/2`; catalog token comparisons
+remain available. A newly collected corpus must name the standard that measured it.
+The corpus (`data/readiness-corpus.json`, refreshed by
 `scripts/corpus/collect.sh`) holds readiness scores under the standard, so
 text and markdown reports place your score and your catalog among the
 observed servers — *"standard corpus (mcpeval-standard/1): above 26, tied 0,
@@ -270,7 +276,7 @@ The deterministic battery:
 | `pagination` | `tools/list` cursor pagination completes within `max_pages` with unique, schema-valid entries on every page |
 | `payload-bounds` | A declared-oversize argument never crashes or hangs the server; `expect_handled` decides whether a clean rejection also counts as failure |
 | `surface-listing` | Declared `resources`/`prompts` surfaces return well-formed, cursor-bounded listings; undeclared surfaces pass trivially |
-| `output-schema` | A tool that declares `outputSchema` returns `structuredContent` covering the schema's required fields |
+| `output-schema` | A tool that declares `outputSchema` returns `structuredContent` satisfying the complete schema |
 | `cancellation` | A cancelled read-only call is acknowledged: silence or a structured "Request cancelled" error for the request id — a full result or unrelated error fails the case |
 | `protocol-negotiation` | Three fresh handshakes: the supported version is echoed, an unknown date-shaped version is answered with a date-shaped non-echoed version, and the version the server claims is itself echoable |
 | `sampling` | A tool call under a client `sampling` capability: `sampling/createMessage` sub-requests are answered with a stub sample; more than `max_requests` per call, a malformed request, or a never-completing call fails the case |
@@ -534,11 +540,13 @@ share** or attach to an issue; the salt must never accompany it.
 must-not-share reminder every time it runs.
 
 `mcpeval share` turns that boundary into a produced artifact instead of a
-hand-picked file list. It runs the redaction sweep first and **refuses to
-package a store the sweep flags** (exit 1), then assembles a directory containing the
+hand-picked file list. It snapshots and scans every selected JSONL file, including nested files, and
+**refuses to package a snapshot the sweep flags** (exit 1). It rejects symlinks
+and overlapping output paths, then publishes a staged directory containing the
 store records, a `SHARE.md` manifest of what is inside and what was
-deliberately excluded (salt, `index.db`, manifests), and a loud warning when
-annotation notes need manual review:
+deliberately excluded (salt, `index.db`, manifests), and typed annotation metadata. Annotation prose is omitted by default; after
+manual review, `--include-annotation-notes` explicitly includes it with a warning.
+`--force` replaces the whole envelope; refusal preserves the existing one:
 
 ```sh
 mcpeval share --dir mcpeval-envelope

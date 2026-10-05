@@ -343,7 +343,7 @@ fn record_annotation_tool() -> Value {
     tool(
         "record_annotation",
         "Record an agent-authored observation about one captured call, \
-         identified by (session, seq) from the shim's sanitized journal. \
+         identified by its event_id or legacy (session, seq) from the sanitized journal. \
          Kind is one of a fixed set; the note is free text bounded to 240 \
          characters with no control characters. This is the one deliberate \
          prose channel in the store; every other field is structured \
@@ -351,13 +351,16 @@ fn record_annotation_tool() -> Value {
          `mcpeval annotate` command does.",
         Some(json!({
             "type": "object",
+            "additionalProperties": false,
             "properties": {
+                "event_id": {"type": "string", "format": "uuid", "description": "The recorder-generated event UUID from identity.event_id in the call journal."},
                 "session": {
                     "type": "string",
                     "description": "The session identifier the annotated call belongs to. Stored as a stable session:<sha256> token; the raw value is never persisted."
                 },
                 "seq": {
                     "type": "integer",
+                    "minimum": 0,
                     "description": "The seq of the call within that session."
                 },
                 "kind": {
@@ -370,7 +373,11 @@ fn record_annotation_tool() -> Value {
                     "description": "Free-text note, at most 240 characters, no control characters or newlines."
                 }
             },
-            "required": ["session", "seq", "kind", "note"]
+            "required": ["kind", "note"],
+            "oneOf": [
+                {"required": ["event_id"], "not": {"anyOf": [{"required": ["session"]}, {"required": ["seq"]}]}},
+                {"required": ["session", "seq"], "not": {"required": ["event_id"]}}
+            ]
         })),
     )
 }
@@ -697,39 +704,50 @@ fn scaffold_tool_call(arguments: &Value) -> anyhow::Result<Value> {
 /// hashes the session and re-validates the kind). Nothing about the
 /// record path is weaker than the CLI's.
 fn record_annotation_tool_call(root: &std::path::Path, arguments: &Value) -> anyhow::Result<Value> {
-    let session = arguments
-        .get("session")
-        .and_then(Value::as_str)
-        .context("record_annotation requires session")?;
-    let seq = arguments
-        .get("seq")
-        .and_then(Value::as_u64)
-        .context("record_annotation requires seq")?;
-    let kind = arguments
-        .get("kind")
-        .and_then(Value::as_str)
-        .context("record_annotation requires kind")?;
-    let note = arguments
-        .get("note")
-        .and_then(Value::as_str)
-        .context("record_annotation requires note")?;
-    if note.chars().any(char::is_control) {
+    if ["event_id", "session", "seq"]
+        .iter()
+        .any(|key| arguments.get(key).is_some_and(Value::is_null))
+        || (arguments.get("event_id").is_some()
+            && (arguments.get("session").is_some() || arguments.get("seq").is_some()))
+    {
+        bail!("annotation requires an event_id UUIDv4 or session and seq, exclusively");
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Input {
+        event_id: Option<uuid::Uuid>,
+        session: Option<String>,
+        seq: Option<u64>,
+        kind: String,
+        note: String,
+    }
+    let input: Input =
+        serde_json::from_value(arguments.clone()).context("invalid annotation arguments")?;
+    if input.note.chars().any(char::is_control) {
         bail!("note must not contain control characters or newlines");
     }
     let record = crate::record::AnnotationRecord {
         ts: chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")
             .to_string(),
-        session: session.to_owned(),
-        seq,
-        kind: kind.to_owned(),
-        note: note.to_owned(),
+        event_id: input.event_id,
+        session: input.session,
+        seq: input.seq,
+        kind: input.kind,
+        note: input.note,
     };
     record.validate()?;
     let mut store = crate::store::Store::open(Some(root.to_owned()))?;
     store.append_annotation(&record)?;
+    let target = match record.event_id {
+        Some(id) => format!("event {id}"),
+        None => format!(
+            "session:<hashed> seq {}",
+            record.seq.expect("validated target")
+        ),
+    };
     Ok(text_result(&format!(
-        "recorded {} annotation for session:<hashed> seq {seq}",
+        "recorded {} annotation for {target}",
         record.kind
     )))
 }

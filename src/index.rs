@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::fs::DirEntry;
 use std::path::{Path, PathBuf};
 
@@ -11,6 +12,7 @@ pub struct Stats {
     pub calls: usize,
     pub failures: usize,
     pub annotations: usize,
+    pub replayed_events: usize,
 }
 
 /// Dropped ahead of `SCHEMA` on every rebuild, oldest-dependent-first: a
@@ -18,22 +20,23 @@ pub struct Stats {
 /// so `CREATE TABLE IF NOT EXISTS` is a no-op against it and the INSERT
 /// below would fail on an unrecognized column. The index is pure derived
 /// state — nothing here is ever read before this function rebuilds it — so
-/// dropping and recreating is safe. `windows` is dropped before `calls`
-/// because it holds a `REFERENCES calls(id)` foreign key and `foreign_keys`
+/// dropping and recreating is safe. `windows` and `annotations` precede `calls`
+/// because they hold `REFERENCES calls(id)` foreign keys and `foreign_keys`
 /// is on for this connection.
 const DROP_SCHEMA: &str = "
 DROP TABLE IF EXISTS findings;
 DROP TABLE IF EXISTS issues;
 DROP INDEX IF EXISTS calls_issue;
 DROP INDEX IF EXISTS annotations_call;
+DROP TABLE IF EXISTS annotations;
 DROP TABLE IF EXISTS windows;
 DROP TABLE IF EXISTS calls;
-DROP TABLE IF EXISTS annotations;
 ";
 
 const SCHEMA: &str = "
 CREATE TABLE calls (
   id INTEGER PRIMARY KEY,
+  capture_id TEXT, event_id TEXT UNIQUE,
   ts TEXT NOT NULL, session TEXT NOT NULL, seq INTEGER NOT NULL,
   server TEXT NOT NULL, method TEXT NOT NULL, tool TEXT,
   latency_ms INTEGER, outcome TEXT NOT NULL,
@@ -48,30 +51,79 @@ CREATE TABLE windows (
 );
 CREATE INDEX calls_issue ON calls (server, tool, err_code, err_template_id);
 CREATE TABLE annotations (
-  session TEXT NOT NULL, seq INTEGER NOT NULL, ts TEXT NOT NULL,
+  call_id INTEGER REFERENCES calls(id), event_id TEXT,
+  session TEXT, seq INTEGER, ts TEXT NOT NULL,
   kind TEXT NOT NULL, note TEXT NOT NULL
 );
-CREATE INDEX annotations_call ON annotations (session, seq);
+CREATE INDEX annotations_call ON annotations (call_id);
+CREATE UNIQUE INDEX calls_capture_sequence ON calls (capture_id, seq) WHERE capture_id IS NOT NULL;
 ";
 
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum ContextKey<'a> {
+    Capture(uuid::Uuid),
+    Legacy(&'a str, &'a str),
+}
+
+fn context_key(record: &CallRecord) -> ContextKey<'_> {
+    match &record.identity {
+        Some(identity) => ContextKey::Capture(identity.capture_id),
+        None => ContextKey::Legacy(&record.session, &record.server),
+    }
+}
+
+/// Replays with a modern event ID count once. Conflicting IDs or capture
+/// coordinates are corruption, never evidence to silently merge or renumber.
+fn prepare_records(input: Vec<CallRecord>) -> anyhow::Result<(Vec<CallRecord>, usize)> {
+    let mut records: Vec<CallRecord> = Vec::with_capacity(input.len());
+    let mut events = HashMap::new();
+    let mut captures = HashMap::new();
+    let mut positions = HashSet::new();
+    let mut replays = 0;
+    for record in input {
+        if let Some(identity) = &record.identity {
+            identity.validate()?;
+            if let Some(&index) = events.get(&identity.event_id) {
+                if records[index] != record {
+                    anyhow::bail!("conflicting records for one event ID");
+                }
+                replays += 1;
+                continue;
+            }
+            if !positions.insert((identity.capture_id, record.seq)) {
+                anyhow::bail!("multiple event IDs claim one capture sequence");
+            }
+            if let Some(&index) = captures.get(&identity.capture_id) {
+                let first: &CallRecord = &records[index];
+                if first.session != record.session || first.server != record.server {
+                    anyhow::bail!("capture ID crosses session or server boundaries");
+                }
+            } else {
+                captures.insert(identity.capture_id, records.len());
+            }
+            events.insert(identity.event_id, records.len());
+        }
+        records.push(record);
+    }
+    Ok((records, replays))
+}
+
 pub fn build(root: &Path) -> anyhow::Result<Stats> {
-    let mut records = load_records(root)?;
-    // Sort by (session, seq). What this actually fixes: within one shim
-    // process, seq is assigned in call order, but `load_jsonl` reads files
-    // back in file-name (date) order, so a session whose calls span
-    // multiple daily files would otherwise interleave in file order rather
-    // than logical order. Sorting by seq within a session restores that.
-    //
-    // Known limitation, not fixed by this sort: two shim processes started
-    // with the same MCPEVAL_SESSION each number their own calls from seq 1,
-    // so (session, seq) is not unique across them and their windows can
-    // interleave — see `shared_session_sequence_values_from_different_servers_remain_distinct`
-    // and `duplicate_session_server_sequence_occurrences_are_preserved_on_every_rebuild`.
+    let (mut records, replayed_events) = prepare_records(load_records(root)?)?;
+    // Captures have independent sequence spaces. Legacy records can only
+    // establish context within one session/server and without duplicate seqs.
     records.sort_by(|left, right| {
-        left.session
-            .cmp(&right.session)
+        context_key(left)
+            .cmp(&context_key(right))
             .then(left.seq.cmp(&right.seq))
     });
+    let mut legacy_positions = HashSet::new();
+    let mut ambiguous_legacy = HashSet::new();
+    for record in records.iter().filter(|record| record.identity.is_none()) {
+        if !legacy_positions.insert((&record.session, &record.server, record.seq)) {
+            ambiguous_legacy.insert(context_key(record));
+        }
+    }
 
     let failures = records
         .iter()
@@ -89,6 +141,8 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
         .context("creating index schema")?;
 
     let mut ids = Vec::with_capacity(records.len());
+    let mut events = HashMap::new();
+    let mut coordinates: HashMap<(&str, u64), Option<i64>> = HashMap::new();
     for record in &records {
         let error = record.error.as_ref();
         let error_code = error
@@ -103,8 +157,8 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
         transaction.execute(
             "INSERT INTO calls
              (ts, session, seq, server, method, tool, latency_ms, outcome,
-              err_code, err_template, err_template_id, err_retryable, args, kind)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+              err_code, err_template, err_template_id, err_retryable, args, kind, capture_id, event_id)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)",
             params![
                 record.ts,
                 record.session,
@@ -120,20 +174,33 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
                 error.and_then(|value| value.retryable).map(i64::from),
                 args,
                 record.kind,
+                record.identity.as_ref().map(|identity| identity.capture_id.to_string()),
+                record.identity.as_ref().map(|identity| identity.event_id.to_string()),
             ],
         )?;
-        ids.push(transaction.last_insert_rowid());
+        let id = transaction.last_insert_rowid();
+        ids.push(id);
+        if let Some(identity) = &record.identity {
+            events.insert(identity.event_id, id);
+        }
+        coordinates
+            .entry((&record.session, record.seq))
+            .and_modify(|target| *target = None)
+            .or_insert(Some(id));
     }
 
     for (failure_index, failure) in records.iter().enumerate() {
         if failure.outcome != "error" {
             continue;
         }
+        if ambiguous_legacy.contains(&context_key(failure)) {
+            continue;
+        }
         for distance in 1..=5usize {
             let Some(neighbour_index) = failure_index.checked_sub(distance) else {
                 break;
             };
-            if records[neighbour_index].session != failure.session {
+            if context_key(&records[neighbour_index]) != context_key(failure) {
                 break;
             }
             transaction.execute(
@@ -145,7 +212,7 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
             let Some(neighbour) = records.get(failure_index + distance) else {
                 break;
             };
-            if neighbour.session != failure.session {
+            if context_key(neighbour) != context_key(failure) {
                 break;
             }
             transaction.execute(
@@ -161,14 +228,24 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
 
     let annotations = load_annotations(root)?;
     for annotation in &annotations {
+        annotation.validate_target()?;
+        let target = match (&annotation.event_id, &annotation.session, annotation.seq) {
+            (Some(event), _, _) => events.get(event).copied(),
+            (None, Some(session), Some(seq)) => {
+                coordinates.get(&(session.as_str(), seq)).copied().flatten()
+            }
+            _ => unreachable!("validated annotation target"),
+        };
         transaction.execute(
-            "INSERT INTO annotations (session, seq, ts, kind, note) VALUES (?1,?2,?3,?4,?5)",
+            "INSERT INTO annotations (session, seq, ts, kind, note, event_id, call_id) VALUES (?1,?2,?3,?4,?5,?6,?7)",
             params![
                 annotation.session,
-                annotation.seq as i64,
+                annotation.seq.map(|seq| seq as i64),
                 annotation.ts,
                 annotation.kind,
                 annotation.note,
+                annotation.event_id.map(|id| id.to_string()),
+                target,
             ],
         )?;
     }
@@ -178,6 +255,7 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
         calls: records.len(),
         failures,
         annotations: annotations.len(),
+        replayed_events,
     })
 }
 
@@ -189,7 +267,10 @@ fn load_records(root: &Path) -> anyhow::Result<Vec<CallRecord>> {
 }
 
 fn load_annotations(root: &Path) -> anyhow::Result<Vec<AnnotationRecord>> {
-    load_jsonl(root, "annotations-")
+    Ok(load_jsonl(root, "annotations-")?
+        .into_iter()
+        .map(|record: AnnotationRecord| record.sanitized())
+        .collect())
 }
 
 /// Loads every `<prefix>*.jsonl` file in `<root>/store`, in deterministic

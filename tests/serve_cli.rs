@@ -369,11 +369,87 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
     assert_eq!(read_annotations(&dir).len(), 1);
 }
 
+#[test]
+fn event_annotations_match_advertised_schema_and_link_only_the_named_call() {
+    let dir = home();
+    let mut store = mcpeval::store::Store::open(Some(dir.clone())).unwrap();
+    let mut events = Vec::new();
+    for server in ["first", "second"] {
+        let mut recorder = mcpeval::correlate::Correlator::new(
+            server.into(),
+            "shared-session".into(),
+            mcpeval::fingerprint::Salt::for_tests(),
+        );
+        recorder.on_outbound(
+            &json!({"id":1,"method":"tools/call","params":{"name":"lookup"}}),
+            0,
+        );
+        let record = recorder
+            .on_inbound(&json!({"id":1,"result":{}}), 1)
+            .unwrap();
+        events.push(record.identity.as_ref().unwrap().event_id);
+        store.append(&record).unwrap();
+    }
+    let (_server, port) = start_serve(&dir, &[]);
+    let http = format!("http://127.0.0.1:{port}/mcp");
+    let (_, catalog) = raw_call(
+        &http,
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+    );
+    let schema = &catalog["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "record_annotation")
+        .unwrap()["inputSchema"];
+    let args = json!({"event_id":events[0],"kind":"false-success","note":"did not change state"});
+    let validator = jsonschema::options()
+        .should_validate_formats(true)
+        .build(schema)
+        .unwrap();
+    assert!(validator.is_valid(&args));
+    let (_, result) = call(&http, "record_annotation", args);
+    assert!(result.get("error").is_none(), "{result}");
+    let stored = read_annotations(&dir);
+    assert_eq!(stored.len(), 1);
+    assert_eq!(stored[0]["event_id"], events[0].to_string());
+    assert!(stored[0].get("session").is_none());
+    assert!(stored[0].get("seq").is_none());
+    for invalid in [
+        json!({"event_id":events[0],"session":"s","seq":1}),
+        json!({"event_id":events[0],"session":null}),
+        json!({"event_id":null,"session":"s","seq":1}),
+        json!({"session":"s","seq":null}),
+        json!({"event_id":"not-a-uuid"}),
+        json!({"session":"s","seq":1,"extra":true}),
+        json!({"session":"s","seq":-1}),
+    ] {
+        let mut invalid = invalid;
+        invalid["kind"] = json!("workaround");
+        invalid["note"] = json!("n");
+        assert!(!validator.is_valid(&invalid), "{invalid}");
+        let (_, result) = call(&http, "record_annotation", invalid);
+        assert!(result.get("error").is_some(), "{result}");
+    }
+    assert_eq!(read_annotations(&dir).len(), 1);
+    mcpeval::index::build(&dir).unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let target: String = db
+        .query_row(
+            "SELECT c.event_id FROM annotations a JOIN calls c ON a.call_id=c.id",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(target, events[0].to_string());
+}
+
 fn promoted_finding(dir: &std::path::Path) -> String {
     let mut store = mcpeval::store::Store::open(Some(dir.to_owned())).unwrap();
     for session in ["first", "second"] {
         store
             .append(&mcpeval::record::CallRecord {
+                identity: None,
                 ts: "2026-08-05T00:00:01Z".into(),
                 session: session.into(),
                 seq: 1,

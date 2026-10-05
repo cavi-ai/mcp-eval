@@ -123,6 +123,21 @@ fn proxies_messages_and_records_privacy_safe_shapes() {
 
     let records = read_records(&home);
     assert_eq!(records.len(), 3);
+    let identities: Vec<mcpeval::record::EventIdentity> = records
+        .iter()
+        .map(|record| serde_json::from_value(record["identity"].clone()).unwrap())
+        .collect();
+    assert!(identities
+        .iter()
+        .all(|id| id.validate().is_ok() && id.capture_id == identities[0].capture_id));
+    assert_eq!(
+        identities
+            .iter()
+            .map(|id| id.event_id)
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        records.len()
+    );
     let expected_session = mcpeval::privacy::opaque_session(SESSION);
     assert!(records
         .iter()

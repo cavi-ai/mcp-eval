@@ -640,6 +640,12 @@ fn run() -> anyhow::Result<()> {
                 "indexed {} calls, {} failures, {} annotations",
                 stats.calls, stats.failures, stats.annotations
             );
+            if stats.replayed_events > 0 {
+                eprintln!(
+                    "counted {} identical event replays once",
+                    stats.replayed_events
+                );
+            }
             Ok(())
         }
         cli::Command::Promote { threshold } => {
@@ -684,12 +690,14 @@ fn run() -> anyhow::Result<()> {
             Ok(())
         }
         cli::Command::Annotate {
+            event_id,
             session,
             seq,
             kind,
             note,
         } => {
             let record = mcpeval::record::AnnotationRecord {
+                event_id,
                 ts: chrono::Utc::now()
                     .format("%Y-%m-%dT%H:%M:%S%.3fZ")
                     .to_string(),

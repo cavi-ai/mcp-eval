@@ -389,6 +389,16 @@ Set `MCPEVAL_HOME` to choose the capture root (`$HOME/.mcp-eval` by default).
 `MCPEVAL_SESSION` is transformed to a stable `session:<sha256>` token before
 persistence.
 
+Each recorder instance mints a random UUIDv4 `identity.capture_id`, and each
+journal event receives an `identity.event_id`. Sequence numbers belong to
+that capture, so recorders sharing a logical session cannot mix failure
+windows. Capture IDs do not count as additional sessions for promotion.
+Historical records remain without IDs. Their windows stay within one
+session/server pair and are omitted when that pair has duplicate sequences.
+Identical safe metadata with the same event ID counts once during indexing;
+conflicting event IDs, capture sequences, or capture boundaries reject the
+rebuild and retain the previous index.
+
 The stdio shim targets Unix and Windows and expects newline-delimited JSON-RPC.
 `shim-http` provides the same privacy-safe capture boundary for Streamable
 HTTP POST traffic: explicit loopback socket only, validated upstream,
@@ -478,7 +488,7 @@ page cannot reach the endpoint through the browser.
 | `scaffold` | Introspect a live server and return the same starter manifest JSON as `mcpeval init`, without writing files |
 | `score` | Measure the same standard readiness as `mcpeval score` without a manifest; supports `confirm_read_only` and `skip_tools` |
 | `verify_finding` | Run one matching read-only case from an inline manifest and return its report and durable lifecycle outcome; accepts `finding_id`, `case_id`, and `command` or `url` |
-| `record_annotation` | Record the agent's own observation about a captured call (same fixed kinds and 240-character bounded note as `mcpeval annotate`); the session is hashed before persistence |
+| `record_annotation` | Record the agent's own observation about a captured call by `event_id`, or unambiguous legacy `(session, seq)` coordinates; same fixed kinds and bounded note as `mcpeval annotate` |
 
 With the evaluation tools behind `--allow-spawn` and `record_annotation`, the whole loop is
 native MCP: the agent scaffolds a manifest, probes the server it is
@@ -511,7 +521,7 @@ grant authorization.
 ## What is recorded
 
 For completed JSON-RPC calls and inbound server notifications, the journal
-keeps timestamps, an opaque session token and sequence identifier, the
+keeps timestamps, recorder and event UUIDs, an opaque session token and sequence identifier, the
 validated server label and method, tool names that satisfy the tool-name
 grammar, latency, outcome, shim overhead, and shaped `params.arguments` when
 present. It does not persist raw response bodies. Every unparseable frame
@@ -541,10 +551,16 @@ reduced to a length bucket instead.
 
 An agent may also record an `annotation`: a short, typed observation (`kind`
 is one of a fixed set, e.g. `false-success`, `workaround`) tied to a
-`(session, seq)` call, plus `note` — a free-text field bounded to 240
+call's event UUID (or legacy `(session, seq)` coordinates), plus `note` — a free-text field bounded to 240
 characters and scrubbed of control characters. `note` is the one deliberate
 prose channel in the store; every other field is structured, content-free
 metadata.
+
+Use `mcpeval annotate --event-id <identity.event_id> --kind <KIND> --note <NOTE>`
+for new captures. Supply either the event ID or both legacy coordinates,
+exclusively. A legacy reference links only when exactly one indexed call has
+those coordinates. Unknown or ambiguous references remain stored but unlinked
+and cannot affect finding classification.
 
 ## Privacy boundary
 

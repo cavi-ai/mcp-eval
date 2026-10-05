@@ -13,6 +13,7 @@ fn rec(seq: u64, outcome: &str) -> CallRecord {
 
 fn rec_for(session: &str, server: &str, seq: u64, outcome: &str, ts: &str) -> CallRecord {
     CallRecord {
+        identity: None,
         ts: ts.into(),
         session: session.into(),
         seq,
@@ -32,6 +33,174 @@ fn tempdir() -> std::path::PathBuf {
     let base = std::env::temp_dir().join(format!("mcpeval-index-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&base).unwrap();
     base
+}
+
+fn identified(capture: uuid::Uuid, seq: u64, outcome: &str) -> CallRecord {
+    let mut record = rec(seq, outcome);
+    record.identity = Some(mcpeval::record::EventIdentity::new(capture));
+    record
+}
+
+#[test]
+fn independent_captures_with_the_same_session_and_sequence_have_isolated_windows() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let a = uuid::Uuid::new_v4();
+    let b = uuid::Uuid::new_v4();
+    for record in [
+        identified(a, 1, "ok"),
+        identified(b, 1, "ok"),
+        identified(a, 2, "error"),
+        identified(b, 2, "error"),
+        identified(a, 3, "ok"),
+    ] {
+        store.append(&record).unwrap();
+    }
+    let mut prior = None;
+    for _ in 0..2 {
+        let stats = index::build(&dir).unwrap();
+        assert_eq!(stats.calls, 5);
+        let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+        let cross: i64 = db.query_row("SELECT COUNT(*) FROM windows w JOIN calls f ON f.id=w.failure_id JOIN calls n ON n.id=w.neighbour_id WHERE f.capture_id != n.capture_id", [], |row| row.get(0)).unwrap();
+        assert_eq!(cross, 0);
+        let links: Vec<(String, String, i64)> = db.prepare("SELECT f.event_id,n.event_id,w.offset FROM windows w JOIN calls f ON f.id=w.failure_id JOIN calls n ON n.id=w.neighbour_id ORDER BY f.event_id,n.event_id").unwrap()
+            .query_map([], |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap().map(Result::unwrap).collect();
+        assert_eq!(links.len(), 3);
+        if let Some(previous) = prior {
+            assert_eq!(links, previous);
+        }
+        prior = Some(links);
+    }
+}
+
+#[test]
+fn identical_modern_event_replays_count_once_without_deduplicating_legacy_occurrences() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let record = identified(uuid::Uuid::new_v4(), 1, "error");
+    for _ in 0..2 {
+        store.append(&record).unwrap();
+        store.append(&rec(1, "ok")).unwrap();
+    }
+    for _ in 0..2 {
+        let stats = index::build(&dir).unwrap();
+        assert_eq!(stats.calls, 3);
+        assert_eq!(stats.failures, 1);
+        assert_eq!(stats.replayed_events, 1);
+        let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+        let legacy: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM calls WHERE capture_id IS NULL AND event_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy, 2, "no IDs may be manufactured for legacy records");
+    }
+}
+
+#[test]
+fn conflicting_event_identity_preserves_the_prior_index() {
+    for conflict in ["event", "sequence", "capture", "partial"] {
+        let dir = tempdir();
+        let mut store = Store::open(Some(dir.clone())).unwrap();
+        let record = identified(uuid::Uuid::new_v4(), 1, "error");
+        store.append(&record).unwrap();
+        index::build(&dir).unwrap();
+        let mut other = record.clone();
+        match conflict {
+            "event" => other.outcome = "ok".into(),
+            "sequence" => other.identity.as_mut().unwrap().event_id = uuid::Uuid::new_v4(),
+            "capture" => {
+                other.seq = 2;
+                other.server = "another-server".into();
+                other.identity.as_mut().unwrap().event_id = uuid::Uuid::new_v4();
+            }
+            "partial" => {
+                let mut value = serde_json::to_value(&record).unwrap();
+                value["identity"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("event_id");
+                let path = dir.join("store/calls-2026-08-04.jsonl");
+                writeln!(
+                    std::fs::OpenOptions::new().append(true).open(path).unwrap(),
+                    "{value}"
+                )
+                .unwrap();
+            }
+            _ => unreachable!(),
+        }
+        if conflict != "partial" {
+            store.append(&other).unwrap();
+        }
+        assert!(index::build(&dir).is_err(), "{conflict}");
+        let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+        let rows: Vec<String> = db
+            .prepare("SELECT outcome FROM calls")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            rows,
+            vec!["error"],
+            "failed rebuild must retain prior evidence"
+        );
+    }
+}
+
+#[test]
+fn annotations_resolve_only_explicit_events_or_unambiguous_legacy_coordinates() {
+    use mcpeval::record::AnnotationRecord;
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let a = identified(uuid::Uuid::new_v4(), 1, "error");
+    let b = identified(uuid::Uuid::new_v4(), 1, "error");
+    store.append(&a).unwrap();
+    store.append(&b).unwrap();
+    store.append(&rec(2, "ok")).unwrap();
+    for (event_id, session, seq, note) in [
+        (
+            Some(a.identity.as_ref().unwrap().event_id),
+            None,
+            None,
+            "explicit",
+        ),
+        (None, Some("s1".into()), Some(1), "ambiguous"),
+        (None, Some("s1".into()), Some(2), "legacy"),
+        (Some(uuid::Uuid::new_v4()), None, None, "unknown"),
+    ] {
+        store
+            .append_annotation(&AnnotationRecord {
+                ts: "2026-08-04T12:00:01Z".into(),
+                event_id,
+                session,
+                seq,
+                kind: "false-success".into(),
+                note: note.into(),
+            })
+            .unwrap();
+    }
+    for _ in 0..2 {
+        let stats = index::build(&dir).unwrap();
+        assert_eq!(stats.annotations, 4);
+        let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+        let resolved: (Option<String>, String) = db.query_row("SELECT c.event_id,a.note FROM annotations a JOIN calls c ON c.id=a.call_id WHERE a.note='explicit'", [], |row| Ok((row.get(0)?,row.get(1)?))).unwrap();
+        assert_eq!(
+            resolved.0,
+            Some(a.identity.as_ref().unwrap().event_id.to_string())
+        );
+        let unresolved: i64 = db
+            .query_row(
+                "SELECT COUNT(*) FROM annotations WHERE call_id IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unresolved, 2);
+    }
 }
 
 #[test]
@@ -148,9 +317,9 @@ fn shared_session_sequence_values_from_different_servers_remain_distinct() {
         .unwrap()
         .map(Result::unwrap)
         .collect();
-    assert_eq!(
-        neighbours,
-        vec![("alpha".into(), 1, -1), ("alpha".into(), 2, 1)]
+    assert!(
+        neighbours.is_empty(),
+        "legacy context cannot cross recorder server boundaries"
     );
 }
 
@@ -180,11 +349,9 @@ fn duplicate_session_server_sequence_occurrences_are_preserved_on_every_rebuild(
             .unwrap()
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
             .unwrap().map(Result::unwrap).collect();
-        assert_eq!(links.len(), 1);
-        assert_ne!(links[0].0, links[0].1);
-        assert_eq!(
-            (&links[0].2, &links[0].3),
-            (&"error".to_string(), &"ok".to_string())
+        assert!(
+            links.is_empty(),
+            "duplicate legacy coordinates cannot establish call order"
         );
     }
 }
@@ -215,15 +382,18 @@ fn journal_files_are_processed_in_deterministic_name_order() {
     index::build(&dir).unwrap();
 
     let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
-    let neighbour: (String, i64) = db
-        .query_row(
-            "SELECT calls.server, windows.offset
-             FROM windows JOIN calls ON calls.id = windows.neighbour_id",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
+    let servers: Vec<String> = db
+        .prepare("SELECT server FROM calls ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(servers, vec!["earlier", "later"]);
+    let windows: i64 = db
+        .query_row("SELECT COUNT(*) FROM windows", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(neighbour, ("earlier".into(), -1));
+    assert_eq!(windows, 0);
 }
 
 #[test]
@@ -434,8 +604,9 @@ fn index_command_prints_the_annotation_count() {
     store
         .append_annotation(&AnnotationRecord {
             ts: "2026-08-04T12:00:00Z".into(),
-            session: "s1".into(),
-            seq: 1,
+            event_id: None,
+            session: Some("s1".into()),
+            seq: Some(1),
             kind: "workaround".into(),
             note: "found a way around it".into(),
         })

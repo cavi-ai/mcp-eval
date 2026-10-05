@@ -15,7 +15,7 @@ A finding keeps every distinct error code of its group in `err_codes` and the mo
 | `unstable-error-code` | the group returned more than one error code |
 | `false-success` | a failure carries a `false-success` annotation |
 | `blocked-optimal-path` | a failure carries a `blocked-optimal-path` annotation |
-| `recovers-on-retry` | every failure is retryable and, after at least one, a call to the same tool within the next three calls of the session succeeded |
+| `recovers-on-retry` | every failure is retryable and, after at least one, a call to the same tool within the next three recorded calls of its failure window succeeded |
 | `retry-did-not-recover` | every failure is retryable and no such recovery was captured |
 | `recurring-error` | none of the above |
 
@@ -30,9 +30,17 @@ Use `--threshold <number>` for a one-run promotion threshold override. It takes 
 Add a bounded human observation to a captured call with:
 
 ```sh
-mcpeval annotate --session session-token --seq 4 \
+mcpeval annotate --event-id <identity.event_id> \
   --kind workaround --note "Used the documented alternate tool"
 ```
+
+Copy the UUID from the call's `identity.event_id` in the sanitized journal.
+Legacy calls accept `--session session-token --seq 4` instead. Supply exactly
+one target form. A legacy reference links only when the coordinates identify
+one indexed call across all servers and captures. Unknown or ambiguous targets
+remain stored but unlinked and cannot change a finding's classification.
+Rebuilding the index resolves targets again, including annotations recorded
+before their target call was available.
 
 The note is the deliberate prose channel in the store: it is limited to 240 characters and cannot contain control characters, but those checks do not redact its content. Never put credentials, private paths, customer identifiers, or raw payload fragments in `--note`. Use only one of the annotation kinds accepted by the binary, and manually review or remove notes before sharing store records.
 
@@ -81,7 +89,7 @@ The surface offers three read-only data tools — `list_findings`, `get_finding`
 
 - `run_probe` executes the deterministic battery against any server using an inline manifest and returns the full `mcpeval.probe-report/v2` document with per-case verdicts, measurements, and remediation hints. Mutation is never authorized through this tool: no argument combination can enable sandboxed or mutating cases.
 - `scaffold` introspects a live server and returns the same starter manifest JSON as `mcpeval init`, without writing files: catalog budgets, pagination, protocol negotiation, and surface listing when declared; schema-guessability, degradation-over-n, latency-budget, and output-schema cases per candidate tool answering `{}` plus one contention and one payload-bounds case. Candidates are zero-required tools annotated `readOnlyHint: true`; `confirm_read_only` attests that unannotated zero-required tools are read-only and adds them. Tools annotated `destructiveHint: true` or `readOnlyHint: false` are never called.
-- `record_annotation` records an agent-authored observation about a captured call, identified by `(session, seq)`: the same fixed kind set and 240-character bounded, control-character-free note as `mcpeval annotate`, with the session hashed before persistence. This is the one deliberate prose channel in the store — the tool builds, validates, and stores the identical record the CLI command does, and the annotation notes still require a human pass before a store is shared.
+- `record_annotation` records an agent-authored observation about a captured call, identified by `event_id` or unambiguous legacy `(session, seq)` coordinates: the same fixed kind set and 240-character bounded, control-character-free note as `mcpeval annotate`, with legacy sessions hashed before persistence. This is the one deliberate prose channel in the store — the tool builds, validates, and stores the identical record the CLI command does, and the annotation notes still require a human pass before a store is shared.
 - `score` uses the same standard battery as `mcpeval score`, without a manifest. Supply `command` or `url`, an optional `server_label`, `confirm_read_only`, and `skip_tools`. It returns the standard report with readiness and a text summary; an unavailable target reports readiness as unmeasured.
 - `verify_finding` accepts `finding_id`, `case_id`, an inline `manifest`, and `command` or `url`. It runs exactly one matching read-only case through the same verification service as the CLI. The structured result contains `verified`, `reason`, `lifecycle` (state and consecutive passes), and `report`. A mid-case transport failure returns `lifecycle: null`; startup failure returns a tool error. Neither records verification evidence. Red outcomes reset the streak and reopen findings under the existing lifecycle rules.
 

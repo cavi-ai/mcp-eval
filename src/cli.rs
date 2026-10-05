@@ -414,16 +414,19 @@ pub enum Command {
         format: FindingsFormat,
     },
     /// Record an agent-authored observation about a call, identified by
-    /// (session, seq): a documented path was blocked, a call reported
+    /// event ID or legacy (session, seq): a documented path was blocked, a call reported
     /// success but changed nothing, and so on.
     #[command(display_order = 18)]
     Annotate {
+        /// The recorder-generated event UUID from the call journal.
+        #[arg(long, conflicts_with_all = ["session", "seq"])]
+        event_id: Option<uuid::Uuid>,
         /// The session the annotated call belongs to.
-        #[arg(long)]
-        session: String,
+        #[arg(long, required_unless_present = "event_id", requires = "seq")]
+        session: Option<String>,
         /// The seq of the call within that session.
-        #[arg(long)]
-        seq: u64,
+        #[arg(long, required_unless_present = "event_id", requires = "session")]
+        seq: Option<u64>,
         /// One of `record::ANNOTATION_KINDS`.
         #[arg(long)]
         kind: String,

@@ -59,6 +59,60 @@ fn writes_an_annotation_record() {
 }
 
 #[test]
+fn event_target_is_persisted_without_legacy_coordinates_and_invalid_targets_do_not_write() {
+    let home = tempdir();
+    let event = uuid::Uuid::new_v4().to_string();
+    let out = Command::new(bin())
+        .args([
+            "annotate",
+            "--event-id",
+            &event,
+            "--kind",
+            "workaround",
+            "--note",
+            "used fallback",
+        ])
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let path = std::fs::read_dir(home.join("store"))
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let body = std::fs::read_to_string(&path).unwrap();
+    let record: serde_json::Value = serde_json::from_str(body.trim()).unwrap();
+    assert_eq!(record["event_id"], event);
+    assert!(record.get("session").is_none());
+    assert!(record.get("seq").is_none());
+
+    for target in [
+        vec!["--event-id", &event, "--session", "s", "--seq", "1"],
+        vec!["--session", "s"],
+        vec!["--seq", "1"],
+        vec!["--event-id", "not-a-uuid"],
+        vec!["--event-id", "00000000-0000-0000-0000-000000000000"],
+        vec!["--event-id", "00000000-0000-4000-0000-000000000000"],
+    ] {
+        let out = Command::new(bin())
+            .arg("annotate")
+            .args(target)
+            .args(["--kind", "workaround", "--note", "n"])
+            .env("MCPEVAL_HOME", &home)
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), body);
+    }
+}
+
+#[test]
 fn rejects_an_unknown_kind() {
     let home = tempdir();
     let out = Command::new(bin())
@@ -123,8 +177,9 @@ fn store_coerces_an_unvalidated_unknown_kind_to_a_sentinel() {
     store
         .append_annotation(&AnnotationRecord {
             ts: "2026-08-04T12:00:00Z".into(),
-            session: "s1".into(),
-            seq: 1,
+            event_id: None,
+            session: Some("s1".into()),
+            seq: Some(1),
             kind: "not-a-real-kind".into(),
             note: "n".into(),
         })
@@ -160,6 +215,7 @@ fn index_loads_annotations_and_links_them_to_calls() {
     let mut store = Store::open(Some(home.clone())).unwrap();
     store
         .append(&CallRecord {
+            identity: None,
             ts: "2026-08-04T12:00:00Z".into(),
             session: "s1".into(),
             seq: 7,
@@ -177,8 +233,9 @@ fn index_loads_annotations_and_links_them_to_calls() {
     store
         .append_annotation(&AnnotationRecord {
             ts: "2026-08-04T12:00:01Z".into(),
-            session: "s1".into(),
-            seq: 7,
+            event_id: None,
+            session: Some("s1".into()),
+            seq: Some(7),
             kind: "false-success".into(),
             note: "reported success, nothing changed".into(),
         })
@@ -189,7 +246,7 @@ fn index_loads_annotations_and_links_them_to_calls() {
     let linked: i64 = db
         .query_row(
             "SELECT COUNT(*) FROM annotations a JOIN calls c
-             ON c.session = a.session AND c.seq = a.seq",
+             ON c.id = a.call_id",
             [],
             |r| r.get(0),
         )

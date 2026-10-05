@@ -50,6 +50,24 @@ fn clean_fixture_passes_both_probes_without_exposing_payloads() {
     assert!(stored
         .lines()
         .all(|line| line.contains("\"kind\":\"synthetic\"")));
+    let records: Vec<mcpeval::record::CallRecord> = stored
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(!records.is_empty());
+    let capture = records[0].identity.as_ref().unwrap().capture_id;
+    assert!(records.iter().all(|record| {
+        let identity = record.identity.as_ref().unwrap();
+        identity.validate().is_ok() && identity.capture_id == capture
+    }));
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| record.identity.as_ref().unwrap().event_id)
+            .collect::<std::collections::HashSet<_>>()
+            .len(),
+        records.len()
+    );
     // Readiness-trend history lives in a subdirectory and carries only
     // content-free score metadata; nothing anywhere may hold payloads.
     let trends = std::fs::read_to_string(home.join("store").join("probes").join("history.jsonl"))

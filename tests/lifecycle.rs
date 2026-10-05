@@ -21,6 +21,7 @@ fn promoted_home() -> (std::path::PathBuf, String) {
     for (session, seq) in [("first", 1), ("second", 1)] {
         store
             .append(&CallRecord {
+                identity: None,
                 ts: format!("2026-08-05T00:00:{seq:02}Z"),
                 session: session.into(),
                 seq,
@@ -552,6 +553,7 @@ fn shim_demo_session(home: &std::path::Path, session: &str) {
 
 fn describe_status_call(session: &str, seq: u64, failed: bool) -> CallRecord {
     CallRecord {
+        identity: None,
         ts: format!("2026-08-05T00:00:{seq:02}Z"),
         session: session.into(),
         seq,

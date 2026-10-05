@@ -18,6 +18,7 @@ struct Pending {
 pub struct Correlator {
     server: String,
     session: String,
+    capture_id: uuid::Uuid,
     seq: u64,
     enums: EnumIndex,
     declared_tools: HashSet<String>,
@@ -30,6 +31,7 @@ impl Correlator {
         Self {
             server,
             session: privacy::opaque_session(&session),
+            capture_id: uuid::Uuid::new_v4(),
             seq: 0,
             enums: EnumIndex::new(),
             declared_tools: HashSet::new(),
@@ -125,6 +127,7 @@ impl Correlator {
                 let is_error = envelope_error.is_some() || tool_error;
                 self.seq += 1;
                 Some(CallRecord {
+                    identity: Some(crate::record::EventIdentity::new(self.capture_id)),
                     ts: now_iso(),
                     session: self.session.clone(),
                     seq: self.seq,
@@ -156,6 +159,7 @@ impl Correlator {
                 let method = v.get("method").and_then(Value::as_str)?.to_string();
                 self.seq += 1;
                 Some(CallRecord {
+                    identity: Some(crate::record::EventIdentity::new(self.capture_id)),
                     ts: now_iso(),
                     session: self.session.clone(),
                     seq: self.seq,
@@ -176,6 +180,7 @@ impl Correlator {
     pub fn on_unparsed(&mut self, direction: &str, _now_ms: u64) -> CallRecord {
         self.seq += 1;
         CallRecord {
+            identity: Some(crate::record::EventIdentity::new(self.capture_id)),
             ts: now_iso(),
             session: self.session.clone(),
             seq: self.seq,

@@ -22,6 +22,26 @@ mcpeval shim-http --server demo \
 
 Remote upstreams require HTTPS and `--allow-remote-http`. Endpoint URLs cannot contain credentials, query strings, or fragments, and redirects are disabled.
 
+## Capture and event identity
+
+Every recorder instance and probe run mints a random UUIDv4
+`identity.capture_id`; every journal event has a distinct `identity.event_id`.
+Sequence numbers order recorded events within that capture. They are not
+JSON-RPC request IDs, and a capture ID does not create another logical session
+for the two-session promotion requirement. Reconnects within a probe run retain
+its capture identity.
+
+Indexing builds failure windows within one capture. Historical records have no
+recorder IDs; indexing retains them without inventing provenance. Their windows
+stay within one session/server pair and are omitted if that pair has duplicate
+sequence numbers. Unique legacy coordinates cannot prove recorder continuity.
+
+A copied modern event counts once when its complete sanitized metadata agrees.
+An event ID with conflicting metadata, two events claiming one capture sequence,
+or a capture ID spanning sessions or servers rejects the rebuild without
+replacing the previous index. Legacy duplicates remain separate observations.
+These UUIDs identify local evidence; they do not authenticate its source.
+
 ## Run probes
 
 Run all manifest cases over stdio, or select one dimension with `--probe`:

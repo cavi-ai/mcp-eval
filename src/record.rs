@@ -5,8 +5,39 @@ use crate::fingerprint::{self, Salt};
 use crate::privacy;
 use crate::{errtemplate, shape};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+fn is_uuid_v4(id: &uuid::Uuid) -> bool {
+    id.get_version() == Some(uuid::Version::Random) && id.get_variant() == uuid::Variant::RFC4122
+}
+
+/// IDs minted by a recorder, independent of the user-supplied session label.
+/// Legacy records omit this field; a rebuild must never manufacture it.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventIdentity {
+    pub capture_id: uuid::Uuid,
+    pub event_id: uuid::Uuid,
+}
+
+impl EventIdentity {
+    pub fn new(capture_id: uuid::Uuid) -> Self {
+        Self {
+            capture_id,
+            event_id: uuid::Uuid::new_v4(),
+        }
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if !is_uuid_v4(&self.capture_id) || !is_uuid_v4(&self.event_id) {
+            anyhow::bail!("capture and event IDs must be recorder-generated UUIDv4 values");
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CallRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity: Option<EventIdentity>,
     pub ts: String,
     pub session: String,
     pub seq: u64,
@@ -78,15 +109,20 @@ pub const ANNOTATION_KINDS: [&str; 5] = [
 
 const MAX_NOTE_LEN: usize = 240;
 
-/// An agent-authored observation about a call, identified by `(session, seq)`.
+/// An agent-authored observation about a call, identified by an event ID
+/// or legacy `(session, seq)` coordinates. Never resolve an ambiguous target.
 /// Unlike every other stored field, `note` is free-form prose by design; it is
 /// bounded and scrubbed of control characters so it can neither smuggle a
 /// payload nor corrupt the JSONL framing it is written into.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnotationRecord {
     pub ts: String,
-    pub session: String,
-    pub seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_id: Option<uuid::Uuid>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<u64>,
     pub kind: String,
     #[serde(serialize_with = "serialize_bounded_note")]
     pub note: String,
@@ -109,10 +145,35 @@ where
 }
 
 impl AnnotationRecord {
+    pub fn validate_target(&self) -> anyhow::Result<()> {
+        match (&self.event_id, &self.session, self.seq) {
+            (Some(id), None, None) if is_uuid_v4(id) => Ok(()),
+            (None, Some(_), Some(_)) => Ok(()),
+            _ => anyhow::bail!(
+                "annotation requires an event_id UUIDv4 or session and seq, exclusively"
+            ),
+        }
+    }
+
+    pub fn sanitized(&self) -> Self {
+        let mut safe = self.clone();
+        safe.session = safe.session.as_deref().map(privacy::opaque_session);
+        if !ANNOTATION_KINDS.contains(&safe.kind.as_str()) {
+            safe.kind = "invalid".into();
+        }
+        safe.note = safe
+            .note
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(MAX_NOTE_LEN)
+            .collect();
+        safe
+    }
     /// Checks `kind` against `ANNOTATION_KINDS` and `note` against the length
     /// and control-character bounds. Returns a descriptive error listing the
     /// valid kinds when `kind` is unrecognized.
     pub fn validate(&self) -> anyhow::Result<()> {
+        self.validate_target()?;
         if !ANNOTATION_KINDS.contains(&self.kind.as_str()) {
             anyhow::bail!(
                 "unknown annotation kind {:?}; valid kinds are: {}",
@@ -133,7 +194,7 @@ impl AnnotationRecord {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct ErrorInfo {
     #[serde(
         default,

@@ -178,6 +178,7 @@ fn trends_reports_empty_history_gracefully() {
 
 fn failure(session: &str, seq: u64, tool: &str, template_id: &str) -> CallRecord {
     CallRecord {
+        identity: None,
         ts: format!("2026-08-05T00:00:{seq:02}Z"),
         session: session.into(),
         seq,

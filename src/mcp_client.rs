@@ -1,13 +1,14 @@
-use std::io::{BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
-use std::sync::mpsc::{self, Receiver};
-use std::thread;
+use std::io::{BufReader, Write};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Receiver, Sender, SyncSender};
+use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
 use serde_json::{json, Value};
 
 use crate::privacy;
+use crate::stdio::{cancellation_pair, CancelHandle, CancellableReader, CancellableWriter};
 
 // Generous by design: cold CI runners (first python spawn, antivirus
 // scans) can exceed a few seconds before the first response. A genuinely
@@ -16,6 +17,15 @@ use crate::privacy;
 // deliberately stay tight — they bound network I/O, not process startup.
 // A manifest's `timeout_ms` replaces both.
 pub const DEFAULT_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_QUEUED_FRAMES: usize = 16;
+const MAX_NOTIFICATIONS: usize = 128;
+
+struct IoPump {
+    thread: JoinHandle<()>,
+    cancel: CancelHandle,
+}
+
+type WriteRequest = (Vec<u8>, Sender<std::io::Result<()>>);
 
 /// A transport failure: the server stopped answering or went away. Both
 /// clients put it in the error chain so probes can tell a lost server
@@ -208,7 +218,9 @@ pub enum CancellationOutcome {
 
 pub struct McpClient {
     child: Child,
-    stdin: Option<ChildStdin>,
+    writes: Option<SyncSender<WriteRequest>>,
+    pumps: Vec<IoPump>,
+    failed: bool,
     lines: Receiver<std::io::Result<Vec<u8>>>,
     next_id: u64,
     response_timeout: Duration,
@@ -223,7 +235,8 @@ pub struct McpClient {
     /// `wait_for_resource_update` drains this buffer first so a
     /// notification that raced ahead of an interleaved response is never
     /// lost.
-    notifications: Vec<Value>,
+    notifications: Vec<(Value, usize)>,
+    notification_bytes: usize,
 }
 
 impl McpClient {
@@ -234,37 +247,21 @@ impl McpClient {
         let (program, args) = command
             .split_first()
             .ok_or_else(|| anyhow::anyhow!("server command must not be empty"))?;
-        let mut child = Command::new(program)
+        let child = Command::new(program)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .with_context(|| format!("spawning MCP server {program}"))?;
-        let stdin = child.stdin.take().context("opening MCP server stdin")?;
-        let stdout = child.stdout.take().context("opening MCP server stdout")?;
-        let (sender, lines) = mpsc::channel();
-        thread::spawn(move || {
-            let mut reader = BufReader::new(stdout);
-            loop {
-                let mut line = Vec::new();
-                match reader.read_until(b'\n', &mut line) {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        if sender.send(Ok(line)).is_err() {
-                            break;
-                        }
-                    }
-                    Err(error) => {
-                        let _ = sender.send(Err(error));
-                        break;
-                    }
-                }
-            }
-        });
-        Ok(Self {
+        let (sender, lines) = mpsc::sync_channel(MAX_QUEUED_FRAMES);
+        let (writes, requests) = mpsc::sync_channel::<WriteRequest>(1);
+        // Own the child before fallible setup so every failure runs Drop.
+        let mut client = Self {
             child,
-            stdin: Some(stdin),
+            writes: Some(writes),
+            pumps: Vec::new(),
+            failed: false,
             lines,
             next_id: 1,
             response_timeout: DEFAULT_RESPONSE_TIMEOUT,
@@ -272,7 +269,56 @@ impl McpClient {
             capabilities: None,
             protocol_version: None,
             notifications: Vec::new(),
-        })
+            notification_bytes: 0,
+        };
+        let stdin = client
+            .child
+            .stdin
+            .take()
+            .context("opening MCP server stdin")?;
+        let stdout = client
+            .child
+            .stdout
+            .take()
+            .context("opening MCP server stdout")?;
+        let (cancel, cancellation) = cancellation_pair()?;
+        let mut writer = CancellableWriter::new(stdin, cancellation)?;
+        let thread = thread::Builder::new()
+            .name("mcp-stdin".into())
+            .spawn(move || {
+                for (frame, reply) in requests {
+                    let result = writer.write_all(&frame).and_then(|()| writer.flush());
+                    let failed = result.is_err();
+                    let _ = reply.send(result);
+                    if failed {
+                        break;
+                    }
+                }
+            })?;
+        client.pumps.push(IoPump { thread, cancel });
+        let (cancel, cancellation) = cancellation_pair()?;
+        let thread = thread::Builder::new()
+            .name("mcp-stdout".into())
+            .spawn(move || {
+                let mut reader = BufReader::new(CancellableReader::new(stdout, cancellation));
+                loop {
+                    match crate::frame::read_line(&mut reader) {
+                        Ok(None) => break,
+                        Ok(Some(line)) => {
+                            // Overflow closes the transport; never block shutdown or grow the queue.
+                            if sender.try_send(Ok(line)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(error) => {
+                            let _ = sender.try_send(Err(error));
+                            break;
+                        }
+                    }
+                }
+            })?;
+        client.pumps.push(IoPump { thread, cancel });
+        Ok(client)
     }
 
     /// The protocol version the server answered `initialize` with.
@@ -324,8 +370,13 @@ impl McpClient {
             "params": {"name": tool, "arguments": arguments}
         }))?;
         let mut server_requests = 0u64;
+        let deadline = Instant::now() + self.response_timeout;
         loop {
-            let raw = match self.lines.recv_timeout(self.response_timeout) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(self.abandon(id));
+            }
+            let raw = match self.lines.recv_timeout(remaining) {
                 Ok(Ok(raw)) => raw,
                 Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(closed_stdout())
@@ -511,8 +562,12 @@ impl McpClient {
                     .and_then(Value::as_str)
                     == Some(uri)
         };
-        if let Some(index) = self.notifications.iter().position(matches_uri) {
-            self.notifications.remove(index);
+        if let Some(index) = self
+            .notifications
+            .iter()
+            .position(|(frame, _)| matches_uri(frame))
+        {
+            self.notification_bytes -= self.notifications.remove(index).1;
             return true;
         }
         let deadline = Instant::now() + wait;
@@ -538,8 +593,10 @@ impl McpClient {
             if matches_uri(&frame) {
                 return true;
             }
-            if frame.get("method").and_then(Value::as_str).is_some() {
-                self.notifications.push(frame);
+            if frame.get("method").and_then(Value::as_str).is_some()
+                && self.remember_notification(frame, raw.len()).is_err()
+            {
+                return false;
             }
         }
     }
@@ -582,6 +639,9 @@ impl McpClient {
         self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
         let deadline = Instant::now() + self.response_timeout;
         loop {
+            if Instant::now() >= deadline {
+                return Err(self.abandon(id));
+            }
             let raw = match self
                 .lines
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
@@ -609,7 +669,7 @@ impl McpClient {
             }
             if !object.contains_key("id") {
                 if object.get("method").and_then(Value::as_str).is_some() {
-                    self.notifications.push(response);
+                    self.remember_notification(response, raw.len())?;
                 }
                 continue;
             }
@@ -646,29 +706,63 @@ impl McpClient {
     }
 
     fn write(&mut self, value: &Value) -> anyhow::Result<()> {
-        let stdin = self.stdin.as_mut().ok_or_else(closed_stdout)?;
-        let mut frame = serde_json::to_vec(value)?;
-        frame.push(b'\n');
-        stdin
-            .write_all(&frame)
-            .and_then(|()| stdin.flush())
-            .map_err(|error| {
-                anyhow::Error::new(error)
-                    .context(TransportFailure::Closed)
-                    .context("writing to the MCP server")
-            })
+        if self.failed {
+            return Err(closed_stdout());
+        }
+        let frame = crate::frame::encode(value)
+            .map_err(|_| closed_stdout().context("outgoing stdio frame exceeds limit"))?;
+        let (reply, result) = mpsc::channel();
+        self.writes
+            .as_ref()
+            .ok_or_else(closed_stdout)?
+            .try_send((frame, reply))
+            .map_err(|_| closed_stdout())?;
+        match result.recv_timeout(self.response_timeout) {
+            Ok(Ok(())) => Ok(()),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                self.failed = true;
+                Err(TransportFailure::Timeout.into())
+            }
+            _ => {
+                self.failed = true;
+                Err(closed_stdout().context("writing to the MCP server"))
+            }
+        }
+    }
+
+    fn remember_notification(&mut self, value: Value, bytes: usize) -> anyhow::Result<()> {
+        if self.notifications.len() >= MAX_NOTIFICATIONS
+            || bytes > crate::frame::MAX_FRAME_BYTES - self.notification_bytes
+        {
+            self.failed = true;
+            return Err(closed_stdout().context("notification buffer exceeds limit"));
+        }
+        self.notification_bytes += bytes;
+        self.notifications.push((value, bytes));
+        Ok(())
     }
 }
 
 impl Drop for McpClient {
     fn drop(&mut self) {
-        self.stdin.take();
+        self.writes.take();
+        // Close the peer's pipe handles before waiting for cancellation.
+        // On Windows, a standard-library pipe write can wait in overlapped
+        // I/O that CancelSynchronousIo does not observe. Terminating the
+        // owned child releases that write; cancellation then stops any
+        // remaining pumps before they are joined.
         match self.child.try_wait() {
             Ok(Some(_)) => {}
             Ok(None) | Err(_) => {
                 let _ = self.child.kill();
                 let _ = self.child.wait();
             }
+        }
+        for pump in &self.pumps {
+            let _ = pump.cancel.cancel_thread(&pump.thread);
+        }
+        for pump in self.pumps.drain(..) {
+            let _ = pump.thread.join();
         }
     }
 }

@@ -613,11 +613,20 @@ fn run() -> anyhow::Result<()> {
                     ))
                 })?,
             )?;
+            let definition_id = mcpeval::lifecycle::definition_id(
+                store.root(),
+                &declaration,
+                selected,
+                serde_json::json!({"command": cmd, "url": url, "allow_remote_http": allow_remote_http}),
+            )?;
+            let run_id = uuid::Uuid::new_v4().to_string();
+            // Execute the loaded definition, never a second read of a mutable file.
+            let manifest_inline = Some(serde_json::to_string(&declaration)?);
             let report = mcpeval::probe::run(
                 mcpeval::probe::ProbeOptions {
                     server,
                     manifest_path: manifest,
-                    manifest_inline: None,
+                    manifest_inline,
                     selected_probe: None,
                     selected_case: Some(case.clone()),
                     allow_mutation,
@@ -647,6 +656,8 @@ fn run() -> anyhow::Result<()> {
                 store.root(),
                 &finding,
                 &case,
+                &definition_id,
+                &run_id,
                 reason.is_none(),
                 chrono::Utc::now(),
             )?;

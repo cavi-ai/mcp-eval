@@ -491,7 +491,13 @@ fn rekeyed_findings_keep_the_latest_lifecycle_state_and_its_probe_history() {
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(history, vec![(rekeyed.clone(), "probe-kept".into())]);
+    assert_eq!(
+        history,
+        vec![
+            (rekeyed.clone(), "probe-kept".into()),
+            (rekeyed.clone(), "probe-stale".into()),
+        ]
+    );
     let finding: String = db
         .query_row("SELECT finding_id FROM findings", [], |row| row.get(0))
         .unwrap();

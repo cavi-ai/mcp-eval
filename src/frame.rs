@@ -1,9 +1,48 @@
-use std::io::BufRead;
+use std::io::{self, BufRead, Read, Write};
 use std::time::Instant;
 
 use serde_json::Value;
 
 use crate::privacy;
+
+/// Maximum stdio frame size, including its delimiter.
+pub const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+
+pub(crate) fn read_line<R: BufRead>(r: &mut R) -> io::Result<Option<Vec<u8>>> {
+    let mut raw = Vec::new();
+    r.take((MAX_FRAME_BYTES + 1) as u64)
+        .read_until(b'\n', &mut raw)?;
+    if raw.len() > MAX_FRAME_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "stdio frame exceeds 4 MiB",
+        ));
+    }
+    Ok((!raw.is_empty()).then_some(raw))
+}
+
+pub(crate) fn encode(value: &Value) -> io::Result<Vec<u8>> {
+    struct Buffer(Vec<u8>);
+    impl Write for Buffer {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if bytes.len() > MAX_FRAME_BYTES - self.0.len() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "stdio frame exceeds 4 MiB",
+                ));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut buffer = Buffer(Vec::new());
+    serde_json::to_writer(&mut buffer, value).map_err(io::Error::other)?;
+    buffer.write_all(b"\n")?;
+    Ok(buffer.0)
+}
 
 #[derive(Debug, Clone)]
 pub struct Frame {
@@ -18,11 +57,9 @@ pub struct Frame {
 
 /// Reads one newline-delimited message. Returns Ok(None) at end of input.
 pub fn read_frame<R: BufRead>(r: &mut R) -> std::io::Result<Option<Frame>> {
-    let mut raw = Vec::new();
-    let n = r.read_until(b'\n', &mut raw)?;
-    if n == 0 {
+    let Some(raw) = read_line(r)? else {
         return Ok(None);
-    }
+    };
     let started = Instant::now();
     let value = serde_json::from_slice(&raw)
         .ok()

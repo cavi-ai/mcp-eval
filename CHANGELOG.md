@@ -4,6 +4,13 @@
 
 ### Changed
 
+- Verification state and history live in a durable `lifecycle.db`, separate
+  from the rebuildable index. Existing lifecycle rows are imported once;
+  finding-ID migrations retain every historical verification.
+- Verification streaks bind to the selected case, timeout, sandbox declaration,
+  target configuration, and evaluator executable fingerprint. Changed bindings
+  restart pass credit; legacy unbound history is retained without contributing
+  to new streaks. Verification run IDs prevent duplicate credit.
 - Readiness uses `mcpeval-standard/2`. Reliability is scaled by successful-call
   rate; consistently failing and untested tools earn no reliability credit.
   Coverage counts tools with at least one successful call. Reports include
@@ -21,6 +28,11 @@
 
 ### Fixed
 
+- Stdio evaluation bounds frames, incoming queues, and retained notifications;
+  pipe writes time out when a server stops reading. Interleaved messages do not
+  restart response deadlines, and shutdown cancels and joins both I/O pumps.
+- Input synthesis uses byte and node budgets before allocating strings,
+  arrays, or schema-supplied defaults.
 - `share` scans the exact exported snapshots, including nested JSONL files,
   rejects symlinks and overlapping output paths, and preserves an existing
   envelope when preparation fails.

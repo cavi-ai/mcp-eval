@@ -47,6 +47,19 @@ impl Salt {
         &self.0
     }
 
+    /// A domain-separated, local fingerprint; raw input is never persisted.
+    pub(crate) fn definition_id(&self, bytes: &[u8]) -> String {
+        let mut hash = Sha256::new();
+        hash.update(self.bytes());
+        hash.update(b"mcpeval-verification-definition/1\0");
+        hash.update((bytes.len() as u64).to_be_bytes());
+        hash.update(bytes);
+        hash.finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
     fn from_file_bytes(path: &Path, bytes: Vec<u8>) -> anyhow::Result<Self> {
         let bytes: [u8; 32] = bytes.try_into().map_err(|bytes: Vec<u8>| {
             anyhow::anyhow!(

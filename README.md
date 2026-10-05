@@ -413,7 +413,7 @@ frequent in `err_code`, and carries a defect class (`unstable-error-code`,
 `retry-did-not-recover`, or `recurring-error`) with a one-line server-side
 fix hint. Finding IDs from earlier releases, which included the error code,
 re-key once on the next `mcpeval promote`; the most recently updated
-lifecycle state and its probe history move to the new ID. `findings --format
+lifecycle state moves to the new ID and all historical verifications are retained. `findings --format
 json` also carries `retryable`: `true` when every failure was retryable,
 `false` when none was, `null` when mixed or unreported. The promotion
 score combines the 95% Wilson lower bound of the observed rate, fourteen-day recency decay, median failure-window turns, and
@@ -437,8 +437,12 @@ and a lifecycle state: `open`, `fix-claimed`, `verifying`, or `closed`.
 `mcpeval verify` runs exactly one matching probe; the first green moves the
 finding to `verifying`, the third consecutive green closes it, and any red
 resets the streak and reopens it; a red run prints its `reason=` and the
-remediation hint. History is append-only and survives
-index/promotion rebuilds. Findings without an attached probe remain open and
+remediation hint. Passes must share the same case definition, timeout, sandbox,
+target configuration, and evaluator executable fingerprint. Changing that
+binding starts a fresh streak; formatting and unrelated cases do not.
+State and history live in `<MCPEVAL_HOME>/lifecycle.db` and survive deletion
+and rebuilding of `index.db`. Legacy history is retained, but its unbound
+passes do not contribute to a new streak. Findings without an attached probe remain open and
 are capped at medium severity.
 
 Findings become actionable where work happens. `export-issues` writes one
@@ -544,7 +548,7 @@ hand-picked file list. It snapshots and scans every selected JSONL file, includi
 **refuses to package a snapshot the sweep flags** (exit 1). It rejects symlinks
 and overlapping output paths, then publishes a staged directory containing the
 store records, a `SHARE.md` manifest of what is inside and what was
-deliberately excluded (salt, `index.db`, manifests), and typed annotation metadata. Annotation prose is omitted by default; after
+deliberately excluded (salt, databases including `lifecycle.db`, manifests), and typed annotation metadata. Annotation prose is omitted by default; after
 manual review, `--include-annotation-notes` explicitly includes it with a warning.
 `--force` replaces the whole envelope; refusal preserves the existing one:
 

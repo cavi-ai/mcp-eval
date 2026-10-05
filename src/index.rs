@@ -78,6 +78,7 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
         .filter(|record| record.outcome == "error")
         .count();
     let mut db = Connection::open(root.join("index.db")).context("opening index.db")?;
+    db.busy_timeout(std::time::Duration::from_secs(5))?;
     db.pragma_update(None, "foreign_keys", "ON")?;
     let transaction = db.transaction().context("starting index rebuild")?;
     transaction

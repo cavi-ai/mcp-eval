@@ -337,15 +337,69 @@ fn list_catalog(client: &mut ProbeClient) -> anyhow::Result<ToolCatalog> {
 
 /// Nesting followed while synthesizing, `$ref` hops included.
 const MAX_SCHEMA_DEPTH: usize = 8;
+const MAX_INPUT_BYTES: usize = 64 * 1024;
+const MAX_INPUT_NODES: usize = 4096;
+const MAX_ARRAY_ITEMS: u64 = 256;
+const MAX_STRING_BYTES: u64 = 16 * 1024;
+
+struct InputBudget {
+    bytes: usize,
+    nodes: usize,
+}
+
+impl InputBudget {
+    fn charge(&mut self, bytes: usize) -> Option<()> {
+        self.bytes = self.bytes.checked_sub(bytes)?;
+        self.nodes = self.nodes.checked_sub(1)?;
+        Some(())
+    }
+    fn value(&mut self, value: &Value, depth: usize) -> Option<()> {
+        if depth > MAX_SCHEMA_DEPTH {
+            return None;
+        }
+        match value {
+            Value::String(text) => self.charge(text.len().checked_mul(6)?.checked_add(2)?),
+            Value::Array(items) => {
+                self.charge(2 + items.len())?;
+                for item in items {
+                    self.value(item, depth + 1)?;
+                }
+                Some(())
+            }
+            Value::Object(properties) => {
+                self.charge(2 + properties.len())?;
+                for (key, value) in properties {
+                    self.charge(key.len().checked_mul(6)?.checked_add(3)?)?;
+                    self.value(value, depth + 1)?;
+                }
+                Some(())
+            }
+            _ => self.charge(32),
+        }
+    }
+}
 
 /// Valid arguments built from `schema` alone: every required property,
 /// deterministically. None when a required property has no rule.
 pub fn synthesize(schema: &Value) -> Option<Value> {
-    let arguments = object_value(schema, schema, 0)?;
+    let mut budget = InputBudget {
+        bytes: MAX_INPUT_BYTES,
+        nodes: MAX_INPUT_NODES,
+    };
+    let arguments = object_value(schema, schema, 0, &mut budget)?;
     crate::schema::conforms(schema, &arguments).then_some(arguments)
 }
 
-fn object_value(schema: &Value, root: &Value, depth: usize) -> Option<Value> {
+fn object_value(
+    schema: &Value,
+    root: &Value,
+    depth: usize,
+    budget: &mut InputBudget,
+) -> Option<Value> {
+    if depth > MAX_SCHEMA_DEPTH {
+        return None;
+    }
+    budget.charge(2)?;
     let properties = schema.get("properties").and_then(Value::as_object);
     let mut arguments = serde_json::Map::new();
     for name in schema
@@ -356,9 +410,10 @@ fn object_value(schema: &Value, root: &Value, depth: usize) -> Option<Value> {
     {
         let name = name.as_str()?;
         let property = properties?.get(name)?;
+        budget.charge(name.len().checked_mul(6)?.checked_add(4)?)?;
         arguments.insert(
             name.to_owned(),
-            synthesize_value(property, root, depth + 1)?,
+            synthesize_value(property, root, depth + 1, budget)?,
         );
     }
     Some(Value::Object(arguments))
@@ -367,22 +422,29 @@ fn object_value(schema: &Value, root: &Value, depth: usize) -> Option<Value> {
 /// One value, first rule that applies: `$ref`; `const`, the first `enum`
 /// member, `default`, or the first of `examples`; the first `anyOf` or
 /// `oneOf` branch; then by type.
-fn synthesize_value(schema: &Value, root: &Value, depth: usize) -> Option<Value> {
+fn synthesize_value(
+    schema: &Value,
+    root: &Value,
+    depth: usize,
+    budget: &mut InputBudget,
+) -> Option<Value> {
     if depth > MAX_SCHEMA_DEPTH {
         return None;
     }
     if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
         let target = root.pointer(reference.strip_prefix('#')?)?;
-        return synthesize_value(target, root, depth + 1);
+        return synthesize_value(target, root, depth + 1, budget);
     }
     for key in ["const", "enum", "default", "examples"] {
         let Some(value) = schema.get(key) else {
             continue;
         };
-        return match key {
-            "enum" | "examples" => value.as_array()?.first().cloned(),
-            _ => Some(value.clone()),
+        let value = match key {
+            "enum" | "examples" => value.as_array()?.first()?,
+            _ => value,
         };
+        budget.value(value, depth)?;
+        return Some(value.clone());
     }
     if let Some(branch) = schema
         .get("anyOf")
@@ -390,7 +452,7 @@ fn synthesize_value(schema: &Value, root: &Value, depth: usize) -> Option<Value>
         .and_then(Value::as_array)
         .and_then(|branches| branches.first())
     {
-        return synthesize_value(branch, root, depth + 1);
+        return synthesize_value(branch, root, depth + 1, budget);
     }
     let kind = match schema.get("type") {
         Some(Value::String(kind)) => kind.as_str(),
@@ -401,24 +463,46 @@ fn synthesize_value(schema: &Value, root: &Value, depth: usize) -> Option<Value>
         _ => return None,
     };
     match kind {
-        "string" => string_value(schema),
-        "integer" | "number" => Some(number_value(schema)),
-        "boolean" => Some(json!(false)),
+        "string" => string_value(schema, budget),
+        "integer" | "number" => {
+            budget.charge(32)?;
+            Some(number_value(schema))
+        }
+        "boolean" => {
+            budget.charge(5)?;
+            Some(json!(false))
+        }
         "array" => {
-            let count = schema.get("minItems").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let count = schema.get("minItems").and_then(Value::as_u64).unwrap_or(0);
+            if count > MAX_ARRAY_ITEMS {
+                return None;
+            }
+            let count = usize::try_from(count).ok()?;
+            budget.charge(2 + count)?;
             if count == 0 {
                 return Some(json!([]));
             }
-            let item = synthesize_value(schema.get("items")?, root, depth + 1)?;
-            Some(Value::Array(vec![item; count]))
+            let mut items = Vec::with_capacity(count);
+            for _ in 0..count {
+                items.push(synthesize_value(
+                    schema.get("items")?,
+                    root,
+                    depth + 1,
+                    budget,
+                )?);
+            }
+            Some(Value::Array(items))
         }
-        "object" => object_value(schema, root, depth),
-        "null" => Some(Value::Null),
+        "object" => object_value(schema, root, depth, budget),
+        "null" => {
+            budget.charge(4)?;
+            Some(Value::Null)
+        }
         _ => None,
     }
 }
 
-fn string_value(schema: &Value) -> Option<Value> {
+fn string_value(schema: &Value, budget: &mut InputBudget) -> Option<Value> {
     let formatted = match schema.get("format").and_then(Value::as_str) {
         Some("date-time") => Some("2026-01-01T00:00:00Z"),
         Some("date") => Some("2026-01-01"),
@@ -428,16 +512,22 @@ fn string_value(schema: &Value) -> Option<Value> {
         _ => None,
     };
     if let Some(value) = formatted {
+        budget.charge(value.len() + 2)?;
         return Some(json!(value));
     }
     if schema.get("pattern").is_some() {
         return None;
     }
-    let min = schema.get("minLength").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let min = schema.get("minLength").and_then(Value::as_u64).unwrap_or(0);
+    if min > MAX_STRING_BYTES {
+        return None;
+    }
+    let min = usize::try_from(min).ok()?;
     let max = schema
         .get("maxLength")
         .and_then(Value::as_u64)
-        .map(|max| max as usize);
+        .map(|max| usize::try_from(max).unwrap_or(usize::MAX));
+    budget.charge(min.max(7) + 2)?;
     let mut value = String::from("mcpeval");
     while value.len() < min {
         value.push('x');
@@ -902,6 +992,22 @@ mod tests {
             assert!(
                 synthesize(&schema).is_none(),
                 "invalid candidate must not reach a server: {schema}"
+            );
+        }
+    }
+
+    #[test]
+    fn synthesis_refuses_schema_driven_allocation_amplification() {
+        for property in [
+            json!({"type":"string","minLength":1_000_000}),
+            json!({"type":"array","minItems":300,"items":{"type":"integer"}}),
+            json!({"type":"array","minItems":100,"items":{"type":"string","minLength":1000}}),
+            json!({"default":"x".repeat(100_000)}),
+        ] {
+            let schema = json!({"type":"object","required":["x"],"properties":{"x":property}});
+            assert!(
+                synthesize(&schema).is_none(),
+                "oversized generated input accepted"
             );
         }
     }

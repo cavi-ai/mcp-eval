@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+### Changed
+
+- Readiness uses `mcpeval-standard/2`. Reliability is scaled by successful-call
+  rate; consistently failing and untested tools earn no reliability credit.
+  Coverage counts tools with at least one successful call. Reports include
+  success, tool-error, RPC-error, rejected-argument, transport-error, and
+  untested-tool counts.
+- Synthesized arguments are validated against the full input schema before
+  tool execution. Output schemas are validated fully on every successful
+  repeat and by the manifest probe, including types, nested constraints, and
+  local references. External schema retrieval is disabled.
+- `share` omits annotation prose by default; `--include-annotation-notes`
+  explicitly includes manually reviewed notes. `--force` replaces the
+  entire envelope.
+- The existing corpus retains its historical `mcpeval-standard/1` label;
+  readiness comparisons with the new standard are omitted.
+
+### Fixed
+
+- `share` scans the exact exported snapshots, including nested JSONL files,
+  rejects symlinks and overlapping output paths, and preserves an existing
+  envelope when preparation fails.
+- Wrongly typed structured output fails with `output-schema-invalid-result`
+  instead of passing a field-presence check.
+
 ### Removed
 
 - The GitHub Pages documentation site. Documentation is published at

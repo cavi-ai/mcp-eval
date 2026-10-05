@@ -153,6 +153,7 @@
             "surface-stalled-cursor",
             "output-schema-declared-but-missing",
             "output-schema-field-missing",
+            "output-schema-invalid-result",
             "cancellation-ignored",
             "cancellation-errored",
             "negotiation-echoed-unknown",

@@ -2,6 +2,8 @@
 
 How healthy are the MCP servers that agents actually use? This page is produced by scoring popular public servers with mcpeval's read-only standard battery (`mcpeval score`, readiness standard `mcpeval-standard/1`) and publishing the raw distribution. No self-reported scores, no vendor claim: every number here comes from the battery and is reproducible by anyone with the CLI.
 
+These are historical observations under `mcpeval-standard/1`. Current scoring uses `mcpeval-standard/2`, which corrects success credit and output-schema validation. These scores are retained under their original standard and are not used for current readiness comparisons.
+
 ## The corpus
 
 {{PRODUCT_VERSION}} ships a corpus of **33 public MCP servers** collected across the npm and uvx ecosystems (the reference servers plus the most-downloaded community servers). Each server ran as installed, without credentials, with no Kubernetes context and no Docker daemon.
@@ -63,9 +65,9 @@ How healthy are the MCP servers that agents actually use? This page is produced 
 
 **The 2025-06-18 interactive surface is barely adopted.** A capability sweep over the corpus found `sampling` on zero servers, `elicitation` on zero servers, and `resources.subscribe` on two (the reference `everything` server and `memory`). The reference server's `instructions` string references `trigger-sampling-request` and `trigger-elicitation-request`, but those tools only enter the catalog when the client declares the matching capability (13 tools for a capability-less client, 16 with sampling and elicitation declared). Instructions that promise tools an agent cannot see in its own catalog are a coherence defect; the finding was filed upstream as [modelcontextprotocol/servers#4792](https://github.com/modelcontextprotocol/servers/issues/4792).
 
-## Reproduce it
+## Collect a current corpus
 
-Every number on this page can be regenerated:
+Collect new observations under the current evaluator standard. The historical scores above require the earlier evaluator and corresponding server artifacts:
 
 ```sh
 cargo build --release
@@ -73,7 +75,7 @@ scripts/corpus/collect.sh          # rebuilds data/readiness-corpus.json
 mcpeval score --server your-server -- your-mcp-server --flags
 ```
 
-Text and markdown reports place a readiness score among these servers when it was scored under the same standard. The clean `mcpeval-demo` scores 91:
+Text and markdown reports place a readiness score among these servers when it was scored under the same standard. This is a historical standard/1 placement example; standard/2 reports do not place readiness against this snapshot:
 
 ```text
   standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers

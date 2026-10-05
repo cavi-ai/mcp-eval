@@ -135,6 +135,7 @@
         "surface-stalled-cursor",
         "output-schema-declared-but-missing",
         "output-schema-field-missing",
+        "output-schema-invalid-result",
         "cancellation-ignored",
         "cancellation-errored",
         "negotiation-echoed-unknown",
@@ -425,6 +426,7 @@
           "enum": [
             "context.catalog",
             "context.heaviest-tool",
+            "reliability.success",
             "reliability.consistent",
             "reliability.latency",
             "reliability.output-schema",
@@ -472,6 +474,7 @@
           "enum": [
             "context-catalog-heavy",
             "context-tool-heavy",
+            "reliability-call-failed",
             "reliability-inconsistent",
             "reliability-slow",
             "reliability-output-schema-broken",

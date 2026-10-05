@@ -270,7 +270,9 @@ mod tests {
         let corpus =
             Corpus::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("data/readiness-corpus.json"))
                 .unwrap();
-        assert_eq!(corpus.standard, crate::score::STANDARD);
+        // Historical observations must retain the standard that measured them.
+        assert_eq!(corpus.standard, "mcpeval-standard/1");
+        assert_ne!(corpus.standard, crate::score::STANDARD);
         assert!(!corpus.observations.is_empty());
     }
 

@@ -14,4 +14,8 @@ HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS plus
 
 ## Producing the share envelope
 
-`mcpeval share --dir <directory>` assembles the shareable artifact mechanically instead of asking you to hand-pick files. It runs the redaction sweep first and refuses to package a store the sweep flags, exiting `1`. The envelope contains the store's JSONL records (plus optionally the readiness-trend history with `--include-probe-history`) and a `SHARE.md` manifest describing what is inside, what was deliberately excluded — the fingerprint salt, derived databases such as `index.db`, and manifest files — and whether annotation notes need manual review. The salt is never copied into the envelope; keep any file containing it separate from the envelope when attaching either.
+`mcpeval share --dir <directory>` snapshots every selected JSONL file under a shared journal lock, scans the exact exported bytes, and publishes the envelope only after the scan succeeds. Nested JSONL files are checked too; symlinks and output paths overlapping the capture store are refused. A flagged sweep exits `1` and publishes nothing. Invalid JSON records also stop export.
+
+The envelope contains JSONL records, typed annotation metadata, and a `SHARE.md` manifest. Annotation prose is omitted by default; after manual review, `--include-annotation-notes` explicitly includes it and prints a warning. `--include-probe-history` includes readiness-trend history. The redaction scan is a heuristic, not proof that arbitrary metadata is non-sensitive.
+
+The fingerprint salt, databases, and manifests are excluded. Keep any file containing the salt separate. `--force` replaces the entire prior envelope after successful preparation; a refused export preserves it.

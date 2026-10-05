@@ -125,6 +125,9 @@ pub fn hint(reason: FailureReason) -> &'static str {
              `structuredContent`; either populate it on every success or withdraw the \
              declaration"
         }
+        FailureReason::OutputSchemaInvalidResult => {
+            "declare a valid outputSchema and return structuredContent satisfying its types, nested fields, and constraints"
+        }
         FailureReason::OutputSchemaFieldMissing => {
             "`structuredContent` is missing a field the declared `outputSchema` marks \
              required; return the full declared shape on every success"
@@ -251,6 +254,9 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
             "trim this tool's description and input schema; move long reference material into \
              a resource the agent reads on demand"
         }
+        CheckReason::ReliabilityCallFailed => {
+            "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability"
+        }
         CheckReason::ReliabilityInconsistent => {
             "the same read-only call with the same arguments ended differently across three \
              calls; make read paths deterministic, or return a retryable error with a stable code"
@@ -260,8 +266,8 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
              3 s, 0: slower); cache or precompute the read, or page large results"
         }
         CheckReason::ReliabilityOutputSchemaBroken => {
-            "the tool declares outputSchema but its result lacks structuredContent or a required \
-             field; return structuredContent that matches the schema, or drop the declaration"
+            "the tool declares outputSchema but a successful result lacks conforming structuredContent; \
+             satisfy its types, nested fields, and constraints on every success"
         }
         CheckReason::ReliabilityContentionFailed => {
             "two clients calling this tool at once did not both succeed; guard shared state so \

@@ -450,6 +450,9 @@ pub enum Command {
         /// Include the readiness-trend history.
         #[arg(long)]
         include_probe_history: bool,
+        /// Include free-form annotation notes after manual review.
+        #[arg(long)]
+        include_annotation_notes: bool,
         /// Replace an existing populated directory.
         #[arg(long)]
         force: bool,

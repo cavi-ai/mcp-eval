@@ -64,7 +64,7 @@ pub enum Exercise {
     Exercised {
         consistent: bool,
         median_latency_ms: u64,
-        /// Whether the first successful result honored the declared
+        /// Whether every successful result honored the declared
         /// output schema; None without a declaration or a success.
         output_schema: Option<bool>,
     },
@@ -125,6 +125,30 @@ pub struct ToolObservation {
     /// How the tool refused schema-violating arguments; None for tools
     /// that are not called or whose schema admits every input.
     pub honesty: Option<Honesty>,
+    pub calls: CallCounts,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CallCounts {
+    pub successful: u64,
+    pub tool_errors: u64,
+    pub rpc_errors: u64,
+    pub rejected: u64,
+    pub transport_errors: u64,
+}
+
+impl CallCounts {
+    pub fn total(self) -> u64 {
+        self.successful + self.tool_errors + self.rpc_errors + self.rejected + self.transport_errors
+    }
+    fn observe(&mut self, outcome: Outcome) {
+        match outcome {
+            Outcome::Success => self.successful += 1,
+            Outcome::ToolError => self.tool_errors += 1,
+            Outcome::RpcError => self.rpc_errors += 1,
+            Outcome::Rejected => self.rejected += 1,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -207,6 +231,7 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
     // server-level cases run on the first of them.
     let mut succeeded: Vec<(&ToolDefinition, Value)> = Vec::new();
     for tool in &catalog.tools {
+        let mut calls = CallCounts::default();
         let class = ToolClass::of(tool);
         let callable = match class {
             ToolClass::Writer => false,
@@ -232,9 +257,10 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             _ => match synthesize(&tool.input_schema) {
                 Some(_) if skipped => Some(Exercise::NotExercised(CheckReason::CoverageSkipped)),
                 Some(arguments) => {
-                    let (exercise, all_succeeded) =
+                    let (exercise, measured_calls) =
                         exercise_tool(&mut client, target, tool, &arguments);
-                    if all_succeeded {
+                    calls = measured_calls;
+                    if calls.successful == REPEATS as u64 {
                         succeeded.push((tool, arguments));
                     }
                     Some(exercise)
@@ -249,6 +275,7 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             exercise,
             catalog: CatalogFacts::of(tool),
             honesty,
+            calls,
         });
     }
     // With a tool skipped, the server-level cases score 0 (score.rs) and
@@ -314,7 +341,8 @@ const MAX_SCHEMA_DEPTH: usize = 8;
 /// Valid arguments built from `schema` alone: every required property,
 /// deterministically. None when a required property has no rule.
 pub fn synthesize(schema: &Value) -> Option<Value> {
-    object_value(schema, schema, 0)
+    let arguments = object_value(schema, schema, 0)?;
+    crate::schema::conforms(schema, &arguments).then_some(arguments)
 }
 
 fn object_value(schema: &Value, root: &Value, depth: usize) -> Option<Value> {
@@ -533,10 +561,12 @@ fn exercise_tool(
     target: &ClientTarget,
     tool: &ToolDefinition,
     arguments: &Value,
-) -> (Exercise, bool) {
+) -> (Exercise, CallCounts) {
+    let mut calls = CallCounts::default();
     let mut outcomes = Vec::with_capacity(REPEATS);
     let mut latencies = Vec::with_capacity(REPEATS);
-    let mut first_success: Option<Value> = None;
+    let validator = tool.declared_output_schema().map(crate::schema::compile);
+    let mut output_schema: Option<bool> = None;
     if client.is_none() {
         *client = connect(target).ok();
     }
@@ -544,7 +574,7 @@ fn exercise_tool(
         let Some(active) = client.as_mut() else {
             return (
                 Exercise::NotExercised(CheckReason::CoverageCallFailed),
-                false,
+                calls,
             );
         };
         let started = Instant::now();
@@ -556,56 +586,51 @@ fn exercise_tool(
         );
         let latency_ms = started.elapsed().as_millis() as u64;
         let Ok((response, _)) = response else {
+            calls.transport_errors += 1;
             *client = connect(target).ok();
             return (
                 Exercise::NotExercised(CheckReason::CoverageCallFailed),
-                false,
+                calls,
             );
         };
         let outcome = Outcome::of(&response);
+        calls.observe(outcome);
         if outcome == Outcome::Rejected {
             return (
                 Exercise::NotExercised(CheckReason::CoverageRejectedArguments),
-                false,
+                calls,
             );
         }
-        if let (ToolResponse::Success(result), None) = (&response, &first_success) {
-            first_success = Some(result.clone());
+        if let (ToolResponse::Success(result), Some(validator)) = (&response, &validator) {
+            let valid = validator.as_ref().is_ok_and(|validator| {
+                result
+                    .get("structuredContent")
+                    .is_some_and(|value| validator.is_valid(value))
+            });
+            output_schema = Some(output_schema.unwrap_or(true) && valid);
         }
         outcomes.push(outcome);
         latencies.push(latency_ms);
     }
     latencies.sort_unstable();
     let consistent = outcomes.windows(2).all(|pair| pair[0] == pair[1]);
-    let output_schema = tool.declared_output_schema().and_then(|schema| {
-        first_success
-            .as_ref()
-            .map(|result| conforms(schema, result))
-    });
-    let all_succeeded = outcomes.iter().all(|outcome| *outcome == Outcome::Success);
     (
         Exercise::Exercised {
             consistent,
             median_latency_ms: latencies[REPEATS / 2],
             output_schema,
         },
-        all_succeeded,
+        calls,
     )
 }
 
-/// The output-schema probe's rule: `structuredContent` present with every
-/// top-level field the declared schema requires.
+/// `structuredContent` must satisfy the complete declared output schema.
+#[cfg(test)]
 fn conforms(schema: &Value, result: &Value) -> bool {
     let Some(structured) = result.get("structuredContent") else {
         return false;
     };
-    schema
-        .get("required")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str)
-        .all(|field| structured.get(field).is_some())
+    crate::schema::conforms(schema, structured)
 }
 
 /// The first declared string property, by name.
@@ -864,6 +889,40 @@ mod tests {
         assert!(conforms(
             &json!({"type": "object"}),
             &json!({"structuredContent": {}})
+        ));
+    }
+
+    #[test]
+    fn synthesized_inputs_must_satisfy_the_full_schema() {
+        for schema in [
+            json!({"type":"object","required":["x"],"properties":{"x":{"type":"integer","default":"bad"}}}),
+            json!({"type":"object","required":["x"],"properties":{"x":{"type":"integer","minimum":1,"multipleOf":2}}}),
+            json!({"type":"object","required":["x"],"properties":{"x":{"type":"string","format":"uuid","minLength":40}}}),
+        ] {
+            assert!(
+                synthesize(&schema).is_none(),
+                "invalid candidate must not reach a server: {schema}"
+            );
+        }
+    }
+
+    #[test]
+    fn output_conformance_checks_nested_types_constraints_and_local_references() {
+        let schema = json!({"type":"object","required":["data"],"properties":{"data":{"$ref":"#/$defs/item"}},"$defs":{"item":{"type":"object","required":["count"],"properties":{"count":{"type":"integer","minimum":1}},"additionalProperties":false}}});
+        assert!(conforms(
+            &schema,
+            &json!({"structuredContent":{"data":{"count":1}}})
+        ));
+        for value in [
+            json!({"data":{"count":"bad"}}),
+            json!({"data":{"count":0}}),
+            json!({"data":{"count":1,"extra":true}}),
+        ] {
+            assert!(!conforms(&schema, &json!({"structuredContent":value})));
+        }
+        assert!(!conforms(
+            &json!({"$ref":"file:///FICTITIOUS_SCHEMA.json"}),
+            &json!({"structuredContent":{}})
         ));
     }
 

@@ -24,7 +24,6 @@ for raw in sys.stdin:
     elif mode == "notifications":
         for _ in range(140):
             print(json.dumps({"jsonrpc": "2.0", "method": "notifications/progress", "params": {}}), flush=True)
-            time.sleep(0.002)
         print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": {}}), flush=True)
     elif mode == "pid":
         print(json.dumps({"jsonrpc": "2.0", "id": message["id"], "result": {"pid": os.getpid()}}), flush=True)

@@ -746,15 +746,20 @@ impl McpClient {
 impl Drop for McpClient {
     fn drop(&mut self) {
         self.writes.take();
-        for pump in &self.pumps {
-            let _ = pump.cancel.cancel_thread(&pump.thread);
-        }
+        // Close the peer's pipe handles before waiting for cancellation.
+        // On Windows, a standard-library pipe write can wait in overlapped
+        // I/O that CancelSynchronousIo does not observe. Terminating the
+        // owned child releases that write; cancellation then stops any
+        // remaining pumps before they are joined.
         match self.child.try_wait() {
             Ok(Some(_)) => {}
             Ok(None) | Err(_) => {
                 let _ = self.child.kill();
                 let _ = self.child.wait();
             }
+        }
+        for pump in &self.pumps {
+            let _ = pump.cancel.cancel_thread(&pump.thread);
         }
         for pump in self.pumps.drain(..) {
             let _ = pump.thread.join();

@@ -593,74 +593,32 @@ fn run() -> anyhow::Result<()> {
         } => {
             let declaration =
                 mcpeval::manifest::Manifest::load(&manifest).map_err(mcpeval::exit::usage)?;
-            let selected = declaration
-                .probes
-                .iter()
-                .find(|candidate| candidate.id() == case)
-                .ok_or_else(|| {
-                    mcpeval::exit::usage(anyhow::anyhow!(
-                        "probe case is not declared in the manifest"
-                    ))
-                })?;
             let mut store = mcpeval::store::Store::open(None)?;
-            let server = mcpeval::lifecycle::prepare(
-                store.root(),
-                &finding,
-                selected.id(),
-                selected.tool().ok_or_else(|| {
-                    mcpeval::exit::usage(anyhow::anyhow!(
-                        "finding verification requires a tool probe"
-                    ))
-                })?,
-            )?;
-            let definition_id = mcpeval::lifecycle::definition_id(
-                store.root(),
-                &declaration,
-                selected,
-                serde_json::json!({"command": cmd, "url": url, "allow_remote_http": allow_remote_http}),
-            )?;
-            let run_id = uuid::Uuid::new_v4().to_string();
-            // Execute the loaded definition, never a second read of a mutable file.
-            let manifest_inline = Some(serde_json::to_string(&declaration)?);
-            let report = mcpeval::probe::run(
-                mcpeval::probe::ProbeOptions {
-                    server,
-                    manifest_path: manifest,
-                    manifest_inline,
-                    selected_probe: None,
-                    selected_case: Some(case.clone()),
+            let verification = mcpeval::verify::run(
+                mcpeval::verify::VerifyOptions {
+                    finding: finding.clone(),
+                    case: case.clone(),
+                    manifest: declaration,
                     allow_mutation,
                     command: cmd,
                     http_url: url,
                     allow_remote_http,
-                    standard: false,
-                    confirm_read_only: false,
-                    skip_tools: Vec::new(),
                 },
                 &mut store,
             )?;
             // A case that could not be evaluated is no evidence either way:
             // the finding's lifecycle is left untouched.
-            if let Some(reason) = report.cases[0]
-                .reason
-                .filter(|reason| reason.is_transport())
-            {
+            if let Some(reason) = verification.reason.filter(|reason| reason.is_transport()) {
                 println!(
                     "{finding} not verified: probe={case} reason={}",
                     reason.as_str()
                 );
                 std::process::exit(mcpeval::exit::INFRASTRUCTURE);
             }
-            let reason = report.cases[0].reason;
-            let status = mcpeval::lifecycle::record(
-                store.root(),
-                &finding,
-                &case,
-                &definition_id,
-                &run_id,
-                reason.is_none(),
-                chrono::Utc::now(),
-            )?;
+            let reason = verification.reason;
+            let status = verification
+                .status
+                .context("verification produced no lifecycle outcome")?;
             let line = format!(
                 "{finding} state={} probe={} consecutive_passes={}",
                 status.state.as_str(),

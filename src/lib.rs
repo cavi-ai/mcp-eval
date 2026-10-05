@@ -34,3 +34,4 @@ pub mod standard;
 mod stdio;
 pub mod store;
 pub mod trends;
+pub mod verify;

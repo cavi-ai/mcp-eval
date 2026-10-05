@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- Native MCP `score` and `verify_finding` tools behind `serve --allow-spawn`.
+  CLI and MCP finding verification share the same execution and durable
+  evidence service; agent verification cannot authorize mutation.
+
 ### Changed
 
 - Verification state and history live in a durable `lifecycle.db`, separate

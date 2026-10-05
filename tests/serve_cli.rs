@@ -231,7 +231,7 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
             "record_annotation"
         ]
     );
-    for tool in ["run_probe", "scaffold"] {
+    for tool in ["run_probe", "scaffold", "score", "verify_finding"] {
         let (_, denied) = call(
             &http,
             tool,
@@ -361,6 +361,238 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
 
     // The store still holds only the one accepted record.
     assert_eq!(read_annotations(&dir).len(), 1);
+}
+
+fn promoted_finding(dir: &std::path::Path) -> String {
+    let mut store = mcpeval::store::Store::open(Some(dir.to_owned())).unwrap();
+    for session in ["first", "second"] {
+        store
+            .append(&mcpeval::record::CallRecord {
+                ts: "2026-08-05T00:00:01Z".into(),
+                session: session.into(),
+                seq: 1,
+                server: "fixture".into(),
+                method: "tools/call".into(),
+                tool: Some("describe_status".into()),
+                args: Some(json!({})),
+                latency_ms: Some(1),
+                outcome: "error".into(),
+                error: Some(mcpeval::record::ErrorInfo {
+                    code: Some(json!("broken")),
+                    layer: None,
+                    retryable: Some(false),
+                    kind: None,
+                    template: None,
+                    template_id: Some("aaaaaaaaaaaaaaaa".into()),
+                }),
+                shim_self_us: 1,
+                kind: "real".into(),
+            })
+            .unwrap();
+    }
+    mcpeval::index::build(dir).unwrap();
+    mcpeval::promote::promote(
+        dir,
+        mcpeval::promote::PromotionConfig {
+            threshold: 0.0,
+            now: chrono::Utc::now(),
+        },
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    db.query_row("SELECT finding_id FROM findings", [], |row| row.get(0))
+        .unwrap()
+}
+
+#[test]
+fn native_verification_shares_cli_credit_and_preserves_transport_failure_state() {
+    let dir = home();
+    let id = promoted_finding(&dir);
+    let (_server, port) = start_serve(&dir, &["--allow-spawn"]);
+    let http = format!("http://127.0.0.1:{port}/mcp");
+    let manifest: Value = serde_json::from_slice(&std::fs::read(MANIFEST).unwrap()).unwrap();
+    let args = json!({"finding_id": id, "case_id": "literal-status", "manifest": manifest,
+        "command": ["python3", CLEAN]});
+    let (_, first) = call(&http, "verify_finding", args.clone());
+    let result = &first["result"]["structuredContent"];
+    assert_eq!(result["verified"], true, "{first}");
+    assert_eq!(result["lifecycle"]["consecutive_passes"], 1);
+    assert_eq!(result["report"]["cases"].as_array().unwrap().len(), 1);
+    assert!(!first.to_string().contains("CANARY-manifest-argument"));
+
+    let cli = Command::new(bin())
+        .args([
+            "verify",
+            "--finding",
+            &id,
+            "--case",
+            "literal-status",
+            "--manifest",
+            MANIFEST,
+            "--",
+            "python3",
+            CLEAN,
+        ])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(
+        cli.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cli.stderr)
+    );
+    assert!(String::from_utf8_lossy(&cli.stdout).contains("consecutive_passes=2"));
+    let (_, third) = call(&http, "verify_finding", args.clone());
+    assert_eq!(
+        third["result"]["structuredContent"]["lifecycle"]["state"], "closed",
+        "{third}"
+    );
+
+    let mut unavailable = args.clone();
+    unavailable["command"] = json!(["python3", CLEAN, "early-exit"]);
+    let (_, startup) = call(&http, "verify_finding", unavailable.clone());
+    assert!(startup.get("error").is_some(), "{startup}");
+    unavailable["command"] = json!([
+        "python3",
+        "tests/fixtures/transport_fault_server.py",
+        "describe_status"
+    ]);
+    let (_, failed) = call(&http, "verify_finding", unavailable);
+    assert_eq!(
+        failed["result"]["structuredContent"]["verified"], false,
+        "{failed}"
+    );
+    assert_eq!(
+        failed["result"]["structuredContent"]["lifecycle"],
+        Value::Null
+    );
+    let db = rusqlite::Connection::open(dir.join("lifecycle.db")).unwrap();
+    let count: i64 = db
+        .query_row("SELECT COUNT(*) FROM probe_history", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 3);
+
+    let mut red = args;
+    red["manifest"]["probes"][6]["expect"]["equals"]["status"] = json!("not-ready");
+    let (_, failed) = call(&http, "verify_finding", red);
+    assert_eq!(failed["result"]["structuredContent"]["verified"], false);
+    assert_eq!(
+        failed["result"]["structuredContent"]["lifecycle"]["state"],
+        "open"
+    );
+    assert_eq!(
+        failed["result"]["structuredContent"]["lifecycle"]["consecutive_passes"],
+        0
+    );
+}
+
+#[test]
+fn native_verification_rejects_invalid_or_mutating_cases_before_launch() {
+    let dir = home();
+    let id = promoted_finding(&dir);
+    let marker = dir.join("launched");
+    let (_server, port) = start_serve(&dir, &["--allow-spawn"]);
+    let http = format!("http://127.0.0.1:{port}/mcp");
+    let manifest: Value = serde_json::from_slice(&std::fs::read(MANIFEST).unwrap()).unwrap();
+    let args = json!({"finding_id": id, "case_id": "literal-status", "manifest": manifest,
+        "command": ["python3", "-c", format!("open({:?}, 'w').close()", marker)]});
+    let mut unknown = args.clone();
+    unknown["finding_id"] = json!("finding-0000000000000000");
+    let mut wrong_case = args.clone();
+    wrong_case["case_id"] = json!("not-declared");
+    let mut wrong_tool = args.clone();
+    wrong_tool["manifest"]["probes"][6]["tool"] = json!("read_counter");
+    let mut mutating = args;
+    mutating["allow_mutation"] = json!(true);
+    mutating["manifest"]["probes"][6]["access"] = json!("mutating");
+    let mut forbidden_flag = mutating.clone();
+    forbidden_flag["allow_mutation"] = json!(true);
+    mutating.as_object_mut().unwrap().remove("allow_mutation");
+    for (arguments, expected) in [
+        (unknown, "finding is unavailable"),
+        (wrong_case, "not declared"),
+        (wrong_tool, "does not match"),
+        (mutating, "mutating"),
+        (forbidden_flag, "invalid verify_finding arguments"),
+    ] {
+        let (_, denied) = call(&http, "verify_finding", arguments);
+        assert!(
+            denied["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(expected),
+            "{denied}"
+        );
+        assert!(!marker.exists(), "invalid verification launched its target");
+    }
+    let db = rusqlite::Connection::open(dir.join("lifecycle.db")).unwrap();
+    let count: i64 = db
+        .query_row("SELECT COUNT(*) FROM probe_history", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[test]
+fn native_score_uses_the_cli_standard_and_reports_unavailable_targets() {
+    let dir = home();
+    let (_server, port) = start_serve(&dir, &["--allow-spawn"]);
+    let http = format!("http://127.0.0.1:{port}/mcp");
+    let cli = Command::new(bin())
+        .args([
+            "score",
+            "--server",
+            "fixture",
+            "--format",
+            "json",
+            "--confirm-read-only",
+            "--skip-tool",
+            "shared_read",
+            "--",
+            "python3",
+            CLEAN,
+        ])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    let expected: Value = serde_json::from_slice(&cli.stdout).unwrap();
+    let (_, scored) = call(
+        &http,
+        "score",
+        json!({"server_label": "fixture",
+        "command": ["python3", CLEAN], "confirm_read_only": true, "skip_tools": ["shared_read"]}),
+    );
+    let document = &scored["result"]["structuredContent"];
+    assert_eq!(document["schema"], expected["schema"], "{scored}");
+    assert_eq!(
+        document["readiness"]["standard"],
+        expected["readiness"]["standard"]
+    );
+    let checks = |doc: &Value| -> Vec<Value> {
+        doc["readiness"]["areas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|area| {
+                area["checks"].as_array().unwrap().iter().map(|check| {
+                json!({"id": check["id"], "reason": check["reason"], "tool": check["tool"]})
+            })
+            })
+            .collect()
+    };
+    assert_eq!(checks(document), checks(&expected));
+    let (_, unavailable) = call(
+        &http,
+        "score",
+        json!({"command": ["python3", CLEAN, "early-exit"]}),
+    );
+    assert!(
+        !unavailable["result"]["structuredContent"]["readiness_error"].is_null(),
+        "{unavailable}"
+    );
+    let text = unavailable["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(!text.contains("all cases passed"), "{text}");
 }
 
 fn read_annotations(dir: &std::path::Path) -> Vec<Value> {

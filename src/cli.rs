@@ -340,13 +340,13 @@ pub enum Command {
     /// Serve findings, trends, and the agent-loop tools over a loopback
     /// Streamable HTTP MCP endpoint (tools: list_findings, get_finding,
     /// get_readiness_trends, record_annotation, and with --allow-spawn
-    /// run_probe and scaffold).
+    /// run_probe, scaffold, score, and verify_finding).
     #[command(display_order = 9)]
     Serve {
         /// Loopback socket address to accept MCP requests on.
         #[arg(long)]
         listen: String,
-        /// Enable run_probe and scaffold, which launch the server process an
+        /// Enable evaluation tools, which launch the server process an
         /// agent names. Off by default.
         #[arg(long)]
         allow_spawn: bool,

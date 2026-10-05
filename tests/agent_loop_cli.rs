@@ -135,6 +135,8 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
             "get_readiness_trends",
             "run_probe",
             "scaffold",
+            "score",
+            "verify_finding",
             "record_annotation"
         ]
     );

@@ -2,11 +2,11 @@
 //!
 //! A minimal loopback-only MCP server exposing sanitized, share-safe data:
 //! `list_findings`, `get_finding`, and `get_readiness_trends`, plus the
-//! agent-loop tools `run_probe` and `scaffold` and the write-side
+//! agent-loop tools `run_probe`, `scaffold`, `score`, and `verify_finding`, and the write-side
 //! `record_annotation`. It serves only what `mcpeval findings --format
-//! json` and `mcpeval trends` would print, and writes only what
-//! `mcpeval annotate` would write — the same validated, hashed, bounded
-//! record. Single-shot JSON responses (no SSE), one request per
+//! json` and `mcpeval trends` would print, plus evaluation reports. Writes
+//! use the same annotation and verification services as the CLI.
+//! Single-shot JSON responses (no SSE), one request per
 //! connection, the same bounded-IO posture as the capture proxy.
 //!
 //! Binding to loopback does not keep a browser out: a web page can POST to
@@ -14,7 +14,7 @@
 //! therefore carry a loopback `Host`, a loopback `Origin` when it carries
 //! one at all, and `Content-Type: application/json`, which a cross-origin
 //! page cannot send without a CORS preflight this server never grants.
-//! `run_probe` and `scaffold` launch the process an agent names, so they
+//! The evaluation tools launch the process an agent names, so they
 //! are listed and callable only when the operator passes `--allow-spawn`.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -45,7 +45,7 @@ pub fn run(listen: String, allow_spawn: bool) -> anyhow::Result<()> {
     );
     if !allow_spawn {
         eprintln!(
-            "mcpeval serve: run_probe and scaffold are disabled; pass --allow-spawn to let agents launch server processes"
+            "mcpeval serve: evaluation tools are disabled; pass --allow-spawn to let agents launch server processes"
         );
     }
     for connection in listener.incoming() {
@@ -107,6 +107,8 @@ fn handle_connection(
             if allow_spawn {
                 tools.push(run_probe_tool());
                 tools.push(scaffold_tool());
+                tools.push(score_tool());
+                tools.push(verify_finding_tool());
             }
             tools.push(record_annotation_tool());
             json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools}})
@@ -181,7 +183,7 @@ fn run_probe_tool() -> Value {
     tool(
         "run_probe",
         "Run the deterministic, read-only probe battery against an MCP \
-         server and return the full mcpeval.probe-report/v1 document: \
+         server and return the full mcpeval.probe-report/v2 document: \
          per-case verdicts with fixed failure reasons and remediation \
          hints, measurements, and the readiness score. Mutation is never \
          authorized through this tool. Provide `manifest` as an inline \
@@ -245,6 +247,33 @@ fn scaffold_tool() -> Value {
             }
         })),
     )
+}
+
+fn score_tool() -> Value {
+    tool("score", "Measure readiness using the same standard battery as mcpeval score, without a manifest. Mutation is never authorized. confirm_read_only attests that unannotated tools are read-only; explicit destructive or non-read-only annotations still exclude them.", Some(json!({
+        "type": "object", "additionalProperties": false,
+        "properties": {
+            "command": {"type": "array", "items": {"type": "string"}},
+            "url": {"type": "string"},
+            "server_label": {"type": "string"},
+            "confirm_read_only": {"type": "boolean"},
+            "skip_tools": {"type": "array", "items": {"type": "string"}}
+        }
+    })))
+}
+
+fn verify_finding_tool() -> Value {
+    tool("verify_finding", "Verify a promoted finding against exactly one matching read-only manifest case. Uses the same durable evidence binding and closure rules as mcpeval verify. Transport failure records no evidence. Mutation is never authorized. Returns the report and lifecycle outcome.", Some(json!({
+        "type": "object", "additionalProperties": false,
+        "properties": {
+            "finding_id": {"type": "string"},
+            "case_id": {"type": "string"},
+            "manifest": {"type": "object"},
+            "command": {"type": "array", "items": {"type": "string"}},
+            "url": {"type": "string"}
+        },
+        "required": ["finding_id", "case_id", "manifest"]
+    })))
 }
 
 fn tool(name: &str, description: &str, input_schema: Option<Value>) -> Value {
@@ -352,9 +381,13 @@ fn handle_call(
                 "structuredContent": {"points": points},
             }))
         }
-        "run_probe" | "scaffold" if !allow_spawn => bail!("{name} {SPAWN_DISABLED}"),
+        "run_probe" | "scaffold" | "score" | "verify_finding" if !allow_spawn => {
+            bail!("{name} {SPAWN_DISABLED}")
+        }
         "run_probe" => run_probe_tool_call(&arguments),
         "scaffold" => scaffold_tool_call(&arguments),
+        "score" => score_tool_call(&arguments),
+        "verify_finding" => verify_finding_tool_call(root, &arguments),
         "record_annotation" => record_annotation_tool_call(&arguments),
         other => bail!("unknown tool {other}"),
     }
@@ -439,7 +472,11 @@ fn run_probe_tool_call(arguments: &Value) -> anyhow::Result<Value> {
         },
         &mut store,
     )?;
-    let document = report.to_json(&target.server);
+    Ok(report_result(&report, &target.server))
+}
+
+fn report_result(report: &crate::probe::ProbeReport, server: &str) -> Value {
+    let document = report.to_json(server);
     // The report document is the structured payload; the text block adds
     // the remediation hints that the raw document does not carry.
     let mut lines = Vec::new();
@@ -453,6 +490,13 @@ fn run_probe_tool_call(arguments: &Value) -> anyhow::Result<Value> {
             ));
         }
     }
+    if let Some(reason) = report.readiness_error {
+        lines.push(format!(
+            "readiness not measured: {} — {}",
+            reason.as_str(),
+            crate::remediation::hint(reason)
+        ));
+    }
     let text = if lines.is_empty() {
         match &report.readiness {
             Some(readiness) => format!(
@@ -464,9 +508,97 @@ fn run_probe_tool_call(arguments: &Value) -> anyhow::Result<Value> {
     } else {
         lines.join("\n")
     };
-    Ok(json!({
+    json!({
         "content": [{"type": "text", "text": text}],
         "structuredContent": document,
+    })
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ScoreArguments {
+    #[serde(default)]
+    command: Vec<String>,
+    url: Option<String>,
+    server_label: Option<String>,
+    #[serde(default)]
+    confirm_read_only: bool,
+    #[serde(default)]
+    skip_tools: Vec<String>,
+}
+
+fn score_tool_call(arguments: &Value) -> anyhow::Result<Value> {
+    let args: ScoreArguments = serde_json::from_value(arguments.clone())
+        .map_err(|_| anyhow::anyhow!("invalid score arguments"))?;
+    let server = args.server_label.unwrap_or_else(|| "probed".to_owned());
+    let report = crate::probe::score(crate::probe::ScoreOptions {
+        server: server.clone(),
+        command: args.command,
+        http_url: args.url,
+        allow_remote_http: false,
+        confirm_read_only: args.confirm_read_only,
+        skip_tools: args.skip_tools,
+    })?;
+    Ok(report_result(&report, &server))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct VerifyArguments {
+    finding_id: String,
+    case_id: String,
+    manifest: Value,
+    #[serde(default)]
+    command: Vec<String>,
+    url: Option<String>,
+}
+
+fn verify_finding_tool_call(root: &std::path::Path, arguments: &Value) -> anyhow::Result<Value> {
+    let args: VerifyArguments = serde_json::from_value(arguments.clone())
+        .map_err(|_| anyhow::anyhow!("invalid verify_finding arguments"))?;
+    let manifest = crate::manifest::Manifest::parse(&serde_json::to_vec(&args.manifest)?)?;
+    let mut store = crate::store::Store::open(Some(root.to_owned()))?;
+    let verification = crate::verify::run(
+        crate::verify::VerifyOptions {
+            finding: args.finding_id.clone(),
+            case: args.case_id.clone(),
+            manifest,
+            allow_mutation: false,
+            command: args.command,
+            http_url: args.url,
+            allow_remote_http: false,
+        },
+        &mut store,
+    )?;
+    let lifecycle = verification.status.as_ref().map(|status| {
+        json!({
+            "state": status.state.as_str(), "consecutive_passes": status.consecutive_passes,
+        })
+    });
+    let reason = verification.reason.map(|reason| reason.as_str());
+    let text = match &verification.status {
+        Some(status) => format!(
+            "{} state={} probe={} consecutive_passes={}",
+            args.finding_id,
+            status.state.as_str(),
+            args.case_id,
+            status.consecutive_passes
+        ),
+        None => format!("{} not verified: probe={}", args.finding_id, args.case_id),
+    };
+    let text = match verification.reason {
+        Some(reason) => format!(
+            "{text} reason={}\n  hint: {}",
+            reason.as_str(),
+            crate::remediation::hint(reason)
+        ),
+        None => text,
+    };
+    Ok(json!({
+        "content": [{"type": "text", "text": text}],
+        "structuredContent": {"finding_id": args.finding_id, "case_id": args.case_id,
+            "verified": verification.reason.is_none(), "reason": reason, "lifecycle": lifecycle,
+            "report": verification.report.to_json(&verification.server)},
     }))
 }
 

@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 use std::time::Duration;
 
 use anyhow::{bail, Context};
@@ -25,6 +25,8 @@ pub struct HttpMcpClient {
     capabilities: Option<Value>,
     /// The protocol version the server answered the handshake with.
     protocol_version: Option<String>,
+    /// Discovery profiles expose an empty roots list, never host paths.
+    empty_roots: bool,
 }
 
 /// One event collected from the standing GET SSE stream a Streamable HTTP
@@ -62,6 +64,7 @@ impl HttpMcpClient {
             budget: None,
             capabilities: None,
             protocol_version: None,
+            empty_roots: false,
         })
     }
 
@@ -145,11 +148,18 @@ impl HttpMcpClient {
     }
 
     pub fn initialize(&mut self) -> anyhow::Result<()> {
+        self.initialize_with_capabilities(&json!({})).map(|_| ())
+    }
+
+    /// Initialize a discovery session with explicit client capabilities.
+    /// The reply is returned in memory; instruction prose is never journaled.
+    pub fn initialize_with_capabilities(&mut self, capabilities: &Value) -> anyhow::Result<Value> {
+        self.empty_roots = capabilities.get("roots").is_some_and(Value::is_object);
         let response = self.request(
             "initialize",
             json!({
                 "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": {},
+                "capabilities": capabilities,
                 "clientInfo": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")}
             }),
         )?;
@@ -162,7 +172,8 @@ impl HttpMcpClient {
             .and_then(|result| result.get("protocolVersion"))
             .and_then(Value::as_str)
             .map(str::to_owned);
-        self.notify("notifications/initialized", json!({}))
+        self.notify("notifications/initialized", json!({}))?;
+        Ok(response)
     }
 
     pub fn list_tools(&mut self) -> anyhow::Result<Vec<String>> {
@@ -498,16 +509,71 @@ impl HttpMcpClient {
             .and_then(|value| value.split(';').next())
             .unwrap_or("")
             .to_owned();
-        let body = read_bounded(response.into_reader())?;
-        let value = match content_type.trim() {
-            "application/json" => {
-                serde_json::from_slice(&body).context("MCP HTTP response is not valid JSON")?
+        let value = if content_type.trim() == "text/event-stream" && self.empty_roots {
+            self.discovery_sse(response.into_reader(), id)?
+        } else {
+            let body = read_bounded(response.into_reader())?;
+            match content_type.trim() {
+                "application/json" => {
+                    serde_json::from_slice(&body).context("MCP HTTP response is not valid JSON")?
+                }
+                "text/event-stream" => parse_sse_response(&body, id)?,
+                _ => bail!("MCP HTTP response has an unsupported content type"),
             }
-            "text/event-stream" => parse_sse_response(&body, id)?,
-            _ => bail!("MCP HTTP response has an unsupported content type"),
         };
         validate_response(&value, id)?;
         Ok(value)
+    }
+
+    /// Answer roots requests as events arrive: waiting for EOF can deadlock
+    /// a server that waits for our separate reply POST before sending its result.
+    fn discovery_sse(&self, reader: impl Read, id: u64) -> anyhow::Result<Value> {
+        let mut reader = BufReader::new(reader.take((MAX_RESPONSE_BYTES + 1) as u64));
+        let mut bytes = 0;
+        let mut roots_requests = 0;
+        let mut event = String::new();
+        loop {
+            if let Some(budget) = &self.budget {
+                budget.check()?;
+            }
+            let mut line = String::new();
+            let read = reader.read_line(&mut line)?;
+            if read == 0 {
+                bail!("discovery stream ended without a response");
+            }
+            bytes += read;
+            if bytes > MAX_RESPONSE_BYTES {
+                bail!("discovery stream exceeded the size limit");
+            }
+            event.push_str(&line);
+            if line != "\n" && line != "\r\n" {
+                continue;
+            }
+            for frame in sse_frames(event.as_bytes())? {
+                if frame.get("method").and_then(Value::as_str) == Some("roots/list")
+                    && frame.get("id").is_some()
+                {
+                    if frame.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+                        bail!("invalid roots request");
+                    }
+                    roots_requests += 1;
+                    if roots_requests > crate::standard::MAX_SERVER_REQUESTS {
+                        bail!("roots discovery request limit exceeded");
+                    }
+                    let reply = self.post(
+                        &json!({"jsonrpc": "2.0", "id": frame["id"], "result": {"roots": []}}),
+                    )?;
+                    if reply.status() != 202 {
+                        bail!("roots reply was not accepted");
+                    }
+                } else if frame.get("method").is_none()
+                    && frame.get("id").and_then(Value::as_u64) == Some(id)
+                {
+                    return Ok(frame);
+                }
+            }
+            event.clear();
+        }
     }
 
     fn post(&self, message: &Value) -> anyhow::Result<ureq::Response> {

@@ -197,6 +197,37 @@ fn exit_for_report(report: &mcpeval::probe::ProbeReport) {
 fn run() -> anyhow::Result<()> {
     let cli = cli::Cli::parse();
     match cli.command {
+        cli::Command::Guidance {
+            server,
+            profile,
+            required_tools,
+            settle_ms,
+            format,
+            url,
+            allow_remote_http,
+            cmd,
+        } => {
+            let report = mcpeval::guidance::run(mcpeval::guidance::Options {
+                server,
+                profiles: profile,
+                required_tools,
+                settle_ms,
+                command: cmd,
+                http_url: url,
+                allow_remote_http,
+            })?;
+            match format {
+                cli::GuidanceFormat::Json => println!("{}", serde_json::to_string_pretty(&report)?),
+                cli::GuidanceFormat::Text => print!("{}", report.text()),
+            }
+            if !report.complete {
+                std::process::exit(mcpeval::exit::INFRASTRUCTURE);
+            }
+            if report.passed == Some(false) {
+                std::process::exit(mcpeval::exit::VERDICT);
+            }
+            Ok(())
+        }
         cli::Command::Shim { server, cmd } => {
             let code = mcpeval::shim::run(server, cmd)?;
             std::process::exit(code);
@@ -380,6 +411,8 @@ fn run() -> anyhow::Result<()> {
                     }
                     cli::SchemaDocument::Diff =>
                         include_str!("../docs/mcp-eval.probe-diff.schema.json"),
+                    cli::SchemaDocument::Guidance =>
+                        include_str!("../docs/mcp-eval.guidance-report.schema.json"),
                 }
             );
             Ok(())

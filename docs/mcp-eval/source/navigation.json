@@ -15,6 +15,7 @@
       "pages": [
         { "title": "Capture and probe", "path": "guides/capture-and-probe.md" },
         { "title": "Readiness reporting", "path": "guides/readiness-reporting.md" },
+        { "title": "Instruction coherence", "path": "guides/instruction-coherence.md" },
         { "title": "Findings and verification", "path": "guides/findings-and-verification.md" },
         { "title": "Continuous integration", "path": "guides/continuous-integration.md" },
         { "title": "State of MCP servers", "path": "guides/state-of-mcp-servers.md" },

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cavi.ai/schemas/mcpeval.guidance-report.v1.json",
+  "title": "MCP Eval guidance discovery report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "generator", "server", "protocol_version", "reference_detection", "settle_ms", "complete", "passed", "required_tools", "profiles", "candidates", "defects"],
+  "properties": {
+    "schema": { "const": "mcpeval.guidance-report/v1" },
+    "generator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": { "name": { "const": "mcpeval" }, "version": { "type": "string" } }
+    },
+    "server": { "$ref": "#/$defs/name" },
+    "protocol_version": { "const": "2025-06-18" },
+    "reference_detection": { "const": "inline-code-known-tools" },
+    "settle_ms": { "type": "integer", "minimum": 0, "maximum": 5000 },
+    "complete": { "type": "boolean" },
+    "passed": { "type": ["boolean", "null"] },
+    "required_tools": { "$ref": "#/$defs/tools" },
+    "profiles": {
+      "type": "array", "minItems": 1, "maxItems": 5,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["profile", "tools", "instructions_present", "error"],
+        "properties": {
+          "profile": { "$ref": "#/$defs/profile" },
+          "tools": { "oneOf": [{ "$ref": "#/$defs/tools" }, { "type": "null" }] },
+          "instructions_present": { "type": ["boolean", "null"] },
+          "error": { "enum": [null, "profile-incomplete"] }
+        },
+        "if": { "properties": { "error": { "type": "null" } } },
+        "then": { "properties": { "tools": { "$ref": "#/$defs/tools" }, "instructions_present": { "type": "boolean" } } },
+        "else": { "properties": { "tools": { "type": "null" }, "instructions_present": { "type": "null" } } }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" },
+      "description": "Review candidates, including potentially correct conditional mentions; never fail the gate."
+    },
+    "defects": { "type": "array", "items": { "$ref": "#/$defs/finding" } }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "complete": { "const": false } } },
+      "then": { "properties": { "passed": { "type": "null" }, "candidates": { "maxItems": 0 }, "defects": { "maxItems": 0 } } },
+      "else": { "properties": { "passed": { "type": "boolean" } } }
+    },
+    {
+      "properties": {
+        "candidates": { "items": { "properties": { "reason": { "const": "referenced-tool-unavailable" } } } },
+        "defects": { "items": { "properties": { "reason": { "const": "required-tool-unavailable" } } } }
+      }
+    }
+  ],
+  "$defs": {
+    "name": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[A-Za-z0-9_.:-]+$" },
+    "tools": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/name" } },
+    "profile": { "enum": ["none", "roots", "sampling", "elicitation", "all"] },
+    "finding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["profile", "tool", "reason", "hint", "available_in"],
+      "properties": {
+        "profile": { "$ref": "#/$defs/profile" },
+        "tool": { "$ref": "#/$defs/name" },
+        "reason": { "enum": ["referenced-tool-unavailable", "required-tool-unavailable"] },
+        "hint": { "type": "string" },
+        "available_in": { "type": "array", "uniqueItems": true, "maxItems": 5, "items": { "$ref": "#/$defs/profile" } }
+      }
+    }
+  }
+}

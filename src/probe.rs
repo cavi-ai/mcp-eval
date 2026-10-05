@@ -125,6 +125,16 @@ impl ProbeClient {
         }
     }
 
+    pub(crate) fn initialize_with_capabilities(
+        &mut self,
+        capabilities: &Value,
+    ) -> anyhow::Result<Value> {
+        match self {
+            Self::Stdio(client) => client.initialize_with_capabilities(capabilities),
+            Self::Http(client) => client.initialize_with_capabilities(capabilities),
+        }
+    }
+
     fn list_tools_catalog(&mut self) -> anyhow::Result<ToolCatalog> {
         match self {
             Self::Stdio(client) => client.list_tools_catalog(),

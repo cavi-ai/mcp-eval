@@ -2609,7 +2609,9 @@ mod tests {
 
     #[test]
     fn evaluation_budget_is_shared_across_reconnections_and_catalog_requests() {
-        let target = budget_target(Duration::from_secs(10), 3);
+        // Keep the normal wall-clock fuse so cold interpreter startup cannot
+        // replace the request-limit path this test must exercise.
+        let target = budget_target(crate::evaluation_budget::MAX_DURATION, 3);
         let mut first = target.connect(None).unwrap();
         first.initialize().unwrap();
         first.list_tools_catalog().unwrap();
@@ -2655,7 +2657,7 @@ mod tests {
 
     #[test]
     fn evaluation_budget_does_not_publish_partial_readiness() {
-        let target = budget_target(Duration::from_secs(10), 3);
+        let target = budget_target(crate::evaluation_budget::MAX_DURATION, 3);
         let mut report = ProbeReport::default();
         measure_standard(
             &mut report,
@@ -2678,7 +2680,7 @@ mod tests {
 
     #[test]
     fn evaluation_budget_contention_exhaustion_joins_workers_and_is_not_a_verdict() {
-        let target = budget_target(Duration::from_secs(10), 5);
+        let target = budget_target(crate::evaluation_budget::MAX_DURATION, 5);
         let mut client = target.connect(None).unwrap();
         client.initialize().unwrap();
         let catalog = client.list_tools_catalog().unwrap();
@@ -2698,7 +2700,9 @@ mod tests {
             reason.is_transport(),
             "unfinished verification must not receive credit"
         );
-        assert!(started.elapsed() < Duration::from_secs(3));
+        // Includes a second interpreter's startup. The shared request cap is
+        // the exhaustion oracle; elapsed time is only the normal safety fuse.
+        assert!(started.elapsed() < crate::evaluation_budget::MAX_DURATION);
     }
 
     #[test]

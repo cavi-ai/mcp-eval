@@ -6,8 +6,8 @@
 //! `record_annotation`. It serves only what `mcpeval findings --format
 //! json` and `mcpeval trends` would print, plus evaluation reports. Writes
 //! use the same annotation and verification services as the CLI.
-//! Single-shot JSON responses (no SSE), one request per
-//! connection, the same bounded-IO posture as the capture proxy.
+//! Single-shot JSON responses (no SSE), one request per connection, a
+//! bounded worker pool, and one admitted evaluation at a time.
 //!
 //! Binding to loopback does not keep a browser out: a web page can POST to
 //! 127.0.0.1 directly or through a rebound DNS name. Every request must
@@ -19,6 +19,8 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
@@ -31,6 +33,13 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 
 const SPAWN_DISABLED: &str = "launches server processes and is disabled; restart `mcpeval serve` with --allow-spawn to enable it";
+
+struct Server {
+    root: PathBuf,
+    allow_spawn: bool,
+    tools: Vec<Value>,
+    evaluation: Mutex<()>,
+}
 
 pub fn run(listen: String, allow_spawn: bool) -> anyhow::Result<()> {
     let address: SocketAddr = listen.parse().context("listen address is invalid")?;
@@ -48,20 +57,20 @@ pub fn run(listen: String, allow_spawn: bool) -> anyhow::Result<()> {
             "mcpeval serve: evaluation tools are disabled; pass --allow-spawn to let agents launch server processes"
         );
     }
-    for connection in listener.incoming() {
-        let mut stream = connection.context("accepting connection failed")?;
+    let server = Server {
+        root,
+        allow_spawn,
+        tools: tools(allow_spawn),
+        evaluation: Mutex::new(()),
+    };
+    crate::serve_workers::run(listener, move |stream| {
         stream.set_read_timeout(Some(IO_TIMEOUT)).ok();
         stream.set_write_timeout(Some(IO_TIMEOUT)).ok();
-        let _ = handle_connection(&mut stream, &root, allow_spawn);
-    }
-    Ok(())
+        let _ = handle_connection(stream, &server);
+    })
 }
 
-fn handle_connection(
-    stream: &mut TcpStream,
-    root: &std::path::Path,
-    allow_spawn: bool,
-) -> anyhow::Result<()> {
+fn handle_connection(stream: &mut TcpStream, server: &Server) -> anyhow::Result<()> {
     let request = match read_request(stream) {
         Ok(request) => request,
         Err(_) => return write_http(stream, 400, &json!({"error": "invalid request"})),
@@ -97,23 +106,12 @@ fn handle_connection(
                 "serverInfo": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")}
             }
         }),
+        Some("ping") => json!({"jsonrpc": "2.0", "id": message["id"], "result": {}}),
         Some("tools/list") => {
             let id = message["id"].clone();
-            let mut tools = vec![
-                list_findings_tool(),
-                get_finding_tool(),
-                readiness_trends_tool(),
-            ];
-            if allow_spawn {
-                tools.push(run_probe_tool());
-                tools.push(scaffold_tool());
-                tools.push(score_tool());
-                tools.push(verify_finding_tool());
-            }
-            tools.push(record_annotation_tool());
-            json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools}})
+            json!({"jsonrpc": "2.0", "id": id, "result": {"tools": server.tools}})
         }
-        Some("tools/call") => match handle_call(&message, root, allow_spawn) {
+        Some("tools/call") => match handle_call(&message, server) {
             Ok(result) => json!({"jsonrpc": "2.0", "id": message["id"], "result": result}),
             Err(error) => json!({
                 "jsonrpc": "2.0",
@@ -133,6 +131,24 @@ fn handle_connection(
         }),
     };
     write_http(stream, 200, &response)
+}
+
+fn tools(allow_spawn: bool) -> Vec<Value> {
+    let mut tools = vec![
+        list_findings_tool(),
+        get_finding_tool(),
+        readiness_trends_tool(),
+    ];
+    if allow_spawn {
+        tools.extend([
+            run_probe_tool(),
+            scaffold_tool(),
+            score_tool(),
+            verify_finding_tool(),
+        ]);
+    }
+    tools.push(record_annotation_tool());
+    tools
 }
 
 fn readiness_trends_tool() -> Value {
@@ -282,7 +298,45 @@ fn tool(name: &str, description: &str, input_schema: Option<Value>) -> Value {
         entry["inputSchema"] = schema;
     }
     entry["description"] = json!(description);
+    let read_only = matches!(
+        name,
+        "list_findings" | "get_finding" | "get_readiness_trends"
+    );
+    let spawns = is_evaluation(name);
+    entry["annotations"] = json!({"readOnlyHint": read_only,
+        "destructiveHint": spawns, "idempotentHint": read_only, "openWorldHint": spawns});
+    entry["outputSchema"] = output_schema(name);
     entry
+}
+
+fn report_schema() -> Value {
+    serde_json::from_str(include_str!("../docs/mcp-eval.probe-report.schema.json"))
+        .expect("embedded probe report schema is valid JSON")
+}
+
+fn output_schema(name: &str) -> Value {
+    match name {
+        "run_probe" | "score" => report_schema(),
+        "verify_finding" => json!({
+            "type": "object", "required": ["finding_id", "case_id", "verified", "reason", "lifecycle", "report"],
+            "properties": {
+                "finding_id": {"type": "string"}, "case_id": {"type": "string"},
+                "verified": {"type": "boolean"}, "reason": {"type": ["string", "null"]},
+                "lifecycle": {"type": ["object", "null"], "required": ["state", "consecutive_passes"],
+                    "properties": {"state": {"enum": ["open", "fix-claimed", "verifying", "closed"]},
+                        "consecutive_passes": {"type": "integer", "minimum": 0}}},
+                "report": report_schema()
+            }
+        }),
+        "get_readiness_trends" => json!({"type": "object", "required": ["points"],
+            "properties": {"points": {"type": "array", "items": {"type": "object"}}}}),
+        _ => json!({"type": "object", "required": ["text"],
+            "properties": {"text": {"type": "string"}}, "additionalProperties": false}),
+    }
+}
+
+fn is_evaluation(name: &str) -> bool {
+    matches!(name, "run_probe" | "scaffold" | "score" | "verify_finding")
 }
 
 fn record_annotation_tool() -> Value {
@@ -321,11 +375,8 @@ fn record_annotation_tool() -> Value {
     )
 }
 
-fn handle_call(
-    message: &Value,
-    root: &std::path::Path,
-    allow_spawn: bool,
-) -> anyhow::Result<Value> {
+fn handle_call(message: &Value, server: &Server) -> anyhow::Result<Value> {
+    let root = &server.root;
     let name = message
         .get("params")
         .and_then(|params| params.get("name"))
@@ -336,6 +387,31 @@ fn handle_call(
         .and_then(|params| params.get("arguments"))
         .cloned()
         .unwrap_or(Value::Object(Default::default()));
+    if is_evaluation(name) && !server.allow_spawn {
+        bail!("{name} {SPAWN_DISABLED}");
+    }
+    let declared = server
+        .tools
+        .iter()
+        .find(|tool| tool["name"] == name)
+        .with_context(|| format!("unknown tool {name}"))?;
+    // These tools already validate typed arguments or the CLI's annotation
+    // contract, preserving their more specific error messages.
+    if !matches!(name, "record_annotation" | "score" | "verify_finding")
+        && !crate::schema::conforms(&declared["inputSchema"], &arguments)
+    {
+        bail!("invalid tool arguments");
+    }
+    // Keep spare HTTP workers available to data queries. Concurrent
+    // evaluations fail immediately instead of tying up workers in a wait.
+    let _evaluation =
+        if is_evaluation(name) {
+            Some(server.evaluation.try_lock().map_err(|_| {
+                anyhow::anyhow!("evaluation already running; retry after it finishes")
+            })?)
+        } else {
+            None
+        };
     match name {
         "list_findings" => {
             let state_filter = arguments.get("state").and_then(Value::as_str);
@@ -381,14 +457,11 @@ fn handle_call(
                 "structuredContent": {"points": points},
             }))
         }
-        "run_probe" | "scaffold" | "score" | "verify_finding" if !allow_spawn => {
-            bail!("{name} {SPAWN_DISABLED}")
-        }
-        "run_probe" => run_probe_tool_call(&arguments),
+        "run_probe" => run_probe_tool_call(root, &arguments),
         "scaffold" => scaffold_tool_call(&arguments),
         "score" => score_tool_call(&arguments),
         "verify_finding" => verify_finding_tool_call(root, &arguments),
-        "record_annotation" => record_annotation_tool_call(&arguments),
+        "record_annotation" => record_annotation_tool_call(root, &arguments),
         other => bail!("unknown tool {other}"),
     }
 }
@@ -444,7 +517,7 @@ fn agent_target(arguments: &Value) -> anyhow::Result<AgentTarget> {
     }
 }
 
-fn run_probe_tool_call(arguments: &Value) -> anyhow::Result<Value> {
+fn run_probe_tool_call(root: &std::path::Path, arguments: &Value) -> anyhow::Result<Value> {
     let target = agent_target(arguments)?;
     let manifest_body = arguments
         .get("manifest")
@@ -452,7 +525,7 @@ fn run_probe_tool_call(arguments: &Value) -> anyhow::Result<Value> {
         .transpose()
         .context("serializing inline manifest")?
         .context("run_probe requires a manifest object")?;
-    let mut store = crate::store::Store::open(None)?;
+    let mut store = crate::store::Store::open(Some(root.to_owned()))?;
     let report = crate::probe::run(
         crate::probe::ProbeOptions {
             server: target.server.clone(),
@@ -623,7 +696,7 @@ fn scaffold_tool_call(arguments: &Value) -> anyhow::Result<Value> {
 /// characters), and hands it to the same `append_annotation` (which
 /// hashes the session and re-validates the kind). Nothing about the
 /// record path is weaker than the CLI's.
-fn record_annotation_tool_call(arguments: &Value) -> anyhow::Result<Value> {
+fn record_annotation_tool_call(root: &std::path::Path, arguments: &Value) -> anyhow::Result<Value> {
     let session = arguments
         .get("session")
         .and_then(Value::as_str)
@@ -653,7 +726,7 @@ fn record_annotation_tool_call(arguments: &Value) -> anyhow::Result<Value> {
         note: note.to_owned(),
     };
     record.validate()?;
-    let mut store = crate::store::Store::open(None)?;
+    let mut store = crate::store::Store::open(Some(root.to_owned()))?;
     store.append_annotation(&record)?;
     Ok(text_result(&format!(
         "recorded {} annotation for session:<hashed> seq {seq}",
@@ -676,7 +749,7 @@ fn finding_id_of(finding: &Value) -> &str {
 }
 
 fn text_result(text: &str) -> Value {
-    json!({"content": [{"type": "text", "text": text}]})
+    json!({"content": [{"type": "text", "text": text}], "structuredContent": {"text": text}})
 }
 
 fn format_findings(findings: &[Value]) -> String {
@@ -786,7 +859,18 @@ fn read_request(stream: &mut TcpStream) -> anyhow::Result<ServeRequest> {
         bail!("HTTP body exceeded the size limit");
     }
     let mut body = vec![0; content_length];
-    reader.read_exact(&mut body)?;
+    let mut consumed = 0;
+    while consumed < body.len() {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .context("HTTP request deadline exceeded")?;
+        reader.get_mut().set_read_timeout(Some(remaining))?;
+        let received = reader.read(&mut body[consumed..])?;
+        if received == 0 {
+            bail!("HTTP request ended before the body was complete");
+        }
+        consumed += received;
+    }
     Ok(ServeRequest {
         method,
         provenance,

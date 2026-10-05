@@ -6,6 +6,7 @@ milliseconds, and `crash` exits without answering. Tool names given as
 arguments are declared too and behave like `crash`.
 """
 import json
+from pathlib import Path
 import sys
 import time
 
@@ -41,6 +42,9 @@ for raw in sys.stdin:
         if name in CRASHING:
             sys.exit(3)
         if name == "slow":
+            marker = params.get("arguments", {}).get("marker")
+            if marker:
+                Path(marker).write_text("started")
             time.sleep(params.get("arguments", {}).get("ms", 0) / 1000)
         result = {"content": [{"type": "text", "text": "done"}]}
     else:

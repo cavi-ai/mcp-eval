@@ -4,6 +4,11 @@
 
 ### Added
 
+- MCP service `ping`, tool safety annotations, and output schemas with
+  conforming structured results alongside existing text.
+- Four HTTP workers and a sixteen-connection queue keep queries responsive
+  during one admitted evaluation; overlapping evaluations are refused.
+  Headers and bodies share a five-second request deadline.
 - Native MCP `score` and `verify_finding` tools behind `serve --allow-spawn`.
   CLI and MCP finding verification share the same execution and durable
   evidence service; agent verification cannot authorize mutation.

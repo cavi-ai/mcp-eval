@@ -27,6 +27,7 @@ pub mod sarif;
 mod schema;
 pub mod score;
 pub mod serve;
+mod serve_workers;
 pub mod shape;
 pub mod share;
 pub mod shim;

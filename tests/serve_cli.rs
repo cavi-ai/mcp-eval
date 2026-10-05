@@ -44,6 +44,12 @@ fn raw_call(endpoint: &str, message: &Value) -> (u16, Value) {
         .trim_start_matches("http://")
         .trim_end_matches("/mcp");
     let mut stream = std::net::TcpStream::connect(authority).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    stream
+        .set_write_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
     let body = serde_json::to_vec(message).unwrap();
     write!(
         stream,
@@ -402,6 +408,242 @@ fn promoted_finding(dir: &std::path::Path) -> String {
     let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
     db.query_row("SELECT finding_id FROM findings", [], |row| row.get(0))
         .unwrap()
+}
+
+#[test]
+fn queries_remain_responsive_and_overlapping_evaluations_are_refused() {
+    let dir = home();
+    let marker = dir.join("evaluation-started");
+    let (_server, port) = start_serve(&dir, &["--allow-spawn"]);
+    let http = format!("http://127.0.0.1:{port}/mcp");
+    let slow = json!({"manifest": {"version": 1, "timeout_ms": 5000, "probes": [{
+        "id": "slow-case", "probe": "instruction-fidelity", "access": "read_only", "tool": "slow",
+        "arguments": {"ms": 3500, "marker": marker}, "expect": {"outcome": "ok"}
+    }]}, "command": ["python3", "tests/fixtures/transport_fault_server.py"]});
+    let endpoint = http.clone();
+    let arguments = slow.clone();
+    let job = std::thread::spawn(move || call(&endpoint, "run_probe", arguments));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while !marker.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(marker.exists(), "evaluation never started");
+    let start = std::time::Instant::now();
+    let (_, findings) = call(&http, "list_findings", json!({}));
+    assert!(findings.get("result").is_some(), "{findings}");
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(2),
+        "query waited for the evaluation"
+    );
+    let (_, overlapping) = call(&http, "run_probe", slow.clone());
+    assert!(
+        overlapping["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("evaluation already running"),
+        "{overlapping}"
+    );
+    let (_, report) = job.join().unwrap();
+    assert_eq!(
+        report["result"]["structuredContent"]["passed"], true,
+        "{report}"
+    );
+    let mut fast = slow;
+    fast["manifest"]["probes"][0]["arguments"]["ms"] = json!(0);
+    let (_, next) = call(&http, "run_probe", fast);
+    assert_eq!(
+        next["result"]["structuredContent"]["passed"], true,
+        "permit was not released: {next}"
+    );
+}
+
+#[test]
+fn shipped_service_passes_ping_and_exercises_its_read_only_contract_over_http() {
+    let dir = home();
+    let (_server, port) = start_serve(&dir, &[]);
+    let http = format!("http://127.0.0.1:{port}/mcp");
+    let (_, ping) = raw_call(&http, &json!({"jsonrpc": "2.0", "id": 1, "method": "ping"}));
+    assert_eq!(ping["result"], json!({}), "{ping}");
+    let output = Command::new(bin())
+        .args([
+            "score", "--server", "mcpeval", "--format", "json", "--url", &http,
+        ])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let stdio = Command::new(bin())
+        .args([
+            "score",
+            "--server",
+            "mcpeval",
+            "--format",
+            "json",
+            "--",
+            "python3",
+            "tests/fixtures/stdio_http_bridge.py",
+            &http,
+        ])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(
+        stdio.status.success(),
+        "{}",
+        String::from_utf8_lossy(&stdio.stderr)
+    );
+    let bridged: Value = serde_json::from_slice(&stdio.stdout).unwrap();
+    let contract = |document: &Value| -> Vec<Value> {
+        document["readiness"]["areas"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|area| {
+                area["checks"].as_array().unwrap().iter().map(|check| {
+                json!({"id": check["id"], "reason": check["reason"], "tool": check["tool"]})
+            })
+            })
+            .collect()
+    };
+    assert_eq!(
+        contract(&report),
+        contract(&bridged),
+        "HTTP and stdio disagree on the same service contract"
+    );
+    assert_eq!(
+        report["readiness"]["surface"],
+        bridged["readiness"]["surface"]
+    );
+    assert_eq!(report["readiness"]["surface"]["read_only"], 3, "{report}");
+    for area in report["readiness"]["areas"].as_array().unwrap() {
+        for check in area["checks"].as_array().unwrap() {
+            assert!(
+                !matches!(
+                    check["reason"].as_str(),
+                    Some(
+                        "protocol-ping-failed"
+                            | "catalog-no-output-schema"
+                            | "reliability-output-schema-broken"
+                    )
+                ),
+                "{check}"
+            );
+        }
+    }
+    let (_, invalid) = call(&http, "list_findings", json!({"state": 42}));
+    assert!(
+        invalid.get("error").is_some(),
+        "invalid declared input was accepted: {invalid}"
+    );
+}
+
+#[test]
+fn slow_body_uploads_cannot_extend_the_request_deadline() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let dir = home();
+    let (_server, port) = start_serve(&dir, &[]);
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(7)))
+        .unwrap();
+    write!(stream, "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n").unwrap();
+    let mut writer = stream.try_clone().unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let stopped = Arc::clone(&stop);
+    let upload = std::thread::spawn(move || {
+        for _ in 0..20 {
+            if stopped.load(Ordering::Acquire) || writer.write_all(b" ").is_err() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+    });
+    let start = std::time::Instant::now();
+    let mut response = Vec::new();
+    let ended = stream.read_to_end(&mut response);
+    stop.store(true, Ordering::Release);
+    upload.join().unwrap();
+    assert!(
+        !matches!(ended, Err(ref error) if matches!(error.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock)),
+        "upload kept the worker indefinitely"
+    );
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(7),
+        "request exceeded its whole-request deadline"
+    );
+}
+
+#[test]
+fn advertised_output_schemas_validate_real_results_and_annotations_do_not_authorize_spawning() {
+    let dir = home();
+    let id = promoted_finding(&dir);
+    let (_server, port) = start_serve(&dir, &["--allow-spawn"]);
+    let http = format!("http://127.0.0.1:{port}/mcp");
+    let (_, catalog) = raw_call(
+        &http,
+        &json!({"jsonrpc":"2.0","id":1,"method":"tools/list"}),
+    );
+    let manifest: Value = serde_json::from_slice(&std::fs::read(MANIFEST).unwrap()).unwrap();
+    let calls = [
+        ("list_findings", json!({})),
+        ("get_finding", json!({"finding_id": id})),
+        ("get_readiness_trends", json!({})),
+        (
+            "record_annotation",
+            json!({"session":"s", "seq":1,"kind":"workaround","note":"safe"}),
+        ),
+        (
+            "run_probe",
+            json!({"manifest": {"version":1,"probes":[manifest["probes"][6].clone()]},"command":["python3",CLEAN]}),
+        ),
+        ("scaffold", json!({"command":["python3",CLEAN]})),
+        ("score", json!({"command":["python3",CLEAN]})),
+        (
+            "verify_finding",
+            json!({"finding_id":id,"case_id":"literal-status","manifest":manifest,"command":["python3",CLEAN]}),
+        ),
+    ];
+    for (name, arguments) in calls {
+        let tool = catalog["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap();
+        let read_only = matches!(
+            name,
+            "list_findings" | "get_finding" | "get_readiness_trends"
+        );
+        assert_eq!(tool["annotations"]["readOnlyHint"], read_only, "{tool}");
+        assert_eq!(
+            tool["annotations"]["destructiveHint"],
+            !read_only && name != "record_annotation",
+            "{tool}"
+        );
+        assert!(
+            tool["outputSchema"].is_object(),
+            "no result contract: {tool}"
+        );
+        let validator = jsonschema::validator_for(&tool["outputSchema"]).unwrap();
+        let (_, result) = call(&http, name, arguments);
+        let document = &result["result"]["structuredContent"];
+        assert!(
+            validator.is_valid(document),
+            "{name} does not satisfy its output schema: {result}"
+        );
+        assert!(
+            !validator.is_valid(&json!({})),
+            "{name} advertises an empty contract"
+        );
+    }
 }
 
 #[test]

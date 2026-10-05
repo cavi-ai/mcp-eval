@@ -21,6 +21,11 @@
 
 ### Fixed
 
+- Stdio evaluation bounds frames, incoming queues, and retained notifications;
+  pipe writes time out when a server stops reading. Interleaved messages do not
+  restart response deadlines, and shutdown cancels and joins both I/O pumps.
+- Input synthesis uses byte and node budgets before allocating strings,
+  arrays, or schema-supplied defaults.
 - `share` scans the exact exported snapshots, including nested JSONL files,
   rejects symlinks and overlapping output paths, and preserves an existing
   envelope when preparation fails.

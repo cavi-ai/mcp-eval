@@ -1,191 +1,23 @@
 use std::collections::BTreeMap;
-use std::io::{self, BufReader, Read, Write};
-#[cfg(unix)]
-use std::net::Shutdown;
-#[cfg(unix)]
-use std::os::fd::AsFd;
-#[cfg(unix)]
-use std::os::unix::net::UnixStream;
-#[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
+use std::io::{self, BufReader, Write};
 use std::process::{Child, Command, ExitStatus, Stdio};
-#[cfg(windows)]
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context};
-#[cfg(unix)]
-use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
-#[cfg(windows)]
-use windows_sys::Win32::Foundation::ERROR_NOT_FOUND;
-#[cfg(windows)]
-use windows_sys::Win32::System::IO::CancelSynchronousIo;
 
 use crate::correlate::Correlator;
 use crate::fingerprint::Salt;
 use crate::frame::{read_frame, Frame};
 use crate::record::CallRecord;
+#[cfg(test)]
+use crate::stdio::cancel_synchronous_io_until_observed;
+use crate::stdio::{cancellation_pair, CancelHandle, CancellableReader};
 use crate::store::Store;
 
 const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(10);
-
-#[cfg(any(test, windows))]
-fn cancel_synchronous_io_until_observed(
-    mut is_finished: impl FnMut() -> bool,
-    mut cancel_once: impl FnMut() -> io::Result<bool>,
-) -> io::Result<()> {
-    loop {
-        if is_finished() || cancel_once()? {
-            return Ok(());
-        }
-        thread::yield_now();
-    }
-}
-
-#[cfg(unix)]
-struct CancelHandle {
-    sender: UnixStream,
-}
-
-#[cfg(unix)]
-impl CancelHandle {
-    fn cancel(&self) -> io::Result<()> {
-        match self.sender.shutdown(Shutdown::Write) {
-            Ok(()) => Ok(()),
-            Err(error) if error.kind() == io::ErrorKind::NotConnected => Ok(()),
-            Err(error) => Err(error),
-        }
-    }
-}
-
-#[cfg(unix)]
-fn cancellation_pair() -> io::Result<(CancelHandle, UnixStream)> {
-    let (sender, receiver) = UnixStream::pair()?;
-    Ok((CancelHandle { sender }, receiver))
-}
-
-#[cfg(unix)]
-struct CancellableReader<R> {
-    source: R,
-    cancellation: UnixStream,
-    cancelled: bool,
-}
-
-#[cfg(unix)]
-impl<R> CancellableReader<R> {
-    fn new(source: R, cancellation: UnixStream) -> Self {
-        Self {
-            source,
-            cancellation,
-            cancelled: false,
-        }
-    }
-
-    fn is_cancelled(&self) -> bool {
-        self.cancelled
-    }
-}
-
-#[cfg(unix)]
-impl<R: Read + AsFd> Read for CancellableReader<R> {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        loop {
-            let (source_events, cancellation_events) = {
-                let mut descriptors = [
-                    PollFd::new(
-                        self.cancellation.as_fd(),
-                        PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR,
-                    ),
-                    PollFd::new(
-                        self.source.as_fd(),
-                        PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR,
-                    ),
-                ];
-                match poll(&mut descriptors, PollTimeout::NONE) {
-                    Ok(_) => (
-                        descriptors[1].revents().unwrap_or_else(PollFlags::empty),
-                        descriptors[0].revents().unwrap_or_else(PollFlags::empty),
-                    ),
-                    Err(nix::errno::Errno::EINTR) => continue,
-                    Err(error) => return Err(io::Error::from_raw_os_error(error as i32)),
-                }
-            };
-
-            if cancellation_events.intersects(
-                PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL,
-            ) {
-                self.cancelled = true;
-                return Err(io::Error::new(
-                    io::ErrorKind::ConnectionAborted,
-                    "stdio pump cancelled",
-                ));
-            }
-            if source_events.intersects(
-                PollFlags::POLLIN | PollFlags::POLLHUP | PollFlags::POLLERR | PollFlags::POLLNVAL,
-            ) {
-                return self.source.read(buffer);
-            }
-        }
-    }
-}
-
-#[cfg(windows)]
-struct CancelHandle {
-    cancelled: Arc<AtomicBool>,
-}
-
-#[cfg(windows)]
-fn cancellation_pair() -> io::Result<(CancelHandle, Arc<AtomicBool>)> {
-    let cancelled = Arc::new(AtomicBool::new(false));
-    Ok((
-        CancelHandle {
-            cancelled: Arc::clone(&cancelled),
-        },
-        cancelled,
-    ))
-}
-
-#[cfg(windows)]
-struct CancellableReader<R> {
-    source: R,
-    cancellation: Arc<AtomicBool>,
-}
-
-#[cfg(windows)]
-impl<R> CancellableReader<R> {
-    fn new(source: R, cancellation: Arc<AtomicBool>) -> Self {
-        Self {
-            source,
-            cancellation,
-        }
-    }
-
-    fn is_cancelled(&self) -> bool {
-        self.cancellation.load(Ordering::Acquire)
-    }
-}
-
-#[cfg(windows)]
-impl<R: Read> Read for CancellableReader<R> {
-    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
-        if self.is_cancelled() {
-            return Err(cancelled_io_error());
-        }
-        let result = self.source.read(buffer);
-        if self.is_cancelled() {
-            return Err(cancelled_io_error());
-        }
-        result
-    }
-}
-
-#[cfg(windows)]
-fn cancelled_io_error() -> io::Error {
-    io::Error::new(io::ErrorKind::ConnectionAborted, "stdio pump cancelled")
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Direction {
@@ -382,32 +214,7 @@ struct ShutdownCancellation {
 #[cfg(any(unix, windows))]
 impl PumpHandle {
     fn cancel(&self) -> io::Result<()> {
-        #[cfg(unix)]
-        {
-            self.cancel.cancel()
-        }
-        #[cfg(windows)]
-        {
-            self.cancel.cancelled.store(true, Ordering::Release);
-            cancel_synchronous_io_until_observed(
-                || self.thread.is_finished(),
-                || {
-                    // SAFETY: JoinHandle owns this valid thread handle for the
-                    // duration of the call, and the API only borrows it.
-                    let cancelled =
-                        unsafe { CancelSynchronousIo(self.thread.as_raw_handle() as _) };
-                    if cancelled != 0 {
-                        return Ok(true);
-                    }
-                    let error = io::Error::last_os_error();
-                    if error.raw_os_error() == Some(ERROR_NOT_FOUND as i32) {
-                        Ok(false)
-                    } else {
-                        Err(error)
-                    }
-                },
-            )
-        }
+        self.cancel.cancel_thread(&self.thread)
     }
 }
 

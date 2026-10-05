@@ -12,6 +12,27 @@ Mutation requires two independent controls: the manifest case uses `"access": "m
 
 HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS plus `--allow-remote-http`. Optional authorization is read from `MCPEVAL_HTTP_AUTHORIZATION`, validated, used in memory, and never persisted or printed. The HTTP proxy may relay an incoming `Authorization` value in memory, but it does not originate calls or grant mutation permission. `mcpeval serve` refuses requests without a loopback `Host`, with a non-loopback `Origin`, or without `Content-Type: application/json`, and lists its process-launching tools (`run_probe`, `scaffold`) only with `--allow-spawn`. `mcpeval shim-http` applies the same `Host` and `Origin` checks to every request and the `Content-Type` check to every POST before forwarding anything upstream.
 
+## Evaluation resource limits
+
+Stdio messages are limited to 4 MiB including the newline. The evaluator queues
+at most 16 incoming frames and retains at most 128 notifications totaling
+4 MiB of encoded data. Exceeding these limits closes the evaluation transport;
+reports use the existing transport-error status without including message
+contents. The recording shim also refuses frames larger than 4 MiB.
+
+Each evaluator pipe write is bounded by the configured transport timeout.
+Response waits use a fixed deadline, so progress messages and unrelated
+notifications cannot extend the wait. Client shutdown cancels and joins its
+I/O threads and terminates and reaps its direct child process. Descendant
+processes are outside this cleanup guarantee.
+
+Standard input synthesis uses a conservative 64 KiB encoded-size budget and a
+4096-node budget, with at most 256 items per array built from type constraints,
+16 KiB per string built from type constraints, and eight levels of schema
+traversal. Values supplied by defaults,
+examples, enums, and constants also consume these budgets before cloning.
+Schemas exceeding a budget are reported as unsynthesizable rather than called.
+
 ## Producing the share envelope
 
 `mcpeval share --dir <directory>` snapshots every selected JSONL file under a shared journal lock, scans the exact exported bytes, and publishes the envelope only after the scan succeeds. Nested JSONL files are checked too; symlinks and output paths overlapping the capture store are refused. A flagged sweep exits `1` and publishes nothing. Invalid JSON records also stop export.

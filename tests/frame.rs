@@ -67,3 +67,19 @@ fn accepts_requests_notifications_and_responses_in_both_directions() {
         assert!(read_frame(&mut reader).unwrap().unwrap().value.is_some());
     }
 }
+
+#[test]
+fn oversized_lines_fail_without_exposing_their_contents() {
+    for newline in [false, true] {
+        let mut input = vec![b'x'; 4 * 1024 * 1024 + 1];
+        if newline {
+            input.push(b'\n');
+        }
+        let error = match read_frame(&mut BufReader::new(input.as_slice())) {
+            Err(error) => error,
+            Ok(_) => panic!("oversized frame was accepted"),
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(!error.to_string().contains("xxxx"));
+    }
+}

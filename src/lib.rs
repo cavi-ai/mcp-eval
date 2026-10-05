@@ -31,5 +31,6 @@ pub mod shape;
 pub mod share;
 pub mod shim;
 pub mod standard;
+mod stdio;
 pub mod store;
 pub mod trends;

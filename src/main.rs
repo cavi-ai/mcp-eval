@@ -413,6 +413,8 @@ fn run() -> anyhow::Result<()> {
                         include_str!("../docs/mcp-eval.probe-diff.schema.json"),
                     cli::SchemaDocument::Guidance =>
                         include_str!("../docs/mcp-eval.guidance-report.schema.json"),
+                    cli::SchemaDocument::CorpusVerification =>
+                        include_str!("../docs/mcp-eval.corpus-verification.schema.json"),
                 }
             );
             Ok(())

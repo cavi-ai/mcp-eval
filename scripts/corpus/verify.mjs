@@ -7,6 +7,7 @@ import { ROOT, validateCorpus, validateTargets, sha256, digestFile, evaluatorIde
 export { commandFor, ISOLATION, readinessScore, scoreArguments } from "./contract.mjs";
 
 export const RELIABILITY_TOLERANCE = 10;
+export const VERIFICATION_SCHEMA = "mcpeval.corpus-verification/v1";
 export function platformMismatch(corpus, platform) {
   return !corpus.platform ? "corpus names no platform" : corpus.platform !== platform ? `corpus was collected on ${corpus.platform}; use that platform for verification` : null;
 }
@@ -20,7 +21,8 @@ export function driftedResults(results) { return results.filter((result) => resu
 
 export async function verifyCorpus(options = {}) {
   // Validate provenance before touching a binary, package runner, or service.
-  const corpus = validateCorpus(JSON.parse(await readFile(options.corpusPath ?? path.join(ROOT, "data/readiness-corpus.json"), "utf8")));
+  const corpusBytes = await readFile(options.corpusPath ?? path.join(ROOT, "data/readiness-corpus.json"));
+  const corpus = validateCorpus(JSON.parse(corpusBytes));
   if (!options.targetsPath || !options.reportsPath) throw new Error("verification requires --targets and --reports from collection");
   const bytes = await readFile(options.targetsPath);
   const targets = validateTargets(JSON.parse(bytes));
@@ -43,18 +45,25 @@ export async function verifyCorpus(options = {}) {
   const results = [];
   try {
     for (const entry of corpus.population) {
-      if (entry.status !== "observed") { results.push({ ...entry, drifted: false }); continue; }
+      if (entry.status !== "observed") {
+        results.push({ server: entry.server, status: entry.status, reason: entry.reason, expected: null, observed: null, moved: [], drifted: false, expected_report_sha256: null, replay_report_sha256: null });
+        continue;
+      }
       if (await digestFile(binary) !== evaluator.sha256) throw new Error("evaluator changed during verification");
       const target = targets.targets.find((item) => item.server === entry.server);
       const home = path.join(work, entry.server); await mkdir(home);
       const result = await evaluateTarget(target, { binary, evaluator, standard: corpus.standard, home, execute, environment: options.environment ?? process.env });
       const expected = corpus.observations.find((item) => item.server === entry.server);
       const moved = result.observation ? driftOf(expected, result.observation) : [];
-      results.push({ server: entry.server, status: result.status, ...(result.reason ? { reason: result.reason } : {}), expected: expected.score, observed: result.observation?.score ?? null, moved, drifted: moved.length > 0 });
+      results.push({ server: entry.server, status: result.status, ...(result.reason ? { reason: result.reason } : {}), expected: expected.score, observed: result.observation?.score ?? null, moved, drifted: moved.length > 0,
+        expected_report_sha256: expected.provenance.report_sha256, replay_report_sha256: result.raw === undefined ? null : sha256(result.raw) });
     }
     if (await digestFile(binary) !== evaluator.sha256) throw new Error("evaluator changed during verification");
   } finally { await rm(work, { recursive: true, force: true }); }
-  return { observations: corpus.observations.length, population: corpus.population.length, results };
+  return { schema: VERIFICATION_SCHEMA, standard: corpus.standard, platform: corpus.platform,
+    corpus_sha256: sha256(corpusBytes), targets_sha256: sha256(bytes), evaluator,
+    policy: { reliability_tolerance: RELIABILITY_TOLERANCE }, passed: driftedResults(results).length === 0,
+    observations: corpus.observations.length, population: corpus.population.length, results };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
@@ -63,6 +72,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
     const result = await verifyCorpus({ corpusPath: values.corpus, targetsPath: values.targets, reportsPath: values.reports, binary: values.binary });
     if (values.json) console.log(JSON.stringify(result, null, 2));
     else for (const entry of result.results) console.log(`${entry.drifted ? "DRIFT" : entry.status} ${entry.server} expected=${entry.expected ?? "-"} observed=${entry.observed ?? "-"}`);
-    process.exitCode = driftedResults(result.results).length ? 1 : 0;
+    process.exitCode = result.passed ? 0 : 1;
   } catch (error) { console.error(error.message); process.exitCode = 1; }
 }

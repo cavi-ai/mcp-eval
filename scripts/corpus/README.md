@@ -107,6 +107,30 @@ node scripts/corpus/verify.mjs --corpus /absolute/private/corpus.json \
   --reports /absolute/private/corpus.json.reports-UUID --json
 ```
 
+Replay `--json` emits `mcpeval.corpus-verification/v1`. Redirect stdout to a
+private file to retain it. Print its schema with
+`mcpeval schema corpus-verification`. The artifact binds the exact corpus and
+target-file bytes, evaluator version/executable digest, standard, platform, and
+the ten-point reliability tolerance. It preserves the existing observation and
+population counts and per-target results, adding `passed` and original/replay
+report digests. Original unobserved targets have null scores and report digests;
+missing or discarded replay reports have a null replay digest.
+
+`passed` is true only when every target is observed and no area exceeds the
+comparison tolerance. It means replay agreement, not server health: replay can
+reproduce a consistently failing server. Equal raw-report digests are not a
+pass requirement; timings and other measurements may differ within the policy.
+Exit status is zero for a passing replay and one otherwise. Invalid input or
+original-artifact provenance aborts before replay, emits an error on stderr,
+and produces no verification artifact.
+
+Keep the original corpus, targets, and reports with the verification artifact.
+The artifact identifies replay report bytes seen in memory but does not retain
+them or include their payloads. Hashes and schema validation do not authenticate
+the artifact's author. Labels are operator-supplied; review artifacts before
+sharing them. A verification artifact does not prove the cause of score drift
+or freeze host or service state.
+
 `--binary` selects an explicit evaluator executable. Collection refuses an
 existing output unless `--force` is passed. It writes the corpus atomically and
 retains reports in the directory printed at completion. The default minimum

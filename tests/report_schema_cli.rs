@@ -208,6 +208,7 @@ fn schema_command_prints_each_published_schema() {
         (Some("manifest"), "manifest"),
         (Some("report"), "probe-report"),
         (Some("diff"), "probe-diff"),
+        (Some("corpus-verification"), "corpus-verification"),
     ] {
         let mut command = Command::new(bin());
         command.arg("schema");
@@ -218,6 +219,55 @@ fn schema_command_prints_each_published_schema() {
         assert!(output.status.success(), "{argument:?}");
         let printed: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(printed, schema(name), "{argument:?}");
+    }
+}
+
+#[test]
+fn corpus_verification_schema_rejects_unsupported_pass_credit_and_unbound_results() {
+    let schema = validator("corpus-verification");
+    let observed = serde_json::json!({
+        "server": "fixture", "status": "observed", "expected": 50, "observed": 50,
+        "moved": [], "drifted": false,
+        "expected_report_sha256": "a".repeat(64), "replay_report_sha256": "b".repeat(64)
+    });
+    let receipt = serde_json::json!({
+        "schema": "mcpeval.corpus-verification/v1", "standard": "mcpeval-standard/2",
+        "platform": "fixture-platform", "corpus_sha256": "c".repeat(64), "targets_sha256": "d".repeat(64),
+        "evaluator": { "version": "0.4.0", "sha256": "e".repeat(64) },
+        "policy": { "reliability_tolerance": 10 }, "passed": true,
+        "observations": 1, "population": 1, "results": [observed]
+    });
+    assert_valid(&schema, &receipt);
+    for mutation in ["corpus", "report", "pass", "drift", "unobserved"] {
+        let mut invalid = receipt.clone();
+        match mutation {
+            "corpus" => invalid["corpus_sha256"] = "unknown".into(),
+            "report" => invalid["results"][0]["replay_report_sha256"] = serde_json::Value::Null,
+            "pass" => invalid["passed"] = false.into(),
+            "drift" => invalid["results"][0]["drifted"] = true.into(),
+            "unobserved" => invalid["results"][0]["status"] = "errored".into(),
+            _ => unreachable!(),
+        }
+        assert!(!schema.is_valid(&invalid), "{mutation}");
+    }
+    let mut drifted = receipt.clone();
+    drifted["passed"] = false.into();
+    drifted["results"][0]["drifted"] = true.into();
+    drifted["results"][0]["moved"] = serde_json::json!(["catalog 50→51"]);
+    assert_valid(&schema, &drifted);
+    for status in ["untested", "errored"] {
+        let mut unavailable = receipt.clone();
+        unavailable["passed"] = false.into();
+        unavailable["results"][0] = serde_json::json!({
+            "server": "fixture", "status": status, "reason": "state-check-failed",
+            "expected": 50, "observed": null, "moved": [], "drifted": false,
+            "expected_report_sha256": "a".repeat(64), "replay_report_sha256": null
+        });
+        assert_valid(&schema, &unavailable);
+        unavailable["observations"] = 0.into();
+        unavailable["results"][0]["expected"] = serde_json::Value::Null;
+        unavailable["results"][0]["expected_report_sha256"] = serde_json::Value::Null;
+        assert_valid(&schema, &unavailable);
     }
 }
 

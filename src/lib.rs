@@ -5,6 +5,7 @@ pub mod diagnosis;
 pub mod diff;
 pub mod doctor;
 pub mod errtemplate;
+mod evaluation_budget;
 pub mod exit;
 pub mod fingerprint;
 pub mod frame;

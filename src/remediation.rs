@@ -238,6 +238,11 @@ pub fn hint(reason: FailureReason) -> &'static str {
              or non-200 response), so the case was not evaluated; answer each request \
              once, with its own id, as one well-formed JSON-RPC response"
         }
+        FailureReason::EvaluationBudgetExceeded => {
+            "the evaluation exhausted its shared five-minute or 4096-request budget; \
+             no verdict or verification credit is available for unfinished work; \
+             narrow the selected manifest cases or reduce server latency and catalog size"
+        }
     }
 }
 

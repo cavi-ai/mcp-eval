@@ -4,6 +4,9 @@
 
 ### Added
 
+- Shared five-minute and 4096-request budgets for probe, score, verification,
+  and scaffold operations across transports and reconnects. Exhaustion leaves
+  unfinished cases errored and readiness unmeasured, without verification credit.
 - MCP service `ping`, tool safety annotations, and output schemas with
   conforming structured results alongside existing text.
 - Four HTTP workers and a sixteen-connection queue keep queries responsive

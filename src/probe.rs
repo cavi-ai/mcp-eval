@@ -1,6 +1,6 @@
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Barrier};
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crate::fingerprint::Salt;
@@ -34,7 +34,13 @@ pub struct ProbeOptions {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum ClientTarget {
+pub(crate) struct ClientTarget {
+    transport: TargetTransport,
+    pub(crate) budget: crate::evaluation_budget::Budget,
+}
+
+#[derive(Clone, Debug)]
+enum TargetTransport {
     Stdio(Vec<String>),
     Http {
         endpoint: String,
@@ -53,15 +59,19 @@ impl ClientTarget {
         http_url: Option<String>,
         allow_remote_http: bool,
     ) -> anyhow::Result<Self> {
-        match (http_url, command.is_empty()) {
-            (None, false) => Ok(Self::Stdio(command)),
-            (Some(endpoint), true) => Ok(Self::Http {
+        let transport = match (http_url, command.is_empty()) {
+            (None, false) => TargetTransport::Stdio(command),
+            (Some(endpoint), true) => TargetTransport::Http {
                 endpoint,
                 allow_remote: allow_remote_http,
-            }),
+            },
             (Some(_), false) => bail!("select an HTTP endpoint or a stdio command, not both"),
             (None, true) => bail!("an HTTP endpoint or stdio command is required"),
-        }
+        };
+        Ok(Self {
+            transport,
+            budget: crate::evaluation_budget::Budget::default(),
+        })
     }
 
     fn from_options(options: &ProbeOptions) -> anyhow::Result<Self> {
@@ -75,14 +85,19 @@ impl ClientTarget {
     /// Open a client whose requests wait `timeout` (`None`: the
     /// transport's default).
     pub(crate) fn connect(&self, timeout: Option<Duration>) -> anyhow::Result<ProbeClient> {
-        let mut client = match self {
-            Self::Stdio(command) => ProbeClient::Stdio(McpClient::spawn(command)?),
-            Self::Http {
+        self.budget.check()?;
+        let mut client = match &self.transport {
+            TargetTransport::Stdio(command) => ProbeClient::Stdio(McpClient::spawn(command)?),
+            TargetTransport::Http {
                 endpoint,
                 allow_remote,
             } => ProbeClient::Http(HttpMcpClient::connect(endpoint, *allow_remote)?),
         };
         client.set_response_timeout(timeout);
+        match &mut client {
+            ProbeClient::Stdio(client) => client.set_evaluation_budget(self.budget.clone()),
+            ProbeClient::Http(client) => client.set_evaluation_budget(self.budget.clone()),
+        }
         Ok(client)
     }
 }
@@ -281,6 +296,8 @@ pub enum FailureReason {
     /// The case could not be evaluated: any other failure while it ran,
     /// such as a malformed or mismatched response.
     TransportError,
+    /// Shared evaluation deadline or request count exhausted; no verdict.
+    EvaluationBudgetExceeded,
 }
 
 impl ProbeKind {
@@ -362,6 +379,7 @@ impl FailureReason {
         Self::TransportTimeout,
         Self::TransportClosed,
         Self::TransportError,
+        Self::EvaluationBudgetExceeded,
     ];
 
     pub fn from_report_label(label: &str) -> Option<Self> {
@@ -413,6 +431,7 @@ impl FailureReason {
             "transport-timeout" => Self::TransportTimeout,
             "transport-closed" => Self::TransportClosed,
             "transport-error" => Self::TransportError,
+            "evaluation-budget-exceeded" => Self::EvaluationBudgetExceeded,
             _ => return None,
         })
     }
@@ -466,15 +485,19 @@ impl FailureReason {
             Self::TransportTimeout => "transport-timeout",
             Self::TransportClosed => "transport-closed",
             Self::TransportError => "transport-error",
+            Self::EvaluationBudgetExceeded => "evaluation-budget-exceeded",
         }
     }
 
-    /// Transport reasons mean the case was not evaluated at all; every
-    /// other reason is a verdict on the server.
+    /// Transport and evaluation-budget reasons mean the case could not
+    /// finish; every other reason is a verdict on the server.
     pub fn is_transport(&self) -> bool {
         matches!(
             self,
-            Self::TransportTimeout | Self::TransportClosed | Self::TransportError
+            Self::TransportTimeout
+                | Self::TransportClosed
+                | Self::TransportError
+                | Self::EvaluationBudgetExceeded
         )
     }
 }
@@ -603,7 +626,7 @@ pub struct ProbeReport {
     /// The standard battery's readiness; None under --gate-only, for a
     /// selected probe or case, or for a v1 document.
     pub readiness: Option<crate::score::Readiness>,
-    /// The standard battery could not start: why.
+    /// The standard battery could not finish: why.
     pub readiness_error: Option<FailureReason>,
     /// A v1 document's manifest pass rate, kept for display only.
     pub legacy_score: Option<u64>,
@@ -957,7 +980,7 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
     Ok(report)
 }
 
-/// Run the standard battery into `report`; a battery that cannot start
+/// Run the standard battery into `report`; a battery that cannot finish
 /// leaves readiness unmeasured with its transport reason. A usage error
 /// (an unknown `--skip-tool`) ends the run.
 fn measure_standard(
@@ -1118,6 +1141,12 @@ fn case_timeout(
 }
 
 pub(crate) fn transport_reason(error: &anyhow::Error) -> FailureReason {
+    if error
+        .downcast_ref::<crate::evaluation_budget::Exhausted>()
+        .is_some()
+    {
+        return FailureReason::EvaluationBudgetExceeded;
+    }
     match TransportFailure::of(error) {
         Some(TransportFailure::Timeout) => FailureReason::TransportTimeout,
         Some(TransportFailure::Closed) => FailureReason::TransportClosed,
@@ -1174,6 +1203,12 @@ pub(crate) fn run_unjournaled(
 }
 
 fn run_case(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
+    context.target.budget.check()?;
+    let result = run_case_inner(case, context);
+    context.target.budget.finish(result)
+}
+
+fn run_case_inner(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
     match case {
         ProbeCase::Contention { .. } => run_contention(case, context),
         ProbeCase::ErrorHonesty {
@@ -1339,9 +1374,8 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
     let arguments = case.arguments().expect("contention has arguments").clone();
     let target = context.target.clone();
     let timeout = context.timeout;
-    let barrier = Arc::new(Barrier::new(2));
-    let worker_barrier = Arc::clone(&barrier);
     let (ready_tx, ready_rx) = mpsc::sync_channel(0);
+    let (start_tx, start_rx) = mpsc::sync_channel(0);
     let worker_tool = tool.clone();
     let worker_arguments = arguments.clone();
     let worker = std::thread::spawn(move || -> anyhow::Result<(ToolResponse, u64)> {
@@ -1358,27 +1392,37 @@ fn run_contention(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
         ready_tx
             .send(())
             .map_err(|_| anyhow::anyhow!("contention coordinator closed"))?;
-        worker_barrier.wait();
+        let wait = target.budget.timeout(Duration::from_secs(30))?;
+        target.budget.finish(
+            start_rx
+                .recv_timeout(wait)
+                .map_err(|_| anyhow::anyhow!("contention coordinator closed")),
+        )?;
         let started = Instant::now();
         let response = call_declining(&mut client, &worker_tool, &worker_arguments)?;
         Ok((response, started.elapsed().as_millis() as u64))
     });
-    ready_rx
-        .recv_timeout(std::time::Duration::from_secs(30))
-        .map_err(|_| anyhow::anyhow!("contended client failed to initialize"))?;
-    barrier.wait();
-    let started = Instant::now();
-    let primary = call_declining(context.client, &tool, &arguments)?;
-    record_response(
-        &tool,
-        &arguments,
-        started.elapsed().as_millis() as u64,
-        &primary,
-        context,
-    )?;
-    let (secondary, latency_ms) = worker
+    let primary = (|| {
+        let wait = context.target.budget.timeout(Duration::from_secs(30))?;
+        ready_rx
+            .recv_timeout(wait)
+            .map_err(|_| anyhow::anyhow!("contended client failed to initialize"))?;
+        start_tx
+            .send(())
+            .map_err(|_| anyhow::anyhow!("contended client closed"))?;
+        let started = Instant::now();
+        let response = call_declining(context.client, &tool, &arguments)?;
+        Ok::<_, anyhow::Error>((response, started.elapsed().as_millis() as u64))
+    })();
+    // Release coordination waits before joining, including initialization failures.
+    drop(start_tx);
+    drop(ready_rx);
+    let secondary = worker
         .join()
-        .map_err(|_| anyhow::anyhow!("contended client terminated unexpectedly"))??;
+        .map_err(|_| anyhow::anyhow!("contended client terminated unexpectedly"));
+    let (primary, primary_latency) = primary?;
+    record_response(&tool, &arguments, primary_latency, &primary, context)?;
+    let (secondary, latency_ms) = secondary??;
     record_response(&tool, &arguments, latency_ms, &secondary, context)?;
     if matches!(primary, ToolResponse::Success(_)) && matches!(secondary, ToolResponse::Success(_))
     {
@@ -2477,6 +2521,118 @@ fn run_completion(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn budget_target(duration: Duration, requests: u64) -> ClientTarget {
+        let mut target = ClientTarget::new(
+            vec![
+                "python3".into(),
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/transport_fault_server.py"
+                )
+                .into(),
+            ],
+            None,
+            false,
+        )
+        .unwrap();
+        target.budget = crate::evaluation_budget::Budget::new(duration, requests);
+        target
+    }
+
+    #[test]
+    fn evaluation_budget_is_shared_across_reconnections_and_catalog_requests() {
+        let target = budget_target(Duration::from_secs(10), 3);
+        let mut first = target.connect(None).unwrap();
+        first.initialize().unwrap();
+        first.list_tools_catalog().unwrap();
+        drop(first);
+        let mut second = target.clone().connect(None).unwrap();
+        second.initialize().unwrap();
+        let error = second.list_tools_catalog().unwrap_err();
+        assert!(error
+            .downcast_ref::<crate::evaluation_budget::Exhausted>()
+            .is_some());
+        assert!(
+            target.connect(None).is_err(),
+            "exhaustion must prevent another process launch"
+        );
+    }
+
+    #[test]
+    fn evaluation_budget_cuts_short_a_slow_stdio_call_and_reaps_its_child() {
+        let target = budget_target(crate::mcp_client::DEFAULT_RESPONSE_TIMEOUT, 100);
+        let mut client = target.connect(None).unwrap();
+        client.initialize().unwrap();
+        // Startup keeps its normal allowance; only the measured call gets
+        // the short deadline, so cold Python startup cannot fail this test.
+        let ProbeClient::Stdio(ref mut stdio) = client else {
+            unreachable!()
+        };
+        stdio.set_evaluation_budget(crate::evaluation_budget::Budget::new(
+            Duration::from_secs(2),
+            100,
+        ));
+        let started = Instant::now();
+        let result = client.call_tool("slow", &json!({"ms": 5000}));
+        drop(client);
+        let error = result.unwrap_err();
+        assert!(error
+            .downcast_ref::<crate::evaluation_budget::Exhausted>()
+            .is_some());
+        assert!(
+            started.elapsed() < Duration::from_secs(4),
+            "call and cleanup exceeded the shared deadline allowance"
+        );
+    }
+
+    #[test]
+    fn evaluation_budget_does_not_publish_partial_readiness() {
+        let target = budget_target(Duration::from_secs(10), 3);
+        let mut report = ProbeReport::default();
+        measure_standard(
+            &mut report,
+            &target,
+            &crate::standard::StandardOptions {
+                confirm_read_only: true,
+                skip_tools: vec![],
+            },
+        )
+        .unwrap();
+        assert!(
+            report.readiness.is_none(),
+            "exhaustion must not fold a partial battery into a score"
+        );
+        assert_eq!(
+            report.readiness_error.map(|r| r.as_str()),
+            Some("evaluation-budget-exceeded")
+        );
+    }
+
+    #[test]
+    fn evaluation_budget_contention_exhaustion_joins_workers_and_is_not_a_verdict() {
+        let target = budget_target(Duration::from_secs(10), 5);
+        let mut client = target.connect(None).unwrap();
+        client.initialize().unwrap();
+        let catalog = client.list_tools_catalog().unwrap();
+        let case = ProbeCase::Contention {
+            id: "concurrent".into(),
+            tool: "ok".into(),
+            access: Access::ReadOnly,
+            sandbox: None,
+            arguments: json!({}),
+        };
+        let started = Instant::now();
+        let error = run_unjournaled(&case, &mut client, &catalog, &target, None).unwrap_err();
+        drop(client);
+        let reason = transport_reason(&error);
+        assert_eq!(reason, FailureReason::EvaluationBudgetExceeded);
+        assert!(
+            reason.is_transport(),
+            "unfinished verification must not receive credit"
+        );
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
 
     #[test]
     fn failure_reason_all_lists_every_variant_and_labels_round_trip() {

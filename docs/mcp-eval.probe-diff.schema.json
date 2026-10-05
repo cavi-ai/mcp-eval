@@ -174,7 +174,8 @@
             "completion-stalled-request",
             "transport-timeout",
             "transport-closed",
-            "transport-error"
+            "transport-error",
+            "evaluation-budget-exceeded"
           ]
         },
         {

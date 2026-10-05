@@ -200,7 +200,8 @@ impl Outcome {
 
 /// Run the standard battery against `target` and fold it into readiness.
 pub(crate) fn run(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<Readiness> {
-    Ok(crate::score::fold(&observe(target, options)?))
+    let observations = observe(target, options);
+    Ok(crate::score::fold(&target.budget.finish(observations)?))
 }
 
 /// A fresh, initialized connection. The handshake keeps the transport's
@@ -231,6 +232,7 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
     // server-level cases run on the first of them.
     let mut succeeded: Vec<(&ToolDefinition, Value)> = Vec::new();
     for tool in &catalog.tools {
+        target.budget.check()?;
         let mut calls = CallCounts::default();
         let class = ToolClass::of(tool);
         let callable = match class {

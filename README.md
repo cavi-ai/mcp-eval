@@ -492,8 +492,17 @@ tools accept loopback HTTP endpoints only. Four HTTP workers keep finding and
 trend queries responsive during an evaluation. Only one evaluation runs at a
 time; overlapping requests receive an error and can retry after it finishes.
 At most sixteen connections wait for a worker; excess connections are closed.
-Headers and bodies share a five-second request deadline. This bounds request
-admission and I/O; evaluation duration still depends on its cases and timeouts.
+Headers and bodies share a five-second request deadline. Each probe, score,
+verification, or scaffold operation also shares a five-minute deadline and a
+4096-request cap across both transports, catalog pages, reconnects, concurrent
+calls, and the gate plus standard battery. Requests include handshakes and
+discovery; notifications and replies to server requests do not consume the
+request count, but remain subject to the deadline. Shorter operation timeouts
+still apply. Exhaustion reports `evaluation-budget-exceeded`, retains earlier
+completed case verdicts, leaves readiness unmeasured, and adds no verification
+credit for unfinished work. Startup or scaffold exhaustion returns an error.
+These limits bound server interaction; local parsing, journaling, reporting,
+and resource cleanup can add time beyond the deadline.
 The service supports MCP `ping`, advertises tool safety annotations and output
 schemas, and includes structured results alongside existing text. Process-launching
 tools carry conservative destructive and open-world hints; annotations do not

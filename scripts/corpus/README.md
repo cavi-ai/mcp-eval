@@ -22,6 +22,36 @@ Create a private target file with schema `mcpeval.corpus-targets/v1`, a
 - `prerequisites.checks`: named health-check commands, each with `name` and a
   `command` array. Checks must exit zero within ten seconds. Use `[]` only when
   the target needs no backing-service checks.
+- Optional `prerequisites.state_checks`: named service-state assertions with
+  `name`, an explicit `command` array, and an expected lowercase SHA-256 in
+  `sha256`. Names must be unique across health and state checks. Omitting this
+  field retains the existing health-only behavior.
+
+State adapters must read the actual backing service and print only its stable
+state digest, optionally followed by one newline, with a zero exit status.
+They use the declared environment and fresh home, with a ten-second deadline
+and a 1 KiB output limit. Store adapters in the prepared deployment to bind
+their bytes too. Capture the expected digest when preparing the service
+snapshot; the collector does not establish or update it automatically.
+
+After health checks, collection and replay compare every state digest before
+launching the evaluator and again after evaluation, even if evaluation failed.
+A different digest is `errored` with `state-mismatch`. A failed, unavailable,
+or malformed state check is `untested` before evaluation and `errored` after
+it, with `state-check-failed`. These outcomes retain no observation or report.
+Successful observations contain only state-check names and expected digests,
+plus `state:` prerequisite references; adapter output is not persisted.
+Original reports and the declared state identities must agree before replay.
+
+Fingerprint the service identity and relevant dataset/configuration together.
+An adapter's digest only proves equality of what it measures; an adapter that
+prints a constant proves no service state. Keep credentials and sensitive
+low-entropy values out of published digests. State checks do not restore,
+freeze, or authenticate a service. Concurrent changes that are reverted between
+checks remain undetectable. Use a read-only snapshot or service-supported
+consistent read boundary and make the MCP server and adapter use that same
+snapshot to mitigate this race. Changes outside the adapter's measured state
+remain outside this evidence.
 
 An optional `deployment` replaces the package runner with a prepared local
 bundle. Include the installed dependencies and a native runtime executable in
@@ -102,10 +132,11 @@ Any untested, errored, or newly unavailable target prevents a verification pass.
 Areas must match, with the existing ten-point reliability tolerance. Differences
 report score drift; they do not establish its cause. Top-level package pins alone
 do not lock transitive dependencies or runtime versions. Bundles bind the
-prepared runtime and dependency bytes they contain, but neither mode locks
-service state, credential values, or the host operating system. Control those
-inputs separately before attributing drift to a server change. Artifact hashes
-bind bytes; they do not authenticate authors.
+prepared runtime and dependency bytes they contain. State checks bind the
+declared service-state projection at the check boundaries. Credentials and the
+host operating system remain external inputs; control them separately before
+attributing drift to a server change. Artifact hashes bind bytes; they do not
+authenticate authors.
 
 Run deterministic fixture coverage with `npm run test:corpus`. This lane does
 not download public servers or collect comparative measurements. Build both

@@ -16,6 +16,7 @@ const label = (value) => typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.:-]{
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
 const score = (value) => count(value) && value <= 100;
+const explicitCommand = (value) => Array.isArray(value) && value.length > 0 && value.every((arg) => typeof arg === "string" && arg.length > 0 && arg.length <= 8192 && !arg.includes("\0"));
 function require(condition, message) { if (!condition) throw new Error(message); }
 
 export function commandFor(target) {
@@ -51,7 +52,12 @@ export function validateTargets(document) {
     const names = new Set();
     for (const check of prerequisites.checks) {
       require(label(check.name) && !names.has(check.name), "invalid or duplicate prerequisite check"); names.add(check.name);
-      require(Array.isArray(check.command) && check.command.length > 0 && check.command.every((arg) => typeof arg === "string" && arg.length > 0 && arg.length <= 8192 && !arg.includes("\0")), "prerequisite check requires an explicit command array");
+      require(explicitCommand(check.command), "prerequisite check requires an explicit command array");
+    }
+    require(prerequisites.state_checks === undefined || Array.isArray(prerequisites.state_checks), "state checks require an array");
+    for (const check of prerequisites.state_checks ?? []) {
+      require(check && label(check.name) && !names.has(check.name) && digest(check.sha256), "invalid or duplicate state check identity"); names.add(check.name);
+      require(explicitCommand(check.command), "state check requires an explicit command array");
     }
   }
   return document;
@@ -84,8 +90,9 @@ export function observationFrom(raw, target, evaluator, standard) {
     calls: Object.fromEntries(COUNTS.map((key) => [key, calls[key]])), provenance: {
       runtime: target.runtime, package: target.package, version: target.version, bin: target.bin,
       ...(target.deployment === undefined ? {} : { deployment_sha256: target.deployment.sha256 }),
+      ...((target.prerequisites.state_checks?.length ?? 0) === 0 ? {} : { state_checks: target.prerequisites.state_checks.map(({ name, sha256 }) => ({ name, sha256 })) }),
       launch_sha256: sha256(JSON.stringify(commandFor(target))), report_sha256: sha256(raw),
-      prerequisites: [...target.prerequisites.environment.map((name) => `env:${name}`), ...target.prerequisites.checks.map((check) => `check:${check.name}`)],
+      prerequisites: [...target.prerequisites.environment.map((name) => `env:${name}`), ...target.prerequisites.checks.map((check) => `check:${check.name}`), ...(target.prerequisites.state_checks ?? []).map((check) => `state:${check.name}`)],
     } } };
 }
 
@@ -98,7 +105,7 @@ export function validateCorpus(corpus) {
   for (const entry of corpus.population) {
     require(label(entry.server) && !seen.has(entry.server) && ["observed", "untested", "errored"].includes(entry.status), "invalid or duplicate population entry"); seen.add(entry.server);
     if (entry.status === "observed") { require(entry.reason === undefined, "observed target cannot have a failure reason"); observed.add(entry.server); }
-    else require(["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report", "deployment-mismatch"].includes(entry.reason), "invalid unobserved reason");
+    else require(["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report", "deployment-mismatch", "state-check-failed", "state-mismatch"].includes(entry.reason), "invalid unobserved reason");
   }
   const rows = new Set();
   for (const observation of corpus.observations) {
@@ -106,8 +113,15 @@ export function validateCorpus(corpus) {
     require(AREAS.every((key) => score(observation.areas?.[key])) && Object.keys(observation.areas).length === AREAS.length, "invalid corpus areas");
     require(count(observation.tool_count) && observation.tool_count > 0 && count(observation.catalog_tokens) && COUNTS.every((key) => count(observation.calls?.[key])) && COUNTS.slice(0, -1).some((key) => observation.calls[key] > 0), "invalid corpus measurements");
     const source = observation.provenance;
-    require(source && digest(source.report_sha256) && digest(source.launch_sha256) && Array.isArray(source.prerequisites) && source.prerequisites.every((name) => /^(env|check):[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/u.test(name)), "invalid observation provenance");
+    require(source && digest(source.report_sha256) && digest(source.launch_sha256) && Array.isArray(source.prerequisites) && source.prerequisites.every((name) => /^(env|check|state):[A-Za-z_][A-Za-z0-9_.:-]{0,127}$/u.test(name)) && new Set(source.prerequisites).size === source.prerequisites.length, "invalid observation provenance");
     require(source.deployment_sha256 === undefined || digest(source.deployment_sha256), "invalid deployment provenance");
+    require(source.state_checks === undefined || Array.isArray(source.state_checks), "invalid state provenance");
+    const states = new Set();
+    for (const check of source.state_checks ?? []) {
+      require(check && label(check.name) && digest(check.sha256) && !states.has(check.name) && source.prerequisites.includes(`state:${check.name}`), "invalid or duplicate state provenance");
+      states.add(check.name);
+    }
+    require(states.size === source.prerequisites.filter((name) => name.startsWith("state:")).length, "incomplete state provenance");
     commandFor({ ...source, server: observation.server, args: [] });
   }
   require(rows.size === observed.size, "population observations are incomplete");
@@ -152,6 +166,16 @@ export function environmentFor(target, home, environment = process.env) {
   return { ...env, ...ISOLATION, HOME: home, USERPROFILE: home, MCPEVAL_HOME: path.join(home, "mcpeval") };
 }
 
+async function stateCheckFailure(target, context, env) {
+  for (const check of target.prerequisites.state_checks ?? []) {
+    const result = await context.execute(check.command, { env, cwd: context.home, timeoutMs: 10_000, maxBytes: 1024 });
+    const identity = /^([a-f0-9]{64})(?:\r?\n)?$/u.exec(result.stdout ?? "");
+    if (result.reason || result.code !== 0 || !identity) return "state-check-failed";
+    if (identity[1] !== check.sha256) return "state-mismatch";
+  }
+  return null;
+}
+
 export async function evaluateTarget(target, context) {
   if (target.prerequisites.environment.some((name) => !context.environment[name]?.trim())) return { status: "untested", reason: "missing-environment" };
   const mismatch = { status: "errored", reason: "deployment-mismatch" };
@@ -162,8 +186,13 @@ export async function evaluateTarget(target, context) {
     if (!await deploymentMatches(target.deployment)) return mismatch;
     if (result.reason || result.code !== 0) return { status: "untested", reason: "prerequisite-failed" };
   }
+  const before = await stateCheckFailure(target, context, env);
+  if (target.prerequisites.state_checks?.length && !await deploymentMatches(target.deployment)) return mismatch;
+  if (before) return { status: before === "state-mismatch" ? "errored" : "untested", reason: before };
   const result = await context.execute([context.binary, ...scoreArguments(target.server), "--", ...commandFor(target)], { env, cwd: context.home });
+  const after = await stateCheckFailure(target, context, env);
   if (!await deploymentMatches(target.deployment)) return mismatch;
+  if (after) return { status: "errored", reason: after };
   if (result.reason || ![0, 2].includes(result.code)) return { status: "errored", reason: "evaluation-failed" };
   try { return { ...observationFrom(result.stdout, target, context.evaluator, context.standard), raw: result.stdout }; }
   catch { return { status: "errored", reason: "invalid-report" }; }

@@ -4,6 +4,9 @@
 
 ### Added
 
+- Optional corpus service-state checks compare expected digests before and after
+  evaluation. Changed or unavailable state prevents observation credit, and
+  successful observations retain named state identities for replay.
 - Optional prepared corpus deployments bind runtime and dependency-tree bytes.
   Direct launches bypass package resolution; changed bundles lose observation
   credit during collection and replay.

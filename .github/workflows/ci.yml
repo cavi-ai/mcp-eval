@@ -157,6 +157,7 @@ jobs:
           npm run docs:verify
           npm run docs:test
           npm run test:action
+          npm run test:corpus
 
       - name: Distribution contract
         run: |

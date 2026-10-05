@@ -4,6 +4,9 @@
 
 ### Added
 
+- Provenance corpus v3, pinned collection targets, declared prerequisite checks,
+  evaluator/report hashes, and explicit observed, untested, and errored outcomes.
+  Deterministic corpus fixtures run in CI; no new public measurements are collected.
 - Recorder and event UUIDv4 identities for new captures and probe journals.
   CLI and MCP annotations accept an event ID without legacy session coordinates.
 - Shared five-minute and 4096-request budgets for probe, score, verification,

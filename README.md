@@ -250,8 +250,12 @@ placed only against a corpus of its own standard. A personal corpus at
 **[State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md)** —
 the corpus is also published: how healthy are the MCP servers agents actually
 use? 33 popular public servers, scored by the same standard battery,
-distribution published with full method notes. Reproduce it locally with one script; add
-your server by PR.
+distribution published with full method notes. Its missing historical package
+and evaluator provenance cannot be recovered. New collections require explicit
+package pins and declared prerequisites; see the [corpus harness](scripts/corpus/README.md).
+The v3 format records every target as observed, untested, or errored and keeps
+evaluator and report hashes. Historical v2 data remains readable, but the drift
+checker refuses to replay it as a pinned collection.
 
 Every full-battery run that measured readiness appends a content-free record
 to `<MCPEVAL_HOME>/store/probes/history.jsonl`; `mcpeval trends` renders the

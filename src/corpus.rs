@@ -9,18 +9,19 @@
 //! middling share. Calibration is deterministic: same score against same
 //! corpus, same placement.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
 
 use anyhow::Context;
 use serde::Deserialize;
 
-/// The corpus document version this build reads.
+/// Historical corpus format retained for compatibility.
 pub const SCHEMA: &str = "mcpeval.readiness-corpus/v2";
+pub const PROVENANCE_SCHEMA: &str = "mcpeval.readiness-corpus/v3";
 
 #[derive(Debug, Deserialize)]
 pub struct Corpus {
-    /// "mcpeval.readiness-corpus/v2".
+    /// Historical v2 or provenance-bearing v3.
     pub schema: String,
     /// Where the observations came from; informational.
     pub source: String,
@@ -71,13 +72,19 @@ impl Corpus {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let body = std::fs::read_to_string(path)
             .with_context(|| format!("reading corpus {}", path.display()))?;
-        let corpus: Self = serde_json::from_str(&body).context("parsing readiness corpus")?;
+        let document: serde_json::Value =
+            serde_json::from_str(&body).context("parsing readiness corpus")?;
+        let corpus: Self =
+            serde_json::from_value(document.clone()).context("parsing readiness corpus")?;
         corpus.validate()?;
+        if corpus.schema == PROVENANCE_SCHEMA {
+            validate_provenance(&document)?;
+        }
         Ok(corpus)
     }
 
     fn validate(&self) -> anyhow::Result<()> {
-        if self.schema != SCHEMA {
+        if self.schema != SCHEMA && self.schema != PROVENANCE_SCHEMA {
             anyhow::bail!("unsupported corpus schema {}", self.schema);
         }
         if self.standard.is_empty() {
@@ -85,6 +92,18 @@ impl Corpus {
         }
         if self.observations.is_empty() {
             anyhow::bail!("corpus has no observations");
+        }
+        let mut servers = HashSet::new();
+        for observation in &self.observations {
+            if !crate::privacy::valid_server(&observation.server)
+                || !servers.insert(&observation.server)
+                || observation.score > 100
+                || observation.areas.iter().any(|(name, score)| {
+                    crate::score::Area::from_label(name).is_none() || *score > 100
+                })
+            {
+                anyhow::bail!("invalid or duplicate corpus observation");
+            }
         }
         Ok(())
     }
@@ -120,6 +139,57 @@ impl Corpus {
             median_tokens,
         })
     }
+}
+
+/// Validate v3 metadata before reducing it to the calibration view. This
+/// establishes structure and consistency, not artifact authenticity; the
+/// collector's verifier checks the original reports and executable hashes.
+fn validate_provenance(document: &serde_json::Value) -> anyhow::Result<()> {
+    let schema: serde_json::Value =
+        serde_json::from_str(include_str!("../docs/mcp-eval.corpus.schema.json"))?;
+    if !crate::schema::conforms(&schema, document) {
+        anyhow::bail!("invalid corpus provenance");
+    }
+    let mut population = HashSet::new();
+    let mut observed = HashSet::new();
+    for entry in document["population"]
+        .as_array()
+        .expect("validated population")
+    {
+        let server = entry["server"].as_str().expect("validated server");
+        if !population.insert(server) {
+            anyhow::bail!("duplicate corpus population target");
+        }
+        if entry["status"] == "observed" {
+            observed.insert(server);
+        }
+    }
+    let observations = document["observations"]
+        .as_array()
+        .expect("validated observations");
+    if observed.len() != observations.len() {
+        anyhow::bail!("corpus population and observations disagree");
+    }
+    for observation in observations {
+        if !observed.contains(observation["server"].as_str().expect("validated server"))
+            || ![
+                "successful_calls",
+                "tool_errors",
+                "rpc_errors",
+                "rejected_calls",
+                "transport_errors",
+            ]
+            .iter()
+            .any(|key| {
+                observation["calls"][key]
+                    .as_u64()
+                    .is_some_and(|value| value > 0)
+            })
+        {
+            anyhow::bail!("corpus observation lacks observed tool-call evidence");
+        }
+    }
+    Ok(())
 }
 
 /// Resolve the corpus in priority order: explicit override, MCPEVAL_HOME,

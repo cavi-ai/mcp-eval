@@ -1,216 +1,152 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { collectCorpus } from "./collect.mjs";
+import { verifyCorpus, driftOf, driftedResults, platformMismatch } from "./verify.mjs";
+import { AREAS, COUNTS, ROOT, commandFor, validateTargets, runCommand, sha256, environmentFor } from "./contract.mjs";
 
-import {
-  ISOLATION,
-  NPM_PACKAGES,
-  NPM_SERVERS,
-  UVX_PACKAGES,
-  UVX_SERVERS,
-  RELIABILITY_TOLERANCE,
-  commandFor,
-  platformMismatch,
-  driftOf,
-  readinessScore,
-  scoreArguments,
-} from "./verify.mjs";
+const target = (server, extra = {}) => ({ server, runtime: "npm", package: "fixture-package", version: "1.2.3", bin: "fixture-server", args: [], prerequisites: { environment: [], checks: [] }, ...extra });
+const report = (server, changes = {}) => ({ schema: "mcpeval.probe-report/v2", server, generator: { name: "mcpeval", version: "0.4.0" }, gate: null, cases: [], passed: true, readiness: {
+  standard: "mcpeval-standard/2", score: 50, surface: { tools: 1, read_only: 1, writers: 0, exercised: 0 },
+  areas: AREAS.map((name) => ({ name, score: 50, measurements: name === "reliability" ? Object.fromEntries(COUNTS.map((key) => [key, key === "tool_errors" ? 3 : 0])) : name === "context" ? { catalog_tokens: 100 } : {} })), ...changes,
+} });
 
-const ROOT = path.resolve(import.meta.dirname, "../..");
-
-test("drift check launches exactly what collect.sh launches", async () => {
-  const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
-  const sectionBody = (name) => {
-    // Anchor on the array declaration line, not the for-loop usage that
-    // references the same name later in the script. Bash arrays are
-    // parenthesized: `NAME=( entries... )`.
-    const declaration = collect.indexOf(`${name}=(`);
-    assert.notEqual(declaration, -1, `collector is missing ${name}`);
-    const open = collect.indexOf("(", declaration);
-    const close = collect.indexOf("\n)", open);
-    assert.notEqual(close, -1, `collector array ${name} is unterminated`);
-    return collect.slice(open + 1, close);
+async function fixture(t, targets, evaluate = (server) => report(server)) {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpeval-corpus-test-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const binary = path.join(dir, "evaluator"); await writeFile(binary, "fixture executable identity");
+  const targetsPath = path.join(dir, "targets.json");
+  await writeFile(targetsPath, JSON.stringify({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets }));
+  const launches = [];
+  const execute = async (command, options) => {
+    launches.push({ command, options });
+    if (command[1] === "--version") return { code: 0, stdout: "mcpeval 0.4.0\n" };
+    if (command[0] !== binary) return { code: 1, stdout: "PRIVATE_PREREQUISITE_OUTPUT" };
+    const value = await evaluate(command[3]);
+    return typeof value === "string" ? { code: 3, stdout: value } : { code: 0, stdout: `${JSON.stringify(value)}\n` };
   };
-  const labelsOf = (name) => {
-    const body = sectionBody(name);
-    return body
-      .split("\n")
-      .map((line) => line.trim().replace(/,\s*$/, ""))
-      .filter((line) => line.startsWith('"'))
-      .map((line) => line.split("|")[0].slice(1));
-  };
-  const npmLabels = labelsOf("NPM_SERVERS");
-  const uvxLabels = labelsOf("UVX_SERVERS");
-  assert.ok(npmLabels.length >= 20, `unexpectedly few npm labels: ${npmLabels.length}`);
-  assert.ok(uvxLabels.length >= 5, `unexpectedly few uvx labels: ${uvxLabels.length}`);
-  assert.deepEqual([...NPM_SERVERS.keys()].sort(), npmLabels.sort());
-  assert.deepEqual([...UVX_SERVERS.keys()].sort(), uvxLabels.sort());
-
-  // Every label resolves to a launch command.
-  for (const label of [...npmLabels, ...uvxLabels]) {
-    const command = commandFor(label);
-    assert.ok(command, `no launch command for ${label}`);
-    assert.ok(command.length >= 2, `launch command too short for ${label}: ${command}`);
-  }
-
-  // Package names agree: the drift check must launch the same bytes as
-  // the collector for every label.
-  for (const label of npmLabels) {
-    const expected = packageFromEntry(collect, "NPM_SERVERS", label);
-    assert.equal(NPM_PACKAGES.get(label), expected, `npm package mismatch for ${label}`);
-  }
-  for (const label of uvxLabels) {
-    const expected = packageFromEntry(collect, "UVX_SERVERS", label);
-    assert.equal(UVX_PACKAGES.get(label), expected, `uvx package mismatch for ${label}`);
-  }
-});
-
-function packageFromEntry(collect, name, label) {
-  const declaration = collect.indexOf(`${name}=(`);
-  const open = collect.indexOf("(", declaration);
-  const close = collect.indexOf("\n)", open);
-  const body = collect.slice(open + 1, close);
-  const entry = body
-    .split("\n")
-    .map((line) => line.trim().replace(/,\s*$/, ""))
-    .find((line) => line.startsWith(`"${label}|`));
-  assert.ok(entry, `collector entry for ${label} not found`);
-  return entry.split("|")[1];
+  const options = { targetsPath, binary, output: path.join(dir, "corpus.json"), minimum: 1, execute, environment: { PATH: process.env.PATH, PRIVATE_UNDECLARED: "SECRET" } };
+  return { dir, options, launches };
 }
 
-test("the corpus score is the standard's readiness", async () => {
-  assert.equal(readinessScore({ gate: null, readiness: { score: 71, standard: "s" } }), 71);
-  assert.equal(readinessScore({ readiness: { score: 0, standard: "s" } }), 0);
-  assert.equal(readinessScore({ readiness: null, readiness_error: "transport-closed" }), null);
-  assert.equal(readinessScore({}), null);
-
-  // Both scripts run the standard battery with no manifest.
-  assert.deepEqual(scoreArguments("demo"), ["score", "--server", "demo", "--format", "json"]);
-  const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
-  const scoreLine = collect.split("\n").find((line) => line.includes('"$BIN" score'));
-  assert.ok(scoreLine?.includes("--format json"), `collector score line: ${scoreLine}`);
-  assert.ok(!collect.includes("--manifest"), "collector still runs a manifest");
+test("collector keeps declared population and distinguishes real failing calls from untested targets", async (t) => {
+  const targets = [target("failing"), target("missing", { prerequisites: { environment: ["FIXTURE_TOKEN"], checks: [] } }), target("service", { prerequisites: { environment: [], checks: [{ name: "backend", command: [process.execPath, "health.mjs"] }] } }), target("no-calls"), target("broken")];
+  const f = await fixture(t, targets, (server) => {
+    if (server === "broken") return "PRIVATE_INVALID_REPORT";
+    const result = report(server);
+    if (server === "no-calls") result.readiness.areas.find((area) => area.name === "reliability").measurements.tool_errors = 0;
+    return result;
+  });
+  const { corpus, reports, sufficient } = await collectCorpus(f.options);
+  assert.equal(sufficient, true);
+  assert.deepEqual(corpus.population.map((item) => [item.server, item.status, item.reason]), [["failing", "observed", undefined], ["missing", "untested", "missing-environment"], ["service", "untested", "prerequisite-failed"], ["no-calls", "untested", "no-tool-calls"], ["broken", "errored", "evaluation-failed"]]);
+  assert.equal(corpus.observations.length, 1);
+  assert.equal(corpus.observations[0].calls.tool_errors, 3);
+  assert.equal(corpus.observations[0].score, 50);
+  assert.match(corpus.evaluator.sha256, /^[a-f0-9]{64}$/u);
+  assert.equal(corpus.observations[0].provenance.report_sha256, sha256(await readFile(path.join(reports, "failing.json"))));
+  const text = await readFile(f.options.output, "utf8");
+  assert.ok(!text.includes("PRIVATE_"));
+  assert.ok(!f.launches.some(({ command }) => command.includes("missing") || command.includes("service")));
+  const replay = await verifyCorpus({ ...f.options, corpusPath: f.options.output, reportsPath: reports });
+  assert.equal(driftedResults(replay.results).length, 4);
 });
 
-test("drift: every area but reliability must match; reliability may move one latency band", () => {
-  const areas = { protocol: 100, catalog: 64, context: 32, "error-honesty": 0, reliability: 91, coverage: 100 };
-  const expected = { server: "notion", score: 66, areas };
-  const observed = (changes) => ({ score: 66, areas: { ...areas, ...changes } });
-  assert.deepEqual(driftOf(expected, observed({})), []);
-  // Latency depends on the machine and network: one band on every tool.
-  assert.deepEqual(driftOf(expected, { ...observed({ reliability: 100 }), score: 67 }), []);
-  assert.deepEqual(driftOf(expected, observed({ reliability: 91 - RELIABILITY_TOLERANCE })), []);
-  assert.deepEqual(driftOf(expected, observed({ reliability: 91 - RELIABILITY_TOLERANCE - 1 })), [
-    `reliability 91→${90 - RELIABILITY_TOLERANCE}`,
-  ]);
-  // Every other area is a function of the server's code: exact.
-  assert.deepEqual(driftOf(expected, observed({ catalog: 65 })), ["catalog 64→65"]);
-  assert.deepEqual(driftOf(expected, observed({ coverage: undefined })), ["coverage 100→none"]);
-  // An observation without areas compares the score.
-  assert.deepEqual(driftOf({ server: "a", score: 40 }, { score: 41, areas: {} }), ["score 40→41"]);
-  assert.equal(RELIABILITY_TOLERANCE, 10);
-});
-
-test("drift is checked on the platform the corpus was collected on", () => {
-  // desktop-commander writes OS-specific notes into its tool descriptions,
-  // so its catalog, and its context score, differ by platform.
-  assert.equal(platformMismatch({ platform: "darwin" }, "darwin"), null);
-  assert.match(platformMismatch({ platform: "darwin" }, "linux"), /collected on darwin.*linux/u);
-  assert.match(platformMismatch({}, "linux"), /names no platform/u);
-});
-
-test("both scripts keep servers away from this machine's cluster and containers", async () => {
-  const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
-  assert.ok(Object.keys(ISOLATION).length >= 2);
-  for (const [name, value] of Object.entries(ISOLATION)) {
-    const exported = collect.match(new RegExp(`^export ${name}=(.+)$`, "mu"))?.[1];
-    assert.ok(exported, `collector does not export ${name}`);
-    assert.equal(exported.replaceAll('"', "").replace("$ROOT", ROOT), value, name);
+test("original artifacts and projected scores must agree before drift replay", async (t) => {
+  const f = await fixture(t, [target("one")]);
+  const collection = await collectCorpus(f.options);
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports };
+  const result = await verifyCorpus(options);
+  assert.deepEqual(driftedResults(result.results), []);
+  const original = await readFile(f.options.output, "utf8");
+  for (const corrupt of [
+    (doc) => { doc.evaluator.sha256 = "0".repeat(64); },
+    (doc) => { doc.targets_sha256 = "0".repeat(64); },
+    (doc) => { doc.observations[0].score = 60; },
+    (doc) => { doc.observations[0].provenance.report_sha256 = "0".repeat(64); },
+    (doc) => { doc.population.push({ server: "fake", status: "observed" }); },
+  ]) {
+    const doc = JSON.parse(original); corrupt(doc); await writeFile(f.options.output, JSON.stringify(doc));
+    const before = f.launches.filter(({ command }) => command[1] === "score").length;
+    await assert.rejects(verifyCorpus(options));
+    assert.equal(f.launches.filter(({ command }) => command[1] === "score").length, before);
   }
-  // A valid kubeconfig with no cluster: the Kubernetes server starts and
-  // reaches nothing.
-  const kubeconfig = await readFile(ISOLATION.KUBECONFIG, "utf8");
-  assert.match(kubeconfig, /^clusters: \[\]$/mu);
-  assert.match(kubeconfig, /^contexts: \[\]$/mu);
+  await writeFile(f.options.output, original);
+  await writeFile(path.join(collection.reports, "one.json"), "changed original artifact");
+  await assert.rejects(verifyCorpus(options), /digest mismatch/u);
 });
 
-test("every corpus observation has a launch command", async () => {
-  const corpus = JSON.parse(
-    await readFile(path.join(ROOT, "data/readiness-corpus.json"), "utf8"),
-  );
-  for (const observation of corpus.observations) {
-    assert.ok(
-      commandFor(observation.server),
-      `corpus observation ${observation.server} has no launch command`,
-    );
-  }
+test("historical corpus refusal happens before any package or evaluator execution", async () => {
+  let launched = false;
+  await assert.rejects(verifyCorpus({ execute: () => { launched = true; throw new Error("must not launch"); } }), /historical/u);
+  assert.equal(launched, false);
 });
-function heredoc(collect, opener, terminator) {
-  const start = collect.indexOf(opener);
-  assert.notEqual(start, -1, `collector is missing ${opener}`);
-  const body = collect.indexOf("\n", start) + 1;
-  const end = collect.indexOf(`\n${terminator}`, body);
-  const after = collect[end + terminator.length + 1];
-  assert.ok(end !== -1 && (after === undefined || after === "\n"), `collector heredoc ${opener} is unterminated`);
-  return collect.slice(body, end);
-}
 
-test("collector records readiness, areas, and catalog measurements", async () => {
-  const collect = await readFile(path.join(ROOT, "scripts/corpus/collect.sh"), "utf8");
-  const writer = heredoc(collect, `python3 - "$REPORTS" "$OUT" <<'PYEOF'`, "PYEOF");
-
-  const work = await mkdtemp(path.join(os.tmpdir(), "mcpeval-corpus-collect-"));
-  const reports = path.join(work, "reports");
-  await mkdir(reports);
-  const STANDARD = "mcpeval-standard/1";
-  const report = (score, tools, tokens) =>
-    JSON.stringify({
-      schema: "mcpeval.probe-report/v2",
-      gate: null,
-      readiness: {
-        standard: STANDARD,
-        score,
-        surface: { tools, read_only: tools, writers: 0, exercised: 0 },
-        areas: [
-          { name: "protocol", weight: 15, score: 100, measurements: {}, checks: [] },
-          { name: "context", weight: 15, score: 90, measurements: { catalog_tokens: tokens }, checks: [] },
-          { name: "coverage", weight: 15, score: score, measurements: {}, checks: [] },
-        ],
-      },
-      cases: [],
-    });
-  for (let index = 0; index < 10; index += 1) {
-    await writeFile(path.join(reports, `server-${index}.json`), report(90 - index, index + 1, 100 * (index + 1)));
+test("target locks reject ranges, tags, duplicate labels, implicit prerequisites, and unknown runtimes", () => {
+  for (const change of [{ version: "latest" }, { version: "^1.2.3" }, { version: "1.x" }, { runtime: "curl" }, { bin: "../secret" }, { prerequisites: undefined }]) {
+    assert.throws(() => validateTargets({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets: [target("one", change)] }));
   }
-  await writeFile(path.join(reports, "could-not-run.json"), "");
-  await writeFile(
-    path.join(reports, "unmeasured.json"),
-    JSON.stringify({ schema: "mcpeval.probe-report/v2", gate: null, readiness: null, readiness_error: "transport-closed", cases: [] }),
-  );
-  await writeFile(path.join(reports, "empty.json"), report(20, 0, 0));
-  const out = path.join(work, "corpus.json");
-  execFileSync("python3", ["-", reports, out], { input: writer, stdio: ["pipe", "ignore", "inherit"] });
+  assert.throws(() => validateTargets({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets: [target("one"), target("one")] }));
+  assert.deepEqual(commandFor(target("python", { runtime: "uvx", package: "fixture_python", version: "1.2.3rc1" })), ["uvx", "--from", "fixture_python==1.2.3rc1", "fixture-server"]);
+});
 
-  const document = JSON.parse(await readFile(out, "utf8"));
-  assert.equal(document.schema, "mcpeval.readiness-corpus/v2");
-  assert.equal(document.standard, STANDARD);
-  assert.equal(document.platform, process.platform);
-  assert.equal(document.battery, undefined);
-  assert.deepEqual(
-    document.observations.find((observation) => observation.server === "server-2"),
-    {
-      server: "server-2",
-      score: 88,
-      areas: { protocol: 100, context: 90, coverage: 88 },
-      tool_count: 3,
-      catalog_tokens: 300,
-    },
-  );
-  assert.equal(document.observations.length, 10);
-  for (const skipped of ["could-not-run", "unmeasured", "empty"]) {
-    assert.ok(!document.observations.some((observation) => observation.server === skipped), skipped);
-  }
+test("only declared environment reaches a fresh home with isolation overrides", () => {
+  const env = environmentFor(target("one", { prerequisites: { environment: ["FIXTURE_TOKEN"], checks: [] } }), "/fixture-home", { FIXTURE_TOKEN: "PRIVATE_TOKEN", OTHER_TOKEN: "PRIVATE_OTHER", HOME: "/private-original", DOCKER_HOST: "live-docker", KUBECONFIG: "live-cluster", PATH: "fixture-path" });
+  assert.equal(env.FIXTURE_TOKEN, "PRIVATE_TOKEN"); assert.equal(env.OTHER_TOKEN, undefined);
+  assert.equal(env.HOME, "/fixture-home"); assert.equal(env.DOCKER_HOST, "unix:///nonexistent/docker.sock");
+  assert.equal(env.KUBECONFIG, path.join(ROOT, "scripts/corpus/empty-kubeconfig.yaml"));
+});
+
+test("drift retains the reliability tolerance and requires the original platform", () => {
+  assert.deepEqual(driftOf({ areas: { reliability: 50, catalog: 50 } }, { areas: { reliability: 60, catalog: 50 } }), []);
+  assert.deepEqual(driftOf({ areas: { reliability: 50, catalog: 50 } }, { areas: { reliability: 61, catalog: 51 } }), ["reliability 50→61", "catalog 50→51"]);
+  assert.equal(platformMismatch({ platform: process.platform }, process.platform), null);
+  assert.match(platformMismatch({ platform: "different" }, process.platform), /collected on/u);
+});
+
+test("process runner bounds stalled and oversized programs and reports missing executables", async () => {
+  assert.equal((await runCommand([process.execPath, "-e", "setInterval(()=>{}, 1000)"], { timeoutMs: 100 })).reason, "timeout");
+  assert.equal((await runCommand([process.execPath, "-e", "process.stdout.write('x'.repeat(4096)); setInterval(()=>{},1000)"], { maxBytes: 1024 })).reason, "output-limit");
+  assert.equal((await runCommand(["mcpeval-fixture-does-not-exist-123"])).reason, "launch-failed");
+});
+
+test("collection refuses overwriting a candidate before launching and retains insufficient population", async (t) => {
+  const f = await fixture(t, [target("one")]);
+  const result = await collectCorpus({ ...f.options, minimum: 10 });
+  assert.equal(result.sufficient, false);
+  const before = f.launches.length;
+  await assert.rejects(collectCorpus(f.options), /output exists/u);
+  assert.equal(f.launches.length, before);
+  const original = await readFile(f.options.output, "utf8");
+  await collectCorpus({ ...f.options, force: true });
+  assert.equal(await readFile(f.options.output, "utf8"), original);
+});
+
+test("a racing output writer is preserved without force", async (t) => {
+  const f = await fixture(t, [target("one")]);
+  const execute = async (command, options) => {
+    if (command[1] === "--version") await writeFile(f.options.output, "ORIGINAL_RACING_WRITER");
+    return f.options.execute(command, options);
+  };
+  await assert.rejects(collectCorpus({ ...f.options, execute }), { code: "EEXIST" });
+  assert.equal(await readFile(f.options.output, "utf8"), "ORIGINAL_RACING_WRITER");
+});
+
+test("native evaluator and demo complete collection and artifact-checked replay through a fixture launcher", async (t) => {
+  const binary = path.resolve(process.env.MCPEVAL_CORPUS_TEST_BINARY ?? path.join(ROOT, "target/release", process.platform === "win32" ? "mcpeval.exe" : "mcpeval"));
+  const demo = path.join(path.dirname(binary), process.platform === "win32" ? "mcpeval-demo.exe" : "mcpeval-demo");
+  const f = await fixture(t, [target("fixture-demo")]);
+  // Replace only the package-launch boundary with the local demo fixture;
+  // evaluator, JSON-RPC, subprocess lifecycle, reports, and replay are real.
+  const execute = (command, options) => {
+    if (command[0] === binary && command[1] === "score") return runCommand([...command.slice(0, command.indexOf("--")), "--", demo], options);
+    return runCommand(command, options);
+  };
+  const options = { ...f.options, binary, execute, environment: process.env };
+  const collection = await collectCorpus(options);
+  assert.equal(collection.corpus.observations.length, 1);
+  assert.ok(collection.corpus.observations[0].calls.successful_calls > 0);
+  assert.deepEqual(driftedResults((await verifyCorpus({ ...options, corpusPath: options.output, reportsPath: collection.reports })).results), []);
 });

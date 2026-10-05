@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mcpeval.readiness-corpus/v3",
+  "description": "Collection provenance and population outcomes. Hashes bind artifacts; they do not authenticate their author. Only observations enter calibration.",
+  "type": "object",
+  "required": ["schema", "source", "standard", "platform", "evaluator", "targets_sha256", "population", "observations"],
+  "properties": {
+    "schema": { "const": "mcpeval.readiness-corpus/v3" },
+    "source": { "type": "string", "minLength": 1 },
+    "standard": { "type": "string", "pattern": "^mcpeval-standard/[0-9]+$" },
+    "platform": { "type": "string", "minLength": 1 },
+    "evaluator": {
+      "type": "object", "required": ["version", "sha256"],
+      "properties": { "version": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/digest" } }
+    },
+    "targets_sha256": { "$ref": "#/$defs/digest" },
+    "population": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["server", "status"],
+        "properties": {
+          "server": { "$ref": "#/$defs/server" },
+          "status": { "enum": ["observed", "untested", "errored"] },
+          "reason": { "enum": ["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report"] }
+        },
+        "if": { "properties": { "status": { "const": "observed" } } },
+        "then": { "not": { "required": ["reason"] } },
+        "else": { "required": ["reason"] }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["server", "score", "areas", "tool_count", "catalog_tokens", "calls", "provenance"],
+        "properties": {
+          "server": { "$ref": "#/$defs/server" }, "score": { "$ref": "#/$defs/score" },
+          "areas": {
+            "type": "object", "required": ["protocol", "catalog", "context", "error-honesty", "reliability", "coverage"], "additionalProperties": false,
+            "properties": { "protocol": { "$ref": "#/$defs/score" }, "catalog": { "$ref": "#/$defs/score" }, "context": { "$ref": "#/$defs/score" }, "error-honesty": { "$ref": "#/$defs/score" }, "reliability": { "$ref": "#/$defs/score" }, "coverage": { "$ref": "#/$defs/score" } }
+          },
+          "tool_count": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+          "catalog_tokens": { "$ref": "#/$defs/count" },
+          "calls": {
+            "type": "object", "required": ["successful_calls", "tool_errors", "rpc_errors", "rejected_calls", "transport_errors", "untested_tools"],
+            "properties": { "successful_calls": { "$ref": "#/$defs/count" }, "tool_errors": { "$ref": "#/$defs/count" }, "rpc_errors": { "$ref": "#/$defs/count" }, "rejected_calls": { "$ref": "#/$defs/count" }, "transport_errors": { "$ref": "#/$defs/count" }, "untested_tools": { "$ref": "#/$defs/count" } }
+          },
+          "provenance": {
+            "type": "object", "required": ["runtime", "package", "version", "bin", "launch_sha256", "report_sha256", "prerequisites"],
+            "properties": {
+              "runtime": { "enum": ["npm", "uvx"] },
+              "package": { "type": "string", "minLength": 1, "maxLength": 258 },
+              "version": { "type": "string", "minLength": 1 },
+              "bin": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+              "launch_sha256": { "$ref": "#/$defs/digest" }, "report_sha256": { "$ref": "#/$defs/digest" },
+              "prerequisites": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^(env|check):[A-Za-z_][A-Za-z0-9_.:-]{0,127}$" } }
+            },
+            "if": { "properties": { "runtime": { "const": "npm" } } },
+            "then": { "properties": { "package": { "pattern": "^(?:@[a-z0-9._-]+/)?[a-z0-9][a-z0-9._-]{0,127}$" }, "version": { "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" } } },
+            "else": { "properties": { "package": { "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$" }, "version": { "pattern": "^[0-9]+(?:\\.[0-9]+){1,3}(?:(?:a|b|rc|\\.post|\\.dev)[0-9]+)?$" } } }
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "server": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$" },
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "count": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "score": { "type": "integer", "minimum": 0, "maximum": 100 }
+  }
+}

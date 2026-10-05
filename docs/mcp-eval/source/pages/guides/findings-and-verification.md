@@ -19,7 +19,7 @@ A finding keeps every distinct error code of its group in `err_codes` and the mo
 | `retry-did-not-recover` | every failure is retryable and no such recovery was captured |
 | `recurring-error` | none of the above |
 
-Finding IDs from earlier releases, which included the error code, re-key once on the next `mcpeval promote`: the most recently updated lifecycle state and its probe history move to the new ID, and older duplicates are dropped.
+Finding IDs from earlier releases, which included the error code, re-key once on the next `mcpeval promote`: the most recently updated lifecycle state moves to the new ID. Older duplicate state rows are retired; every historical verification is retained.
 
 `mcpeval promote` prints `promoted F of I issues`, followed by how many issues were seen in one session only and how many scored below the threshold when either count is nonzero. When there are no promoted findings, `mcpeval findings` writes a one-line explanation to stderr and exits 0.
 
@@ -47,6 +47,26 @@ mcpeval verify --finding finding-0123456789abcdef \
 `mcpeval generate --finding <id> --confirm-read-only --output <file>` writes a one-case manifest for the finding, with the finding ID as the case ID: a `degradation-over-n` case whose attempts are sized from the observed failure rate to catch the defect with 95% probability (3 for a deterministic error, up to 100), so the probe passes once the call succeeds. Fill every placeholder it lists before verifying.
 
 The first green result moves an open finding to `verifying`; the third consecutive green closes it. A red result resets the streak and reopens a verifying or closed finding; its line ends with `reason=<reason>`, followed by an indented `hint:` line with the remediation. Findings without an attached probe remain open, require manual closure, and are capped at medium severity.
+
+Pass credit is bound to the selected case definition, manifest version, timeout,
+referenced sandbox declaration, target command or endpoint configuration, and
+evaluator executable fingerprint. Changing any of those starts a fresh streak.
+Formatting, object-key order, and unrelated cases do not change the binding.
+The loaded definition is also the one executed; editing the manifest during a
+run cannot change its verification identity. Transport failures still record
+no verification evidence.
+
+The authoritative state and history live in `<MCPEVAL_HOME>/lifecycle.db`.
+`index.db` contains derived query tables; deleting it and running `index` then
+`promote` restores the lifecycle view from the durable database. Back up
+`lifecycle.db` together with `.salt`; do not include either in a share envelope.
+Existing index-only evidence is imported once, retaining its original outcomes
+and timestamps. Legacy evidence has no definition binding, so its passes do not
+count toward a new streak. Each new run has a unique ID: replaying it cannot add
+pass credit, and conflicting results under the same ID are refused.
+
+The binding is a salted local fingerprint. Raw arguments, sandbox prose, target
+paths, and endpoint values are not stored in the lifecycle database.
 
 ## Serving findings and the agent loop
 

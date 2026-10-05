@@ -4,6 +4,13 @@
 
 ### Changed
 
+- Verification state and history live in a durable `lifecycle.db`, separate
+  from the rebuildable index. Existing lifecycle rows are imported once;
+  finding-ID migrations retain every historical verification.
+- Verification streaks bind to the selected case, timeout, sandbox declaration,
+  target configuration, and evaluator executable fingerprint. Changed bindings
+  restart pass credit; legacy unbound history is retained without contributing
+  to new streaks. Verification run IDs prevent duplicate credit.
 - Readiness uses `mcpeval-standard/2`. Reliability is scaled by successful-call
   rate; consistently failing and untested tools earn no reliability credit.
   Coverage counts tools with at least one successful call. Reports include

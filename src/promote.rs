@@ -214,6 +214,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
     let mut db = Connection::open(root.join("index.db"))?;
     db.pragma_update(None, "foreign_keys", "ON")?;
     ensure_index_schema(&db)?;
+    crate::lifecycle::attach(&mut db, root)?;
 
     let mut grouped: HashMap<IssueKey, Vec<Failure>> = HashMap::new();
     {
@@ -245,7 +246,6 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
     }
 
     let transaction = db.transaction()?;
-    transaction.execute_batch(crate::lifecycle::SCHEMA)?;
     transaction.execute_batch(DERIVED_SCHEMA)?;
     let mut findings = 0usize;
     let mut single_session = 0usize;
@@ -378,7 +378,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         migrate_lifecycle(&transaction, &key, &finding_id)?;
         let has_probe: bool = transaction
             .query_row(
-                "SELECT probe_id IS NOT NULL FROM finding_lifecycle WHERE finding_id=?1",
+                "SELECT probe_id IS NOT NULL FROM evidence.finding_lifecycle WHERE finding_id=?1",
                 [&finding_id],
                 |row| row.get(0),
             )
@@ -440,7 +440,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
                 params![issue_id, finding_id],
             )?;
             transaction.execute(
-                "INSERT INTO finding_lifecycle
+                "INSERT INTO evidence.finding_lifecycle
                  (finding_id,server,tool,err_code,err_template_id,state,consecutive_passes,updated_at)
                  VALUES (?1,?2,?3,?4,?5,'open',0,?6)
                  ON CONFLICT(finding_id) DO NOTHING",
@@ -459,6 +459,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
     let issues: usize = transaction.query_row("SELECT COUNT(*) FROM issues", [], |row| {
         row.get::<_, i64>(0)
     })? as usize;
+    crate::lifecycle::project(&transaction)?;
     transaction.commit()?;
     Ok(PromotionStats {
         issues,
@@ -470,7 +471,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
 
 /// Moves the most recently updated lifecycle row recorded for this
 /// server, tool, and template under an earlier finding ID onto `finding_id`,
-/// with its probe history, and drops the rest.
+/// retaining every historical verification while retiring duplicate state rows.
 fn migrate_lifecycle(
     transaction: &rusqlite::Transaction<'_>,
     key: &IssueKey,
@@ -478,7 +479,7 @@ fn migrate_lifecycle(
 ) -> anyhow::Result<()> {
     let ids = transaction
         .prepare(
-            "SELECT finding_id FROM finding_lifecycle
+            "SELECT finding_id FROM evidence.finding_lifecycle
              WHERE server=?1 AND tool IS ?2 AND err_template_id IS ?3
              ORDER BY updated_at DESC, finding_id",
         )?
@@ -490,16 +491,22 @@ fn migrate_lifecycle(
         return Ok(());
     }
     for stale in &ids[1..] {
-        transaction.execute("DELETE FROM probe_history WHERE finding_id=?1", [stale])?;
-        transaction.execute("DELETE FROM finding_lifecycle WHERE finding_id=?1", [stale])?;
+        transaction.execute(
+            "UPDATE evidence.probe_history SET finding_id=?2 WHERE finding_id=?1",
+            params![stale, finding_id],
+        )?;
+        transaction.execute(
+            "DELETE FROM evidence.finding_lifecycle WHERE finding_id=?1",
+            [stale],
+        )?;
     }
     if ids[0] != finding_id {
         transaction.execute(
-            "UPDATE finding_lifecycle SET finding_id=?2 WHERE finding_id=?1",
+            "UPDATE evidence.finding_lifecycle SET finding_id=?2 WHERE finding_id=?1",
             params![ids[0], finding_id],
         )?;
         transaction.execute(
-            "UPDATE probe_history SET finding_id=?2 WHERE finding_id=?1",
+            "UPDATE evidence.probe_history SET finding_id=?2 WHERE finding_id=?1",
             params![ids[0], finding_id],
         )?;
     }

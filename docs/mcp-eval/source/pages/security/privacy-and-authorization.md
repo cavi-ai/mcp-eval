@@ -39,4 +39,4 @@ Schemas exceeding a budget are reported as unsynthesizable rather than called.
 
 The envelope contains JSONL records, typed annotation metadata, and a `SHARE.md` manifest. Annotation prose is omitted by default; after manual review, `--include-annotation-notes` explicitly includes it and prints a warning. `--include-probe-history` includes readiness-trend history. The redaction scan is a heuristic, not proof that arbitrary metadata is non-sensitive.
 
-The fingerprint salt, databases, and manifests are excluded. Keep any file containing the salt separate. `--force` replaces the entire prior envelope after successful preparation; a refused export preserves it.
+The fingerprint salt, databases (including authoritative `lifecycle.db`), and manifests are excluded. Keep any file containing the salt separate. `--force` replaces the entire prior envelope after successful preparation; a refused export preserves it.

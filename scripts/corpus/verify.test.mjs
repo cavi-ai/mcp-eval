@@ -50,8 +50,13 @@ test("collector keeps declared population and distinguishes real failing calls f
   const text = await readFile(f.options.output, "utf8");
   assert.ok(!text.includes("PRIVATE_"));
   assert.ok(!f.launches.some(({ command }) => command.includes("missing") || command.includes("service")));
+  const withPrivateMetadata = JSON.parse(text);
+  withPrivateMetadata.population[1].note = "PRIVATE_UNOBSERVED_METADATA";
+  await writeFile(f.options.output, JSON.stringify(withPrivateMetadata));
   const replay = await verifyCorpus({ ...f.options, corpusPath: f.options.output, reportsPath: reports });
   assert.equal(driftedResults(replay.results).length, 4);
+  assert.equal(replay.passed, false);
+  assert.ok(!JSON.stringify(replay).includes("PRIVATE_"));
 });
 
 test("original artifacts and projected scores must agree before drift replay", async (t) => {
@@ -76,6 +81,35 @@ test("original artifacts and projected scores must agree before drift replay", a
   await writeFile(f.options.output, original);
   await writeFile(path.join(collection.reports, "one.json"), "changed original artifact");
   await assert.rejects(verifyCorpus(options), /digest mismatch/u);
+});
+
+test("replay artifacts bind original bytes, evaluator, policy, and individual report identities", async (t) => {
+  let catalog = 50;
+  const f = await fixture(t, [target("one")], (server) => {
+    const value = report(server);
+    value.readiness.areas.find((area) => area.name === "catalog").score = catalog;
+    return value;
+  });
+  const collection = await collectCorpus(f.options);
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports };
+  const accepted = await verifyCorpus(options);
+  assert.equal(accepted.schema, "mcpeval.corpus-verification/v1");
+  assert.equal(accepted.corpus_sha256, sha256(await readFile(f.options.output)));
+  assert.equal(accepted.targets_sha256, sha256(await readFile(f.options.targetsPath)));
+  assert.deepEqual(accepted.evaluator, collection.corpus.evaluator);
+  assert.equal(accepted.standard, collection.corpus.standard);
+  assert.equal(accepted.platform, process.platform);
+  assert.deepEqual(accepted.policy, { reliability_tolerance: 10 });
+  assert.equal(accepted.passed, true);
+  assert.equal(accepted.results[0].expected_report_sha256, collection.corpus.observations[0].provenance.report_sha256);
+  assert.equal(accepted.results[0].replay_report_sha256, accepted.results[0].expected_report_sha256);
+  assert.ok(!JSON.stringify(accepted).includes(f.dir));
+  catalog = 51;
+  const drifted = await verifyCorpus(options);
+  assert.equal(drifted.passed, false);
+  assert.deepEqual(drifted.results[0].moved, ["catalog 50→51"]);
+  assert.equal(drifted.results[0].expected_report_sha256, accepted.results[0].expected_report_sha256);
+  assert.notEqual(drifted.results[0].replay_report_sha256, accepted.results[0].replay_report_sha256);
 });
 
 test("historical corpus refusal happens before any package or evaluator execution", async () => {

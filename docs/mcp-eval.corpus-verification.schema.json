@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mcpeval.corpus-verification/v1",
+  "description": "Completed corpus replay, bound to its input bytes and evaluator. Hashes identify artifacts; they do not authenticate the author or establish the cause of drift.",
+  "type": "object",
+  "required": ["schema", "standard", "platform", "corpus_sha256", "targets_sha256", "evaluator", "policy", "passed", "observations", "population", "results"],
+  "properties": {
+    "schema": { "const": "mcpeval.corpus-verification/v1" },
+    "standard": { "type": "string", "pattern": "^mcpeval-standard/[0-9]+$" },
+    "platform": { "type": "string", "minLength": 1 },
+    "corpus_sha256": { "$ref": "#/$defs/digest" },
+    "targets_sha256": { "$ref": "#/$defs/digest" },
+    "evaluator": {
+      "type": "object", "required": ["version", "sha256"],
+      "properties": { "version": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/digest" } }
+    },
+    "policy": {
+      "type": "object", "required": ["reliability_tolerance"],
+      "properties": { "reliability_tolerance": { "const": 10 } }
+    },
+    "passed": { "type": "boolean" },
+    "observations": { "$ref": "#/$defs/count" },
+    "population": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+    "results": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/result" } }
+  },
+  "if": { "properties": { "passed": { "const": true } } },
+  "then": { "properties": { "results": { "items": { "properties": { "status": { "const": "observed" }, "drifted": { "const": false } } } } } },
+  "else": { "properties": { "results": { "contains": { "anyOf": [ { "properties": { "status": { "enum": ["untested", "errored"] } } }, { "properties": { "drifted": { "const": true } } } ] } } } },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nullableDigest": { "anyOf": [ { "$ref": "#/$defs/digest" }, { "type": "null" } ] },
+    "count": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },
+    "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+    "nullableScore": { "anyOf": [ { "$ref": "#/$defs/score" }, { "type": "null" } ] },
+    "result": {
+      "type": "object",
+      "required": ["server", "status", "expected", "observed", "moved", "drifted", "expected_report_sha256", "replay_report_sha256"],
+      "properties": {
+        "server": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$" },
+        "status": { "enum": ["observed", "untested", "errored"] },
+        "reason": { "enum": ["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report", "deployment-mismatch", "state-check-failed", "state-mismatch"] },
+        "expected": { "$ref": "#/$defs/nullableScore" }, "observed": { "$ref": "#/$defs/nullableScore" },
+        "expected_report_sha256": { "$ref": "#/$defs/nullableDigest" }, "replay_report_sha256": { "$ref": "#/$defs/nullableDigest" },
+        "moved": { "type": "array", "items": { "type": "string", "pattern": "^(protocol|catalog|context|error-honesty|reliability|coverage) [0-9]{1,3}→([0-9]{1,3}|none)$" } },
+        "drifted": { "type": "boolean" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "observed" } } },
+          "then": {
+            "not": { "required": ["reason"] },
+            "properties": { "expected": { "$ref": "#/$defs/score" }, "observed": { "$ref": "#/$defs/score" }, "expected_report_sha256": { "$ref": "#/$defs/digest" }, "replay_report_sha256": { "$ref": "#/$defs/digest" } }
+          },
+          "else": { "required": ["reason"], "properties": { "observed": { "type": "null" }, "drifted": { "const": false }, "moved": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "drifted": { "const": true } } },
+          "then": { "properties": { "moved": { "minItems": 1 } } },
+          "else": { "properties": { "moved": { "maxItems": 0 } } }
+        },
+        {
+          "if": { "properties": { "expected": { "type": "null" } } },
+          "then": { "properties": { "expected_report_sha256": { "type": "null" }, "replay_report_sha256": { "type": "null" } } },
+          "else": { "properties": { "expected_report_sha256": { "$ref": "#/$defs/digest" } } }
+        }
+      ]
+    }
+  }
+}

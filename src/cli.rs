@@ -49,6 +49,8 @@ pub enum SchemaDocument {
     Diff,
     /// mcpeval.guidance-report/v1 (`guidance --format json`).
     Guidance,
+    /// mcpeval.corpus-verification/v1 (corpus harness replay --json).
+    CorpusVerification,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -261,7 +263,7 @@ pub enum Command {
     },
     /// Print a published JSON Schema: the manifest (for editor validation:
     /// add "$schema" pointing at docs/mcp-eval.manifest.schema.json), the
-    /// probe report, or the diff document.
+    /// probe report, diff, guidance, or corpus verification document.
     #[command(display_order = 7)]
     Schema {
         /// Which document the schema describes.

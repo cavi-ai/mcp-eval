@@ -4,6 +4,9 @@
 
 ### Added
 
+- Versioned corpus verification JSON binds replay outcomes to corpus/target
+  bytes, evaluator identity, comparison policy, and report digests.
+  `mcpeval schema corpus-verification` prints its published schema.
 - Optional corpus service-state checks compare expected digests before and after
   evaluation. Changed or unavailable state prevents observation credit, and
   successful observations retain named state identities for replay.

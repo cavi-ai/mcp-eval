@@ -460,10 +460,10 @@ coding agent can query its own friction without touching the store:
 
 ```sh
 mcpeval serve --listen 127.0.0.1:8091
-mcpeval serve --listen 127.0.0.1:8091 --allow-spawn   # also run_probe and scaffold
+mcpeval serve --listen 127.0.0.1:8091 --allow-spawn   # also evaluation tools
 ```
 
-`run_probe` and `scaffold` launch the server process the agent names, so
+`run_probe`, `scaffold`, `score`, and `verify_finding` launch the server process the agent names, so
 they are listed only with `--allow-spawn`. Every request must carry a
 loopback `Host`, a loopback `Origin` if any, and `Content-Type:
 application/json`; anything else is refused with 400, 403, or 415, so a web
@@ -476,12 +476,20 @@ page cannot reach the endpoint through the browser.
 | `get_readiness_trends` | Readiness-score history per server, oldest first |
 | `run_probe` | Execute the read-only battery against any server with an inline manifest and get the full `mcpeval.probe-report/v2` document plus remediation hints — mutation is never authorized through this surface |
 | `scaffold` | Introspect a live server and return the same starter manifest JSON as `mcpeval init`, without writing files |
+| `score` | Measure the same standard readiness as `mcpeval score` without a manifest; supports `confirm_read_only` and `skip_tools` |
+| `verify_finding` | Run one matching read-only case from an inline manifest and return its report and durable lifecycle outcome; accepts `finding_id`, `case_id`, and `command` or `url` |
 | `record_annotation` | Record the agent's own observation about a captured call (same fixed kinds and 240-character bounded note as `mcpeval annotate`); the session is hashed before persistence |
 
-With `run_probe`, `scaffold` (both behind `--allow-spawn`), and `record_annotation`, the whole loop is
+With the evaluation tools behind `--allow-spawn` and `record_annotation`, the whole loop is
 native MCP: the agent scaffolds a manifest, probes the server it is
 editing, reads structured verdicts and fixes, re-runs, and records what it
-observed along the way — without leaving its tool protocol.
+observed along the way, and verifies a promoted finding using the same closure
+rules as the CLI — without leaving its tool protocol. Verification returns
+`verified`, `reason`, `lifecycle` (state and consecutive passes), and `report`.
+A mid-case transport failure returns a report with `lifecycle: null`; startup
+failure returns a tool error. Neither adds verification credit. Evaluation
+tools accept loopback HTTP endpoints only. The server processes requests
+serially, so an evaluation delays other requests until it returns.
 
 ## What is recorded
 

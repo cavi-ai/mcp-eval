@@ -1,0 +1,21 @@
+{
+  "schema": "mcpeval.readiness-corpus/v3",
+  "source": "Fictitious contract fixture; not collected server evidence",
+  "standard": "mcpeval-standard/2",
+  "platform": "fixture",
+  "evaluator": { "version": "0.4.0", "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+  "targets_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "population": [ { "server": "fixture", "status": "observed" }, { "server": "unavailable", "status": "untested", "reason": "missing-environment" } ],
+  "observations": [{
+    "server": "fixture", "score": 50,
+    "areas": { "protocol": 50, "catalog": 50, "context": 50, "error-honesty": 50, "reliability": 50, "coverage": 50 },
+    "tool_count": 1, "catalog_tokens": 100,
+    "calls": { "successful_calls": 0, "tool_errors": 3, "rpc_errors": 0, "rejected_calls": 0, "transport_errors": 0, "untested_tools": 0 },
+    "provenance": {
+      "runtime": "npm", "package": "fixture-package", "version": "1.2.3", "bin": "fixture-server",
+      "launch_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "report_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "prerequisites": []
+    }
+  }]
+}

@@ -8,6 +8,7 @@ npm run docs:build
 npm run docs:verify
 npm run docs:test
 npm run test:action
+npm run test:corpus
 npm run test:distribution
 npm run verify:distribution
 npm pack --dry-run --ignore-scripts

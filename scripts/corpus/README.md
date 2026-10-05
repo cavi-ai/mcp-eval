@@ -1,0 +1,113 @@
+# Corpus collection and verification
+
+The checked-in standard/1 corpus is historical. It lacks package and evaluator
+provenance and cannot be replayed as an exact collection. These tools refuse to
+substitute today's packages or relabel old measurements.
+
+New collection uses `mcpeval.readiness-corpus/v3`. Keep the target file and raw
+reports with the corpus. The document contains evaluator version and executable
+SHA-256, target-file and launch hashes, report hashes, package versions, call
+counts, prerequisite names, and an outcome for every requested target.
+
+Create a private target file with schema `mcpeval.corpus-targets/v1`, a
+`standard` such as `mcpeval-standard/2`, and a `targets` array. Each target needs:
+
+- `server`: a unique server label.
+- `runtime`: `npm` or `uvx`.
+- `package`, `version`, and `bin`: package name, an exact version, and its
+  actual executable name. Versions cannot be tags, ranges, URLs, or wildcards.
+- `args`: an explicit array, including `[]` when no arguments are needed.
+- `prerequisites.environment`: required environment-variable names, including
+  `[]` when none are needed. Values must be supplied at execution time.
+- `prerequisites.checks`: named health-check commands, each with `name` and a
+  `command` array. Checks must exit zero within ten seconds. Use `[]` only when
+  the target needs no backing-service checks.
+
+An optional `deployment` replaces the package runner with a prepared local
+bundle. Include the installed dependencies and a native runtime executable in
+one directory; prepare and validate it separately using the package ecosystem's
+lock file. The collector does not install or resolve packages for this mode.
+
+```sh
+node scripts/corpus/deployment.mjs --root /absolute/private/deployment
+```
+
+Put the printed digest in the target's `deployment.sha256`, set
+`deployment.root` to that absolute directory, and set `deployment.executable`
+to the runtime's relative path, such as `bin/node`. Set the optional
+`deployment.entrypoint` to the server's relative path, such as
+`server/dist/index.js`. The command becomes the absolute executable path,
+the absolute entrypoint path when present, and the target's existing `args`.
+A native server can omit `entrypoint`. Use a native executable, not a script
+that obtains an interpreter from the host. Package/version/bin fields remain
+declared package identity; the operator must validate them against the bundle.
+
+The versioned tree digest covers file names, bytes, permissions, directories,
+and relative internal links. External, absolute, dangling, and cyclic links
+and special files are refused. Collection and replay check the bundle before
+health checks, after health checks, and after evaluation. A mismatch leaves the
+target `errored` with `deployment-mismatch` and retains no observation or report.
+Observations record `deployment_sha256`; absolute bundle paths stay in the
+private target file. The existing launch hash binds those paths and arguments.
+Targets without a bundle retain their existing top-level package pins.
+
+Keep the bundle read-only during use, outside the fresh execution home, and
+retain it with the target file and reports. Hash checks detect changes; they
+do not prevent a concurrent writer from changing and restoring files between
+checks. A read-only filesystem or immutable image mitigates that race. Runtime
+libraries supplied by the operating system, dynamic downloads, commands found
+through `PATH`, and imports outside the directory are outside this digest.
+Use a deployment whose execution dependencies are contained in the directory;
+the collector does not prove that dependency closure or sandbox its execution.
+
+No target list or package version is inferred from historical observations.
+The operator must declare all required services and credentials. Presence of
+an environment variable alone does not prove that its credentials work; declare
+a health check when validation is needed. Never put secrets in names or labels.
+Arguments and environment values are not copied into the corpus. Hashes do not
+redact low-entropy secrets, so do not publish private target files or treat a
+launch hash as a credential protection mechanism.
+
+```sh
+cargo build --release --locked --bins
+scripts/corpus/collect.sh --targets /absolute/private/targets.json \
+  --out /absolute/private/corpus.json
+node scripts/corpus/verify.mjs --corpus /absolute/private/corpus.json \
+  --targets /absolute/private/targets.json \
+  --reports /absolute/private/corpus.json.reports-UUID --json
+```
+
+`--binary` selects an explicit evaluator executable. Collection refuses an
+existing output unless `--force` is passed. It writes the corpus atomically and
+retains reports in the directory printed at completion. The default minimum
+is ten observed targets; `--min-observations` explicitly changes it. A thin
+candidate is retained for inspection and exits nonzero. It is not an approved
+baseline. Publication of any new measurements remains a separate decision.
+
+Missing environment or a failed health check leaves a target `untested` without
+launching its server. No listed tools or no attempted tool calls also leaves a
+target `untested`. Evaluation failures remain `errored`. Completed tool failures
+are observed evidence, including when every attempted call failed; they are not
+confused with tools that were never called. Only observations enter calibration.
+
+Every target runs in a fresh home with only platform runtime variables and its
+declared environment. Kubernetes uses the empty fixture configuration and
+Docker uses an unreachable socket. This is environment isolation, not a security
+sandbox. Evaluations have a 350-second process deadline and an 8 MiB output limit;
+timeouts terminate the process tree. Prerequisite commands are also bounded.
+
+Verification requires the original platform, evaluator executable, target file,
+and matching report artifacts. It checks report projections before re-scoring.
+Any untested, errored, or newly unavailable target prevents a verification pass.
+Areas must match, with the existing ten-point reliability tolerance. Differences
+report score drift; they do not establish its cause. Top-level package pins alone
+do not lock transitive dependencies or runtime versions. Bundles bind the
+prepared runtime and dependency bytes they contain, but neither mode locks
+service state, credential values, or the host operating system. Control those
+inputs separately before attributing drift to a server change. Artifact hashes
+bind bytes; they do not authenticate authors.
+
+Run deterministic fixture coverage with `npm run test:corpus`. This lane does
+not download public servers or collect comparative measurements. Build both
+release binaries first, or set `MCPEVAL_CORPUS_TEST_BINARY` to a built debug
+evaluator; the native fixture uses the demo beside that executable.

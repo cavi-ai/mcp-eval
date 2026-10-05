@@ -52,7 +52,10 @@ mcpeval verify --finding finding-0123456789abcdef \
   -- your-mcp-server --flags
 ```
 
-`mcpeval generate --finding <id> --confirm-read-only --output <file>` writes a one-case manifest for the finding, with the finding ID as the case ID: a `degradation-over-n` case whose attempts are sized from the observed failure rate to catch the defect with 95% probability (3 for a deterministic error, up to 100), so the probe passes once the call succeeds. Fill every placeholder it lists before verifying.
+`mcpeval generate --finding <id> --confirm-read-only --output <file>` writes a
+one-case manifest with the finding ID as the case ID. The probe depends on the
+finding's class, as described below. Fill every argument placeholder it lists
+before verifying.
 
 The first green result moves an open finding to `verifying`; the third consecutive green closes it. A red result resets the streak and reopens a verifying or closed finding; its line ends with `reason=<reason>`, followed by an indented `hint:` line with the remediation. Findings without an attached probe remain open, require manual closure, and are capped at medium severity.
 
@@ -75,6 +78,60 @@ pass credit, and conflicting results under the same ID are refused.
 
 The binding is a salted local fingerprint. Raw arguments, sandbox prose, target
 paths, and endpoint values are not stored in the lifecycle database.
+
+## Finding-specific generation
+
+| Finding class | Default generated probe | What passing means |
+| --- | --- | --- |
+| `recurring-error`, `recovers-on-retry`, `retry-did-not-recover` | `degradation-over-n` | Every attempt succeeds, including the first; any error fails. |
+| `unstable-error-code` with consistent recorded retryability | `error-honesty` | Error codes and retryability agree across repeated failures. A retryable failure must recover within the attempt limit. A non-retryable error must repeat consistently twice. Success on the first attempt fails this error contract. |
+| `false-success`, `blocked-optimal-path` | Requires `--expect <FILE>` | The explicitly reviewed outcome and result assertions match. |
+| `unstable-error-code` without recorded retryability | Requires `--expect <FILE>` | The explicitly reviewed expectation matches; retryability is not inferred. |
+
+`--expect` is available for any class and selects `instruction-fidelity`, which
+makes one call. For example, create `expect.json` with:
+
+```json
+{
+  "outcome": "ok",
+  "equals": {"status": "ready"}
+}
+```
+
+Then generate the manifest:
+
+```sh
+mcpeval generate --finding finding-0123456789abcdef \
+  --confirm-read-only --expect expect.json --output generated.manifest.json
+```
+
+The file uses the manifest's existing `expect` contract: `outcome` is `ok` or
+`error`; successful expectations can include `required_result_fields` and
+scalar `equals`; errors can include a numeric `error_code`. Assertions address
+top-level MCP result fields, not nested `structuredContent` paths. Files are
+limited to 64 KiB, reject unknown properties, and undergo manifest validation
+before the output is opened. Invalid input never replaces an existing manifest,
+even with `--force`.
+
+False-success requires a result assertion or an expected error: checking only
+`outcome: ok` would miss the reported defect. Choose assertions that actually
+distinguish the bug from the repair. Captured metadata contains no result
+payload or intended effect, so generation cannot invent that oracle. A result
+assertion also cannot prove an external state change; author a separate
+validation workflow when that is the property under test.
+
+The supplied oracle is deliberate operator input and is copied into the local
+manifest, not derived from captured prose. Use share-safe values; successful
+string equalities must be identifiers, and nested equality values are refused.
+Generation does not call the server, record the oracle in the capture journal,
+or authorize mutation. `--confirm-read-only` remains required.
+
+Repeated-probe attempt counts are sized from the observed failure rate toward
+95% observation probability under independent trials, with a minimum of 3.
+Degradation is capped at 100 attempts and error honesty at 20. The cap can
+prevent reaching that target; correlated failures, early recovery, and the
+two-error non-retryable contract further limit what a run observes. No
+statistical detection guarantee is made for a single-call expectation.
 
 ## Serving findings and the agent loop
 

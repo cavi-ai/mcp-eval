@@ -136,6 +136,271 @@ fn generate_cli(
 }
 
 #[test]
+fn semantic_findings_require_an_oracle_before_writing_even_with_force() {
+    for class in ["false-success", "blocked-optimal-path"] {
+        let root = TempDir::new();
+        let finding_id = promoted_finding(&root.path, json!({}));
+        set_issue(&root.path, &finding_id, "class", &class);
+        let output = root.path.join("generated.json");
+        std::fs::write(&output, "keep existing manifest").unwrap();
+
+        let denied = generate_cli(&root.path, &finding_id, &output, true, true);
+
+        assert!(
+            !denied.status.success(),
+            "{class} must not become repeated success"
+        );
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("--expect"));
+        assert_eq!(
+            std::fs::read_to_string(&output).unwrap(),
+            "keep existing manifest"
+        );
+    }
+}
+
+#[test]
+fn unstable_codes_generate_an_error_honesty_case_with_recorded_retryability() {
+    for retryable in [false, true] {
+        let root = TempDir::new();
+        let finding_id = promoted_finding_with(&root.path, "read_status", json!({}), retryable);
+        set_issue(&root.path, &finding_id, "class", &"unstable-error-code");
+        let output = root.path.join("generated.json");
+
+        let result = generate_cli(&root.path, &finding_id, &output, false, true);
+
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let probe = generated_probe(&output);
+        assert_eq!(probe["probe"], "error-honesty");
+        assert_eq!(probe["expect_retryable"], retryable);
+        assert_eq!(probe["max_attempts"], 3);
+        mcpeval::manifest::Manifest::load(&output).unwrap();
+    }
+}
+
+#[test]
+fn unstable_codes_without_retryability_do_not_invent_an_error_contract() {
+    let root = TempDir::new();
+    let finding_id = promoted_finding(&root.path, json!({}));
+    set_issue(&root.path, &finding_id, "class", &"unstable-error-code");
+    set_issue(&root.path, &finding_id, "retryable", &rusqlite::types::Null);
+    let output = root.path.join("generated.json");
+
+    let result = generate_cli(&root.path, &finding_id, &output, false, true);
+
+    assert!(!result.status.success());
+    assert!(!output.exists());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("--expect"));
+}
+
+#[test]
+fn rare_unstable_errors_respect_the_error_honesty_attempt_limit() {
+    let root = TempDir::new();
+    let finding = promoted_finding_with(&root.path, "flaky_read", json!({}), true);
+    set_issue(&root.path, &finding, "class", &"unstable-error-code");
+    set_issue(&root.path, &finding, "rate", &0.001);
+    let output = root.path.join("generated.json");
+    let result = generate_cli(&root.path, &finding, &output, false, true);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(generated_probe(&output)["max_attempts"], 20);
+    mcpeval::manifest::Manifest::load(&output).unwrap();
+}
+
+fn generate_with_expectation(root: &Path, finding: &str, output: &Path, expect: &Path) -> Output {
+    Command::new(bin())
+        .args([
+            "generate",
+            "--finding",
+            finding,
+            "--output",
+            output.to_str().unwrap(),
+            "--confirm-read-only",
+            "--expect",
+            expect.to_str().unwrap(),
+        ])
+        .env("MCPEVAL_HOME", root)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn false_success_oracle_detects_wrong_content_and_verifies_the_repair() {
+    let root = TempDir::new();
+    let finding_id = promoted_finding_for_tool(&root.path, "describe_status", json!({}));
+    set_issue(&root.path, &finding_id, "class", &"false-success");
+    let output = root.path.join("generated.json");
+    let expect = root.path.join("expect.json");
+    std::fs::write(&expect, r#"{"outcome":"ok","equals":{"status":"ready"}}"#).unwrap();
+
+    let generated = generate_with_expectation(&root.path, &finding_id, &output, &expect);
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    assert_eq!(generated_probe(&output)["probe"], "instruction-fidelity");
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/probe_clean_server.py");
+    for (mode, passed) in [("broken", false), ("clean", true)] {
+        let result = Command::new(bin())
+            .args([
+                "verify",
+                "--finding",
+                &finding_id,
+                "--case",
+                &finding_id,
+                "--manifest",
+                output.to_str().unwrap(),
+                "--",
+                "python3",
+                fixture.to_str().unwrap(),
+                mode,
+            ])
+            .env("MCPEVAL_HOME", &root.path)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(if passed { 0 } else { 1 }),
+            "{mode}: {} {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        if !passed {
+            assert!(String::from_utf8_lossy(&result.stdout).contains("value-mismatch"));
+        }
+    }
+}
+
+#[test]
+fn false_success_rejects_a_success_only_oracle() {
+    let root = TempDir::new();
+    let finding_id = promoted_finding(&root.path, json!({}));
+    set_issue(&root.path, &finding_id, "class", &"false-success");
+    let output = root.path.join("generated.json");
+    let expect = root.path.join("expect.json");
+    std::fs::write(&expect, r#"{"outcome":"ok"}"#).unwrap();
+
+    let result = generate_with_expectation(&root.path, &finding_id, &output, &expect);
+
+    assert!(!result.status.success());
+    assert!(!output.exists());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("result assertion"));
+}
+
+#[test]
+fn generated_error_honesty_detects_unstable_codes_and_accepts_stable_recovery() {
+    let root = TempDir::new();
+    let finding = promoted_finding_with(&root.path, "flaky_read", json!({}), true);
+    set_issue(&root.path, &finding, "class", &"unstable-error-code");
+    let output = root.path.join("generated.json");
+    assert!(generate_cli(&root.path, &finding, &output, false, true)
+        .status
+        .success());
+
+    for (broken, passed) in [(true, false), (false, true)] {
+        let mut command = Command::new(bin());
+        command.args([
+            "verify",
+            "--finding",
+            &finding,
+            "--case",
+            &finding,
+            "--manifest",
+            output.to_str().unwrap(),
+            "--",
+            env!("CARGO_BIN_EXE_mcpeval-demo"),
+        ]);
+        if broken {
+            command.args(["--broken", "unstable-errors"]);
+        }
+        let result = command.env("MCPEVAL_HOME", &root.path).output().unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(if passed { 0 } else { 1 }),
+            "{} {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        if broken {
+            assert!(String::from_utf8_lossy(&result.stdout).contains("unstable-error-code"));
+        }
+    }
+}
+
+#[test]
+fn explicit_error_oracle_can_replace_false_success_without_inventing_retryability() {
+    let root = TempDir::new();
+    let finding = promoted_finding_for_tool(&root.path, "break_session", json!({}));
+    set_issue(&root.path, &finding, "class", &"false-success");
+    let output = root.path.join("generated.json");
+    let expect = root.path.join("expect.json");
+    std::fs::write(&expect, r#"{"outcome":"error","error_code":-32002}"#).unwrap();
+    assert!(
+        generate_with_expectation(&root.path, &finding, &output, &expect)
+            .status
+            .success()
+    );
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/probe_clean_server.py");
+    let result = Command::new(bin())
+        .args([
+            "verify",
+            "--finding",
+            &finding,
+            "--case",
+            &finding,
+            "--manifest",
+            output.to_str().unwrap(),
+            "--",
+            "python3",
+            fixture.to_str().unwrap(),
+        ])
+        .env("MCPEVAL_HOME", &root.path)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(generated_probe(&output)["expect"]["error_code"], -32002);
+}
+
+#[test]
+fn invalid_or_oversized_oracles_do_not_write_or_echo_content_or_paths() {
+    let root = TempDir::new();
+    let finding = promoted_finding(&root.path, json!({}));
+    let output = root.path.join("generated.json");
+    let expect = root.path.join("private-canary-path.json");
+    for body in [
+        r#"{"outcome":"private-canary-value"}"#.to_owned(),
+        r#"{"outcome":"ok","unknown":"private-canary-value"}"#.to_owned(),
+        r#"{"outcome":"ok","equals":{"status":"private-canary-value/path"}}"#.to_owned(),
+        "private-canary-value".repeat(4000),
+    ] {
+        std::fs::write(&expect, body).unwrap();
+        let result = generate_with_expectation(&root.path, &finding, &output, &expect);
+        assert!(!result.status.success());
+        assert!(!output.exists());
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(!text.contains("private-canary"));
+        assert!(!text.contains(root.path.to_str().unwrap()));
+    }
+}
+
+#[test]
 fn generates_a_deterministic_read_only_manifest_for_empty_arguments() {
     let root = TempDir::new();
     let finding_id = promoted_finding(&root.path, json!({}));

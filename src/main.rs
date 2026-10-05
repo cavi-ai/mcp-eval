@@ -697,12 +697,23 @@ fn run() -> anyhow::Result<()> {
         cli::Command::Generate {
             finding,
             output,
+            expect,
             force,
             confirm_read_only,
         } => {
             let root = mcpeval::store::Store::resolve_root(None);
-            let generated =
-                mcpeval::generate::run(&root, &finding, &output, force, confirm_read_only)?;
+            let expectation = expect
+                .as_deref()
+                .map(mcpeval::generate::load_expectation)
+                .transpose()?;
+            let generated = mcpeval::generate::run_with_expectation(
+                &root,
+                &finding,
+                &output,
+                force,
+                confirm_read_only,
+                expectation,
+            )?;
             print!("{}", generated.summary(&output));
             Ok(())
         }

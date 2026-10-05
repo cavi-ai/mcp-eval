@@ -1,14 +1,15 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::Path;
 
 use anyhow::{bail, Context};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{Map, Value};
 
-use crate::manifest::{Access, Manifest, ProbeCase};
+use crate::diagnosis::FindingClass;
+use crate::manifest::{Access, Expectation, Manifest, OutcomeExpectation, ProbeCase};
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 const UNKNOWN_SHAPE: &str = "finding arguments are not a recorded argument shape";
@@ -52,24 +53,65 @@ pub fn run(
     force: bool,
     confirm_read_only: bool,
 ) -> anyhow::Result<Generated> {
+    run_with_expectation(root, finding_id, output, force, confirm_read_only, None)
+}
+
+/// Loads a deliberate operator-supplied oracle, without echoing its content or path.
+pub fn load_expectation(path: &Path) -> anyhow::Result<Expectation> {
+    const LIMIT: u64 = 64 * 1024;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|file| file.take(LIMIT + 1).read_to_end(&mut bytes))
+        .map_err(|_| anyhow::anyhow!("cannot read expectation file"))?;
+    if bytes.len() as u64 > LIMIT {
+        bail!("expectation file exceeds 64 KiB");
+    }
+    serde_json::from_slice(&bytes)
+        .map_err(|_| anyhow::anyhow!("expectation file is not a valid expectation object"))
+}
+
+pub fn run_with_expectation(
+    root: &Path,
+    finding_id: &str,
+    output: &Path,
+    force: bool,
+    confirm_read_only: bool,
+    expectation: Option<Expectation>,
+) -> anyhow::Result<Generated> {
     if !confirm_read_only {
         bail!("read-only generation requires explicit --confirm-read-only attestation");
     }
 
     let db = Connection::open_with_flags(root.join("index.db"), OpenFlags::SQLITE_OPEN_READ_ONLY)
         .context("opening index.db")?;
-    type Row = (Option<String>, Option<String>, f64);
+    type Row = (
+        Option<String>,
+        Option<String>,
+        f64,
+        FindingClass,
+        Option<bool>,
+    );
     let finding: Option<Row> = db
         .query_row(
-            "SELECT i.tool,i.args,i.rate FROM findings f
+            "SELECT i.tool,i.args,i.rate,i.class,i.retryable FROM findings f
              JOIN issues i ON i.id=f.issue_id
              WHERE f.finding_id=?1",
             [finding_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()
-        .context("looking up finding")?;
-    let Some((tool, args, rate)) = finding else {
+        .map_err(|_| {
+            anyhow::anyhow!("finding metadata is invalid; rebuild the index and promote")
+        })?;
+    let Some((tool, args, rate, class, retryable)) = finding else {
         bail!("finding is unavailable; run `mcpeval promote` and use a current finding ID");
     };
     let Some(tool) = tool.filter(|tool| crate::privacy::valid_tool(tool)) else {
@@ -82,13 +124,52 @@ pub fn run(
     let mut placeholders = Vec::new();
     let arguments = skeleton(&shape, "", &mut placeholders)?;
 
-    let probe = ProbeCase::DegradationOverN {
-        id: finding_id.to_owned(),
-        tool,
-        access: Access::ReadOnly,
-        sandbox: None,
-        arguments,
-        max_attempts: attempts_to_observe(rate),
+    let probe = if let Some(expect) = expectation {
+        if class == FindingClass::FalseSuccess
+            && expect.outcome == OutcomeExpectation::Ok
+            && expect.required_result_fields.is_empty()
+            && expect.equals.is_empty()
+        {
+            bail!("false-success requires a result assertion or an expected error in --expect");
+        }
+        ProbeCase::InstructionFidelity {
+            id: finding_id.to_owned(),
+            tool,
+            access: Access::ReadOnly,
+            sandbox: None,
+            arguments,
+            expect,
+        }
+    } else {
+        match class {
+            FindingClass::FalseSuccess | FindingClass::BlockedOptimalPath => {
+                bail!("{} requires an explicit --expect file; captured metadata cannot supply the intended result", class.as_str());
+            }
+            FindingClass::UnstableErrorCode => {
+                let Some(expect_retryable) = retryable else {
+                    bail!("unstable-error-code has no consistent recorded retryability; supply an explicit --expect file");
+                };
+                ProbeCase::ErrorHonesty {
+                    id: finding_id.to_owned(),
+                    tool,
+                    access: Access::ReadOnly,
+                    sandbox: None,
+                    arguments,
+                    max_attempts: attempts_to_observe(rate).min(20),
+                    expect_retryable,
+                }
+            }
+            FindingClass::RecurringError
+            | FindingClass::RecoversOnRetry
+            | FindingClass::RetryDidNotRecover => ProbeCase::DegradationOverN {
+                id: finding_id.to_owned(),
+                tool,
+                access: Access::ReadOnly,
+                sandbox: None,
+                arguments,
+                max_attempts: attempts_to_observe(rate),
+            },
+        }
     };
     let manifest = Manifest {
         version: 1,
@@ -124,8 +205,8 @@ pub fn run(
     })
 }
 
-/// Attempts that observe a failure occurring at `rate` with 95% probability,
-/// clamped to 3..=100.
+/// Attempts targeting 95% observation probability under independent trials,
+/// clamped to 3..=100; the cap can prevent reaching that target.
 fn attempts_to_observe(rate: f64) -> u64 {
     if rate <= 0.0 {
         return 3;

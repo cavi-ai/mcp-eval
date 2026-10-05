@@ -437,11 +437,15 @@ calibrated from the checked-in synthetic seed corpus; override it with
 `promotion_threshold` in `<MCPEVAL_HOME>/config.json` or
 `mcpeval promote --threshold <number>`.
 
-`mcpeval generate` writes a one-case read-only manifest for a finding: a
-`degradation-over-n` case whose `max_attempts` is sized from the observed
-failure rate to catch the defect with 95% probability (3 for a
-deterministic error, up to 100), so the probe passes once the call
-succeeds. The arguments come from the recorded shape: enum members,
+`mcpeval generate` writes a one-case read-only manifest based on the finding's
+class. Recurring and retry failures get `degradation-over-n`, which requires
+every attempt to succeed. Unstable codes get `error-honesty` when consistent
+retryability was recorded. Semantic findings require a reviewed `--expect`
+JSON file and get `instruction-fidelity`; false-success cannot use an
+outcome-only success expectation. Attempt counts target 95% observation
+probability under independent trials, capped at 100 for degradation and 20
+for error honesty; those caps and correlated failures can reduce coverage.
+The arguments come from the recorded shape: enum members,
 numbers, booleans, and nulls are kept; strings and UUIDs become
 placeholders and arrays become `[]`, each printed as `fill: <path>
 (<shape>)` to complete before `mcpeval verify`.

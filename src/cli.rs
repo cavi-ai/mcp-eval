@@ -431,6 +431,9 @@ pub enum Command {
         /// Path for the generated manifest.
         #[arg(long)]
         output: std::path::PathBuf,
+        /// Reviewed expectation JSON; required when metadata cannot supply a semantic oracle.
+        #[arg(long)]
+        expect: Option<std::path::PathBuf>,
         /// Replace an existing output file.
         #[arg(long)]
         force: bool,

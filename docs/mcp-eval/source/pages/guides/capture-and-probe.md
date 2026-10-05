@@ -96,7 +96,18 @@ recovery, instruction fidelity, cancellation, sampling, elicitation, resource
 subscription, and completion cases need inputs `init` cannot infer and are
 never scaffolded.
 
-For a promoted finding with a valid tool, `generate` writes a deterministic one-case read-only manifest: a `degradation-over-n` case whose `max_attempts` is sized from the finding's observed failure rate to catch the defect with 95% probability (3 for a deterministic error, up to 100), so the probe passes once the call succeeds. Arguments are rebuilt from the recorded shape: enum members, numbers, booleans, and nulls are kept; strings and UUIDs become `""` and the nil UUID, and arrays become `[]`. The command prints the probe ID, `probe=<kind> max_attempts=<n>`, and one `fill: <path> (<shape>)` line per placeholder to complete before `mcpeval verify`:
+For a promoted finding with a valid tool, `generate` writes a deterministic
+one-case read-only manifest chosen from the finding's class. Recurring and
+retry failures use `degradation-over-n`, unstable codes use `error-honesty`
+when retryability is recorded, and semantic findings need an explicit
+`--expect` file. See [finding-specific generation](findings-and-verification.md#finding-specific-generation)
+for the contracts and an expectation example.
+
+Arguments are rebuilt from the recorded shape: enum members, numbers, booleans,
+and nulls are kept; strings and UUIDs become `""` and the nil UUID, and arrays
+become `[]`. The command prints the probe ID, `probe=<kind>` (with
+`max_attempts=<n>` for repeated probes), and one `fill: <path> (<shape>)` line
+per placeholder to complete before `mcpeval verify`:
 
 ```sh
 mcpeval generate --finding finding-0123456789abcdef \

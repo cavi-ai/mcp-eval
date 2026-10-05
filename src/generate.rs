@@ -129,6 +129,8 @@ pub fn run_with_expectation(
             && expect.outcome == OutcomeExpectation::Ok
             && expect.required_result_fields.is_empty()
             && expect.equals.is_empty()
+            && expect.required_result_paths.is_empty()
+            && expect.equals_paths.is_empty()
         {
             bail!("false-success requires a result assertion or an expected error in --expect");
         }

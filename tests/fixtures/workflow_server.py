@@ -41,8 +41,11 @@ def respond(request, session):
                 sessions[session]["poisoned"] = True
             return {"jsonrpc": "2.0", "id": request["id"], "error": {
                 "code": -32602, "message": "CANARY private error", "retryable": False}}
+        status = "wrong" if sessions[session]["poisoned"] else "ready"
         result = {"content": [{"type": "text", "text": "CANARY private output"}],
-                  "status": "wrong" if sessions[session]["poisoned"] else "ready"}
+                  "status": status, "structuredContent.status": "literal",
+                  "structuredContent": {"status": status, "items": [{"ready": True}],
+                                        "nullable": None, "a/b": {"~state": "ready"}}}
     else:
         result = {}
     return {"jsonrpc": "2.0", "id": request["id"], "result": result}

@@ -296,6 +296,57 @@ fn false_success_rejects_a_success_only_oracle() {
 }
 
 #[test]
+fn generated_false_success_can_use_only_a_nested_result_oracle() {
+    let root = TempDir::new();
+    let finding = promoted_finding_for_tool(&root.path, "describe_status", json!({}));
+    set_issue(&root.path, &finding, "class", &"false-success");
+    let output = root.path.join("generated.json");
+    let expect = root.path.join("expect.json");
+    std::fs::write(
+        &expect,
+        r#"{"outcome":"ok","equals_paths":{"/structuredContent/status":"ready"}}"#,
+    )
+    .unwrap();
+    let generated = generate_with_expectation(&root.path, &finding, &output, &expect);
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+    assert_eq!(
+        generated_probe(&output)["expect"]["equals_paths"]["/structuredContent/status"],
+        "ready"
+    );
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/probe_clean_server.py");
+    for (mode, code) in [("broken", 1), ("clean", 0)] {
+        let result = Command::new(bin())
+            .args([
+                "verify",
+                "--finding",
+                &finding,
+                "--case",
+                &finding,
+                "--manifest",
+                output.to_str().unwrap(),
+                "--",
+                "python3",
+                fixture.to_str().unwrap(),
+                mode,
+            ])
+            .env("MCPEVAL_HOME", &root.path)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(code),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+}
+
+#[test]
 fn generated_error_honesty_detects_unstable_codes_and_accepts_stable_recovery() {
     let root = TempDir::new();
     let finding = promoted_finding_with(&root.path, "flaky_read", json!({}), true);

@@ -49,6 +49,10 @@ pub struct Expectation {
     pub required_result_fields: Vec<String>,
     #[serde(default)]
     pub equals: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_result_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub equals_paths: BTreeMap<String, Value>,
     pub error_code: Option<i64>,
 }
 
@@ -892,7 +896,23 @@ fn validate_expectation(expect: &Expectation) -> anyhow::Result<()> {
             bail!("expected result field is invalid");
         }
     }
-    for value in expect.equals.values() {
+    let mut paths = HashSet::new();
+    for path in &expect.required_result_paths {
+        if !valid_result_path(path) {
+            bail!("expected result path is invalid");
+        }
+        if !paths.insert(path) {
+            bail!("expected result paths must be unique");
+        }
+    }
+    if expect
+        .equals_paths
+        .keys()
+        .any(|path| !valid_result_path(path))
+    {
+        bail!("expected result path is invalid");
+    }
+    for value in expect.equals.values().chain(expect.equals_paths.values()) {
         let valid = match value {
             Value::Null | Value::Bool(_) | Value::Number(_) => true,
             Value::String(value) => privacy::valid_identifier(value),
@@ -907,10 +927,35 @@ fn validate_expectation(expect: &Expectation) -> anyhow::Result<()> {
             bail!("ok expectation must not declare error_code")
         }
         OutcomeExpectation::Error
-            if !expect.required_result_fields.is_empty() || !expect.equals.is_empty() =>
+            if !expect.required_result_fields.is_empty()
+                || !expect.equals.is_empty()
+                || !expect.required_result_paths.is_empty()
+                || !expect.equals_paths.is_empty() =>
         {
             bail!("error expectation must not declare result fields")
         }
         _ => Ok(()),
     }
+}
+
+/// Non-root JSON Pointers with bounded, share-safe structural tokens. Decode
+/// using serde_json only after validating every tilde escape.
+fn valid_result_path(path: &str) -> bool {
+    if !path.starts_with('/') || path.len() > 512 {
+        return false;
+    }
+    let mut bytes = path.bytes();
+    while let Some(byte) = bytes.next() {
+        match byte {
+            b'~' => {
+                if !matches!(bytes.next(), Some(b'0' | b'1')) {
+                    return false;
+                }
+            }
+            b'/' | b'_' | b'.' | b':' | b'-' => {}
+            byte if byte.is_ascii_alphanumeric() => {}
+            _ => return false,
+        }
+    }
+    true
 }

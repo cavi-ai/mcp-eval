@@ -188,6 +188,24 @@ fn validate_provenance(document: &serde_json::Value) -> anyhow::Result<()> {
         {
             anyhow::bail!("corpus observation lacks observed tool-call evidence");
         }
+        let source = &observation["provenance"];
+        let declared: HashSet<_> = source["prerequisites"]
+            .as_array()
+            .expect("validated prerequisites")
+            .iter()
+            .filter_map(|value| value.as_str().and_then(|name| name.strip_prefix("state:")))
+            .collect();
+        let mut states = HashSet::new();
+        if let Some(checks) = source["state_checks"].as_array() {
+            for check in checks {
+                if !states.insert(check["name"].as_str().expect("validated state name")) {
+                    anyhow::bail!("duplicate corpus state check");
+                }
+            }
+        }
+        if states != declared {
+            anyhow::bail!("corpus state checks and prerequisites disagree");
+        }
     }
     Ok(())
 }

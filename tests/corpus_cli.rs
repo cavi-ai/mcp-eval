@@ -35,6 +35,14 @@ fn provenance_corpus_places_only_observed_targets_and_rejects_inconsistent_popul
     valid["population"][1]["reason"] = "deployment-mismatch".into();
     std::fs::write(home.join("corpus.json"), valid.to_string()).unwrap();
     assert!(mcpeval::corpus::Corpus::load(&home.join("corpus.json")).is_ok());
+    valid["observations"][0]["provenance"]["state_checks"] =
+        serde_json::json!([{ "name": "backend", "sha256": "b".repeat(64) }]);
+    valid["observations"][0]["provenance"]["prerequisites"] = serde_json::json!(["state:backend"]);
+    for reason in ["state-mismatch", "state-check-failed"] {
+        valid["population"][1]["reason"] = reason.into();
+        std::fs::write(home.join("corpus.json"), valid.to_string()).unwrap();
+        assert!(mcpeval::corpus::Corpus::load(&home.join("corpus.json")).is_ok());
+    }
     for mutation in [
         "population",
         "report",
@@ -42,6 +50,10 @@ fn provenance_corpus_places_only_observed_targets_and_rejects_inconsistent_popul
         "version",
         "score",
         "deployment",
+        "state-digest",
+        "state-duplicate",
+        "state-prerequisite",
+        "state-missing",
     ] {
         let mut invalid = valid.clone();
         match mutation {
@@ -54,6 +66,22 @@ fn provenance_corpus_places_only_observed_targets_and_rejects_inconsistent_popul
             "score" => invalid["observations"][0]["score"] = 101.into(),
             "deployment" => {
                 invalid["observations"][0]["provenance"]["deployment_sha256"] = "missing".into()
+            }
+            "state-digest" => {
+                invalid["observations"][0]["provenance"]["state_checks"][0]["sha256"] =
+                    "invalid".into()
+            }
+            "state-duplicate" => {
+                invalid["observations"][0]["provenance"]["state_checks"] = serde_json::json!([
+                    { "name": "backend", "sha256": "b".repeat(64) },
+                    { "name": "backend", "sha256": "c".repeat(64) }
+                ])
+            }
+            "state-prerequisite" => {
+                invalid["observations"][0]["provenance"]["prerequisites"] = serde_json::json!([])
+            }
+            "state-missing" => {
+                invalid["observations"][0]["provenance"]["state_checks"] = serde_json::json!([])
             }
             _ => unreachable!(),
         }

@@ -488,8 +488,16 @@ rules as the CLI — without leaving its tool protocol. Verification returns
 `verified`, `reason`, `lifecycle` (state and consecutive passes), and `report`.
 A mid-case transport failure returns a report with `lifecycle: null`; startup
 failure returns a tool error. Neither adds verification credit. Evaluation
-tools accept loopback HTTP endpoints only. The server processes requests
-serially, so an evaluation delays other requests until it returns.
+tools accept loopback HTTP endpoints only. Four HTTP workers keep finding and
+trend queries responsive during an evaluation. Only one evaluation runs at a
+time; overlapping requests receive an error and can retry after it finishes.
+At most sixteen connections wait for a worker; excess connections are closed.
+Headers and bodies share a five-second request deadline. This bounds request
+admission and I/O; evaluation duration still depends on its cases and timeouts.
+The service supports MCP `ping`, advertises tool safety annotations and output
+schemas, and includes structured results alongside existing text. Process-launching
+tools carry conservative destructive and open-world hints; annotations do not
+grant authorization.
 
 ## What is recorded
 

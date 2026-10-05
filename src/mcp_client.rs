@@ -239,6 +239,8 @@ pub struct McpClient {
     capabilities: Option<Value>,
     /// The protocol version the server answered the handshake with.
     protocol_version: Option<String>,
+    /// Discovery profiles expose an empty roots list, never host paths.
+    empty_roots: bool,
     /// Server notifications observed while waiting for request responses;
     /// `wait_for_resource_update` drains this buffer first so a
     /// notification that raced ahead of an interleaved response is never
@@ -277,6 +279,7 @@ impl McpClient {
             abandoned: std::collections::HashSet::new(),
             capabilities: None,
             protocol_version: None,
+            empty_roots: false,
             notifications: Vec::new(),
             notification_bytes: 0,
         };
@@ -448,11 +451,18 @@ impl McpClient {
     }
 
     pub fn initialize(&mut self) -> anyhow::Result<()> {
+        self.initialize_with_capabilities(&json!({})).map(|_| ())
+    }
+
+    /// Initialize a discovery session with explicit client capabilities.
+    /// The reply is returned in memory; instruction prose is never journaled.
+    pub fn initialize_with_capabilities(&mut self, capabilities: &Value) -> anyhow::Result<Value> {
+        self.empty_roots = capabilities.get("roots").is_some_and(Value::is_object);
         let response = self.request(
             "initialize",
             json!({
                 "protocolVersion": "2025-06-18",
-                "capabilities": {},
+                "capabilities": capabilities,
                 "clientInfo": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")}
             }),
         )?;
@@ -465,7 +475,8 @@ impl McpClient {
             .and_then(|result| result.get("protocolVersion"))
             .and_then(Value::as_str)
             .map(str::to_owned);
-        self.notify("notifications/initialized", json!({}))
+        self.notify("notifications/initialized", json!({}))?;
+        Ok(response)
     }
 
     pub fn list_tools(&mut self) -> anyhow::Result<Vec<String>> {
@@ -668,6 +679,7 @@ impl McpClient {
         self.next_id += 1;
         self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
         let deadline = self.deadline(self.response_timeout)?;
+        let mut roots_requests = 0;
         loop {
             if Instant::now() >= deadline {
                 return Err(self.abandon(id));
@@ -701,6 +713,20 @@ impl McpClient {
                 if object.get("method").and_then(Value::as_str).is_some() {
                     self.remember_notification(response, raw.len())?;
                 }
+                continue;
+            }
+            // Client and server IDs have independent namespaces. Handle a
+            // server request before comparing its ID with our pending reply.
+            if self.empty_roots
+                && object.get("method").and_then(Value::as_str) == Some("roots/list")
+            {
+                roots_requests += 1;
+                if roots_requests > crate::standard::MAX_SERVER_REQUESTS {
+                    bail!("roots discovery request limit exceeded");
+                }
+                self.write(
+                    &json!({"jsonrpc": "2.0", "id": object.get("id"), "result": {"roots": []}}),
+                )?;
                 continue;
             }
             if self.is_abandoned_reply(object) {

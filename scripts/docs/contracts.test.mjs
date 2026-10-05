@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -59,7 +59,10 @@ test("navigation references every official source page exactly once", async () =
   const navigation = JSON.parse(await readFile(path.join(SOURCE, "navigation.json"), "utf8"));
   const paths = navigation.sections.flatMap((section) => section.pages.map((page) => page.path));
   assert.equal(navigation.title, "MCP Eval");
-  assert.equal(paths.length, 14);
+  const sourcePages = (await readdir(path.join(SOURCE, "pages"), { recursive: true }))
+    .filter((entry) => entry.endsWith(".md"))
+    .map((entry) => entry.split(path.sep).join("/"));
+  assert.deepEqual([...paths].sort(), sourcePages.sort());
   assert.equal(new Set(paths).size, paths.length);
   for (const relative of paths) {
     assert.ok(await readFile(path.join(SOURCE, "pages", relative), "utf8"));

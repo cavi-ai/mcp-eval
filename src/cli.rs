@@ -32,6 +32,13 @@ pub enum ScoreFormat {
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
+pub enum GuidanceFormat {
+    #[default]
+    Text,
+    Json,
+}
+
+#[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum SchemaDocument {
     /// mcp-eval.manifest.json.
     #[default]
@@ -40,6 +47,8 @@ pub enum SchemaDocument {
     Report,
     /// mcpeval.probe-diff/v2 (`diff --format json`).
     Diff,
+    /// mcpeval.guidance-report/v1 (`guidance --format json`).
+    Guidance,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -89,6 +98,29 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
+    /// Compare server instructions with capability-dependent tool catalogs; calls no tools.
+    #[command(display_order = 3)]
+    Guidance {
+        #[arg(long)]
+        server: String,
+        /// Profiles to inspect (repeatable); defaults to none, roots, sampling, elicitation, all.
+        #[arg(long, value_enum)]
+        profile: Vec<mcpeval::guidance::Profile>,
+        /// Tool expected in every selected profile (repeatable). Missing tools fail the gate.
+        #[arg(long = "require-tool", value_name = "NAME")]
+        required_tools: Vec<String>,
+        /// Allow delayed post-initialization registration before reading the catalog (0..=5000).
+        #[arg(long, default_value_t = 1500)]
+        settle_ms: u64,
+        #[arg(long, value_enum, default_value_t = GuidanceFormat::Text)]
+        format: GuidanceFormat,
+        #[arg(long)]
+        url: Option<String>,
+        #[arg(long, requires = "url")]
+        allow_remote_http: bool,
+        #[arg(last = true)]
+        cmd: Vec<String>,
+    },
     /// Proxy an MCP server on stdio, recording every framed message.
     #[command(display_order = 10)]
     Shim {

@@ -43,6 +43,17 @@ Schemas for the report and diff documents; version 2 only gains optional
 fields. `report` and `diff` also read v1 documents; `diff` marks readiness
 not comparable across standards or against a v1 document.
 
+## Guidance discovery
+
+`guidance --server <SERVER>` compares instruction references with catalogs
+under client capability profiles without calling tools. It supports text and
+JSON output, `--url` with the usual remote opt-in, repeatable `--profile` and
+`--require-tool`, and a bounded `--settle-ms` initialization window. Prose
+references produce review candidates; only explicitly required tools can
+fail its gate. See [instruction coherence](../guides/instruction-coherence.md)
+for scope, privacy guarantees, and incomplete-discovery behavior.
+`schema guidance` prints `mcpeval.guidance-report/v1`'s JSON Schema.
+
 ## Exit codes
 
 | Code | Meaning |

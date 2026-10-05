@@ -153,6 +153,13 @@ pub(crate) fn page_catalog(
         let (listed, next) = match request(params).and_then(|response| parse_page(&response)) {
             Ok(listed) => listed,
             Err(error) if page == 0 => return Err(error),
+            Err(error)
+                if error
+                    .downcast_ref::<crate::evaluation_budget::Exhausted>()
+                    .is_some() =>
+            {
+                return Err(error)
+            }
             Err(_) => break,
         };
         for (entry, tool) in listed {
@@ -224,6 +231,7 @@ pub struct McpClient {
     lines: Receiver<std::io::Result<Vec<u8>>>,
     next_id: u64,
     response_timeout: Duration,
+    budget: Option<crate::evaluation_budget::Budget>,
     /// Requests given up on at their timeout. A late response to one of
     /// them is discarded instead of being mistaken for a misrouted reply.
     abandoned: std::collections::HashSet<u64>,
@@ -265,6 +273,7 @@ impl McpClient {
             lines,
             next_id: 1,
             response_timeout: DEFAULT_RESPONSE_TIMEOUT,
+            budget: None,
             abandoned: std::collections::HashSet::new(),
             capabilities: None,
             protocol_version: None,
@@ -332,6 +341,17 @@ impl McpClient {
         self.response_timeout = timeout.unwrap_or(DEFAULT_RESPONSE_TIMEOUT);
     }
 
+    pub(crate) fn set_evaluation_budget(&mut self, budget: crate::evaluation_budget::Budget) {
+        self.budget = Some(budget);
+    }
+
+    fn deadline(&self, timeout: Duration) -> anyhow::Result<Instant> {
+        match &self.budget {
+            Some(budget) => budget.deadline(timeout),
+            None => Ok(Instant::now() + timeout),
+        }
+    }
+
     /// Run one full `initialize` handshake with the given protocol version
     /// and return the server's reply verbatim. Used by the
     /// protocol-negotiation probe to observe version selection directly;
@@ -370,7 +390,7 @@ impl McpClient {
             "params": {"name": tool, "arguments": arguments}
         }))?;
         let mut server_requests = 0u64;
-        let deadline = Instant::now() + self.response_timeout;
+        let deadline = self.deadline(self.response_timeout)?;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -499,15 +519,23 @@ impl McpClient {
         // The only frames that can still arrive for this id are the
         // server's resolution. Anything without our id is skipped (the
         // session is otherwise idle, so there should be nothing else).
-        let deadline = Instant::now() + grace;
+        let deadline = self.deadline(grace)?;
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
+                if let Some(budget) = &self.budget {
+                    budget.check()?;
+                }
                 return Ok(CancellationOutcome::Honored);
             }
             let raw = match self.lines.recv_timeout(remaining) {
                 Ok(Ok(raw)) => raw,
-                Err(mpsc::RecvTimeoutError::Timeout) => return Ok(CancellationOutcome::Honored),
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    if let Some(budget) = &self.budget {
+                        budget.check()?;
+                    }
+                    return Ok(CancellationOutcome::Honored);
+                }
                 Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(closed_stdout())
                 }
@@ -570,7 +598,9 @@ impl McpClient {
             self.notification_bytes -= self.notifications.remove(index).1;
             return true;
         }
-        let deadline = Instant::now() + wait;
+        let Ok(deadline) = self.deadline(wait) else {
+            return false;
+        };
         loop {
             let remaining = deadline.saturating_duration_since(Instant::now());
             if remaining.is_zero() {
@@ -637,7 +667,7 @@ impl McpClient {
         let id = self.next_id;
         self.next_id += 1;
         self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
-        let deadline = Instant::now() + self.response_timeout;
+        let deadline = self.deadline(self.response_timeout)?;
         loop {
             if Instant::now() >= deadline {
                 return Err(self.abandon(id));
@@ -693,6 +723,11 @@ impl McpClient {
     /// Give up on request `id` at its timeout.
     fn abandon(&mut self, id: u64) -> anyhow::Error {
         self.abandoned.insert(id);
+        if let Some(budget) = &self.budget {
+            if let Err(error) = budget.check() {
+                return error;
+            }
+        }
         TransportFailure::Timeout.into()
     }
 
@@ -706,6 +741,15 @@ impl McpClient {
     }
 
     fn write(&mut self, value: &Value) -> anyhow::Result<()> {
+        let timeout = match &self.budget {
+            Some(budget) => {
+                if value.get("id").is_some() && value.get("method").is_some() {
+                    budget.acquire()?;
+                }
+                budget.timeout(self.response_timeout)?
+            }
+            None => self.response_timeout,
+        };
         if self.failed {
             return Err(closed_stdout());
         }
@@ -717,10 +761,13 @@ impl McpClient {
             .ok_or_else(closed_stdout)?
             .try_send((frame, reply))
             .map_err(|_| closed_stdout())?;
-        match result.recv_timeout(self.response_timeout) {
+        match result.recv_timeout(timeout) {
             Ok(Ok(())) => Ok(()),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 self.failed = true;
+                if let Some(budget) = &self.budget {
+                    budget.check()?;
+                }
                 Err(TransportFailure::Timeout.into())
             }
             _ => {

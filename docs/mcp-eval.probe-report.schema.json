@@ -59,7 +59,7 @@
           "type": "null"
         }
       ],
-      "description": "Readiness under an mcpeval standard; null under --gate-only, for a selected probe, or when the standard battery could not start."
+      "description": "Readiness under an mcpeval standard; null under --gate-only, for a selected probe, or when the standard battery could not finish."
     },
     "cases": {
       "type": "array",
@@ -100,7 +100,7 @@
           "type": "null"
         }
       ],
-      "description": "Why the standard battery could not start."
+      "description": "Why the standard battery could not finish."
     }
   },
   "$defs": {
@@ -156,9 +156,10 @@
         "completion-stalled-request",
         "transport-timeout",
         "transport-closed",
-        "transport-error"
+        "transport-error",
+        "evaluation-budget-exceeded"
       ],
-      "description": "Fixed failure label; transport-* means the case could not be evaluated. `mcpeval explain <reason>` prints the fix."
+      "description": "Fixed failure label; transport-* and evaluation-budget-exceeded mean the case could not finish. `mcpeval explain <reason>` prints the fix."
     },
     "readiness": {
       "type": "object",

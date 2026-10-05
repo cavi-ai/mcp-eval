@@ -316,6 +316,9 @@ fn shutdown_drains_completion_emitted_while_input_pump_is_joined() {
 #[test]
 fn cancellation_wakes_and_releases_a_blocked_input_reader() {
     let (source, mut source_peer) = UnixStream::pair().unwrap();
+    source_peer
+        .set_read_timeout(Some(Duration::from_secs(1)))
+        .unwrap();
     let (cancel, cancellation) = cancellation_pair().unwrap();
     let active = Arc::new(AtomicBool::new(false));
     let thread_active = Arc::clone(&active);
@@ -343,6 +346,14 @@ fn cancellation_wakes_and_releases_a_blocked_input_reader() {
     assert_eq!(result.unwrap_err().kind(), io::ErrorKind::ConnectionAborted);
     assert!(cancelled);
     assert!(!active.load(Ordering::Acquire));
+    // Concurrent process launches can briefly inherit the socket between
+    // fork and exec. Observe EOF within a bound before asserting write failure.
+    let mut byte = [0_u8; 1];
+    assert_eq!(
+        source_peer.read(&mut byte).unwrap(),
+        0,
+        "the returned reader must release its input"
+    );
     assert_eq!(
         source_peer.write_all(b"still-owned").unwrap_err().kind(),
         io::ErrorKind::BrokenPipe,

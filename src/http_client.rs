@@ -20,6 +20,7 @@ pub struct HttpMcpClient {
     /// Whole-request deadline for each POST; `None` keeps the agent's
     /// five-second connect, read, and write timeouts.
     response_timeout: Option<Duration>,
+    budget: Option<crate::evaluation_budget::Budget>,
     /// The server's advertised capabilities from `initialize`.
     capabilities: Option<Value>,
     /// The protocol version the server answered the handshake with.
@@ -58,6 +59,7 @@ impl HttpMcpClient {
             session_id: None,
             next_id: 1,
             response_timeout: None,
+            budget: None,
             capabilities: None,
             protocol_version: None,
         })
@@ -73,6 +75,17 @@ impl HttpMcpClient {
     /// ([`DEFAULT_IO_TIMEOUT`]).
     pub fn set_response_timeout(&mut self, timeout: Option<Duration>) {
         self.response_timeout = timeout;
+    }
+
+    pub(crate) fn set_evaluation_budget(&mut self, budget: crate::evaluation_budget::Budget) {
+        self.budget = Some(budget);
+    }
+
+    fn finish<T>(&self, result: anyhow::Result<T>) -> anyhow::Result<T> {
+        match &self.budget {
+            Some(budget) => budget.finish(result),
+            None => result,
+        }
     }
 
     /// Run one `initialize` handshake with the given protocol version and
@@ -190,6 +203,16 @@ impl HttpMcpClient {
         _respond: &mut dyn FnMut(&str, &Value) -> Option<Value>,
         max_server_requests: u64,
     ) -> anyhow::Result<(ToolResponse, u64)> {
+        let result = self.call_tool_observing_inner(tool, arguments, max_server_requests);
+        self.finish(result)
+    }
+
+    fn call_tool_observing_inner(
+        &mut self,
+        tool: &str,
+        arguments: &Value,
+        max_server_requests: u64,
+    ) -> anyhow::Result<(ToolResponse, u64)> {
         let id = self.next_id;
         self.next_id += 1;
         let message = json!({
@@ -298,6 +321,13 @@ impl HttpMcpClient {
     /// any non-200) signal "no standalone stream", which counts as a
     /// missing notification.
     pub fn wait_for_resource_update(&mut self, uri: &str, wait: Duration) -> bool {
+        let wait = match &self.budget {
+            Some(budget) => match budget.timeout(wait) {
+                Ok(wait) => wait,
+                Err(_) => return false,
+            },
+            None => wait,
+        };
         let mut request = self
             .agent
             .get(&self.endpoint)
@@ -366,9 +396,17 @@ impl HttpMcpClient {
         reason: &str,
         grace: Duration,
     ) -> anyhow::Result<CancellationOutcome> {
+        let grace = match &self.budget {
+            Some(budget) => {
+                budget.acquire()?;
+                budget.timeout(grace)?
+            }
+            None => grace,
+        };
         let id = self.next_id;
         self.next_id += 1;
         let (worker_agent, worker_endpoint, worker_session) = self.clone_for_request();
+        let worker_budget = self.budget.clone();
         let call_message = json!({
             "jsonrpc": "2.0",
             "id": id,
@@ -376,25 +414,37 @@ impl HttpMcpClient {
             "params": {"name": tool, "arguments": arguments}
         });
         let worker = std::thread::spawn(move || {
-            worker_call(
+            let grace = match &worker_budget {
+                Some(budget) => budget.timeout(grace)?,
+                None => grace,
+            };
+            let result = worker_call(
                 &worker_agent,
                 &worker_endpoint,
                 worker_session,
                 call_message,
                 id,
                 grace,
-            )
+            );
+            match worker_budget {
+                Some(budget) => budget.finish(result),
+                None => result,
+            }
         });
         // Give the call a moment to reach the server before cancelling.
-        std::thread::sleep(Duration::from_millis(50));
-        self.notify(
+        std::thread::sleep(Duration::from_millis(50).min(grace));
+        let notified = self.notify(
             "notifications/cancelled",
             json!({"requestId": id, "reason": reason}),
-        )?;
-        match worker.join() {
+        );
+        // Always join the owned request, even if notification delivery fails.
+        let joined = match worker.join() {
             Ok(joined) => joined,
-            Err(_) => bail!("cancelled call worker terminated unexpectedly"),
-        }
+            Err(_) => Err(anyhow::anyhow!(
+                "cancelled call worker terminated unexpectedly"
+            )),
+        };
+        self.finish(notified.and(joined))
     }
 
     fn clone_for_request(&self) -> (ureq::Agent, String, Option<String>) {
@@ -415,6 +465,11 @@ impl HttpMcpClient {
     }
 
     fn request(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
+        let result = self.request_inner(method, params);
+        self.finish(result)
+    }
+
+    fn request_inner(&mut self, method: &str, params: Value) -> anyhow::Result<Value> {
         let id = self.next_id;
         self.next_id += 1;
         let message = json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params});
@@ -456,6 +511,22 @@ impl HttpMcpClient {
     }
 
     fn post(&self, message: &Value) -> anyhow::Result<ureq::Response> {
+        let timeout = match &self.budget {
+            Some(budget) => {
+                if message.get("id").is_some() && message.get("method").is_some() {
+                    budget.acquire()?;
+                }
+                // Keep the agent's existing per-operation timeouts when none
+                // was requested; the whole request still ends at the run deadline.
+                Some(
+                    budget.timeout(
+                        self.response_timeout
+                            .unwrap_or(crate::evaluation_budget::MAX_DURATION),
+                    )?,
+                )
+            }
+            None => self.response_timeout,
+        };
         let mut request = self
             .agent
             .post(&self.endpoint)
@@ -465,7 +536,7 @@ impl HttpMcpClient {
         if let Some(session_id) = &self.session_id {
             request = request.set("Mcp-Session-Id", session_id);
         }
-        if let Some(timeout) = self.response_timeout {
+        if let Some(timeout) = timeout {
             request = request.timeout(timeout);
         }
         if let Ok(authorization) = std::env::var("MCPEVAL_HTTP_AUTHORIZATION") {
@@ -689,4 +760,126 @@ fn validate_response(value: &Value, id: u64) -> anyhow::Result<()> {
         bail!("MCP HTTP response is invalid");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::{TcpListener, TcpStream};
+    use std::time::Instant;
+
+    fn request(stream: &TcpStream) -> Value {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut length = 0;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            if line == "\r\n" {
+                break;
+            }
+            if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                length = value.trim().parse().unwrap();
+            }
+        }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    #[test]
+    fn cancellation_notification_failure_still_joins_the_call_worker() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut call, _) = listener.accept().unwrap();
+            let message = request(&call);
+            let (mut notification, _) = listener.accept().unwrap();
+            assert_eq!(request(&notification)["method"], "notifications/cancelled");
+            notification
+                .write_all(b"HTTP/1.1 500 Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                .unwrap();
+            drop(notification);
+            std::thread::sleep(Duration::from_millis(250));
+            let body = json!({"jsonrpc":"2.0", "id":message["id"], "result":{}}).to_string();
+            write!(call, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        let mut client = HttpMcpClient::connect(&endpoint, false).unwrap();
+        let started = Instant::now();
+        let result = client.cancel_tool_call("ok", &json!({}), "test", Duration::from_secs(2));
+        let elapsed = started.elapsed();
+        server.join().unwrap();
+        assert!(result.is_err());
+        assert!(
+            elapsed >= Duration::from_millis(250),
+            "the call worker was detached on notification failure"
+        );
+    }
+
+    #[test]
+    fn evaluation_budget_bounds_slow_http_response_bodies() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let message = request(&stream);
+            let body = json!({"jsonrpc":"2.0", "id":message["id"], "result":{}}).to_string();
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            for byte in body.bytes() {
+                if stream.write_all(&[byte]).is_err() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(30));
+            }
+        });
+        let mut client = HttpMcpClient::connect(&endpoint, false).unwrap();
+        client.set_evaluation_budget(crate::evaluation_budget::Budget::new(
+            Duration::from_millis(200),
+            10,
+        ));
+        let started = Instant::now();
+        let result = client.raw_request("ping", json!({}));
+        let elapsed = started.elapsed();
+        worker.join().unwrap();
+        assert!(result
+            .unwrap_err()
+            .downcast_ref::<crate::evaluation_budget::Exhausted>()
+            .is_some());
+        assert!(
+            elapsed < Duration::from_millis(800),
+            "a trickling response extended the evaluation deadline: {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn evaluation_budget_exhaustion_on_later_http_catalog_page_is_not_partial_success() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let worker = std::thread::spawn(move || {
+            for page in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let message = request(&stream);
+                let body = json!({"jsonrpc":"2.0", "id":message["id"], "result":{
+                    "tools":[{"name":format!("tool{page}"),"inputSchema":{"type":"object"}}],
+                    "nextCursor":format!("cursor{page}")
+                }})
+                .to_string();
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+            }
+        });
+        let mut client = HttpMcpClient::connect(&endpoint, false).unwrap();
+        client.set_evaluation_budget(crate::evaluation_budget::Budget::new(
+            Duration::from_secs(10),
+            2,
+        ));
+        let result = client.list_tools_catalog();
+        worker.join().unwrap();
+        assert!(result
+            .unwrap_err()
+            .downcast_ref::<crate::evaluation_budget::Exhausted>()
+            .is_some());
+    }
 }

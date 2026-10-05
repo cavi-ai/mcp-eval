@@ -83,16 +83,24 @@ enum InitClient {
 }
 
 impl InitClient {
-    fn connect(options: &InitOptions) -> anyhow::Result<Self> {
-        match (&options.http_url, options.command.is_empty()) {
-            (None, false) => Ok(Self::Stdio(McpClient::spawn(&options.command)?)),
-            (Some(endpoint), true) => Ok(Self::Http(HttpMcpClient::connect(
-                endpoint,
-                options.allow_remote_http,
-            )?)),
+    fn connect(
+        options: &InitOptions,
+        budget: &crate::evaluation_budget::Budget,
+    ) -> anyhow::Result<Self> {
+        budget.check()?;
+        let mut client = match (&options.http_url, options.command.is_empty()) {
+            (None, false) => Self::Stdio(McpClient::spawn(&options.command)?),
+            (Some(endpoint), true) => {
+                Self::Http(HttpMcpClient::connect(endpoint, options.allow_remote_http)?)
+            }
             (Some(_), false) => bail!("select an HTTP endpoint or a stdio command, not both"),
             (None, true) => bail!("an HTTP endpoint or stdio command is required"),
+        };
+        match &mut client {
+            Self::Stdio(client) => client.set_evaluation_budget(budget.clone()),
+            Self::Http(client) => client.set_evaluation_budget(budget.clone()),
         }
+        Ok(client)
     }
 
     fn catalog(&mut self) -> anyhow::Result<ToolCatalog> {
@@ -229,7 +237,9 @@ fn scaffold(
     client: &mut InitClient,
     catalog: &ToolCatalog,
     decisions: &[Decision],
+    budget: &crate::evaluation_budget::Budget,
 ) -> anyhow::Result<crate::manifest::Manifest> {
+    budget.check()?;
     use crate::manifest::{Access, Manifest, ProbeCase};
     let tool_count = catalog.tools.len() as u64;
     let encoded_bytes = catalog.encoded_bytes as u64;
@@ -284,6 +294,7 @@ fn scaffold(
     let empty = || Value::Object(serde_json::Map::new());
     let mut verified: Vec<&ToolDefinition> = Vec::new();
     for (tool, decision) in catalog.tools.iter().zip(decisions) {
+        budget.check()?;
         if verified.len() >= MAX_VERIFIED_TOOLS {
             break;
         }
@@ -368,29 +379,35 @@ fn scaffold(
         probes,
     };
     manifest.validate()?;
+    budget.check()?;
     Ok(manifest)
 }
 
 /// Connect, handshake, and list the catalog every scaffolding path starts
 /// from.
-fn open(options: &InitOptions) -> anyhow::Result<(InitClient, ToolCatalog)> {
+fn open(
+    options: &InitOptions,
+) -> anyhow::Result<(InitClient, ToolCatalog, crate::evaluation_budget::Budget)> {
     if !privacy::valid_server(&options.server) {
         bail!("server label is invalid");
     }
-    let mut client = InitClient::connect(options)?;
+    let budget = crate::evaluation_budget::Budget::default();
+    let mut client = InitClient::connect(options, &budget)?;
     client.initialize().context("initializing MCP server")?;
     let catalog = client.catalog().context("listing tools")?;
     if catalog.tools.is_empty() {
         bail!("the server declared no tools; there is nothing to scaffold");
     }
-    Ok((client, catalog))
+    budget.check()?;
+    Ok((client, catalog, budget))
 }
 
 /// Each catalog tool with the decision `run` would apply to it. Calls no
 /// tool and touches no file.
 pub fn dry_run(options: &InitOptions) -> anyhow::Result<Vec<(String, Decision)>> {
-    let (_, catalog) = open(options)?;
+    let (_, catalog, budget) = open(options)?;
     let decisions = decisions(&catalog, options.confirm_read_only, &options.tools)?;
+    budget.check()?;
     Ok(catalog
         .tools
         .into_iter()
@@ -401,10 +418,10 @@ pub fn dry_run(options: &InitOptions) -> anyhow::Result<Vec<(String, Decision)>>
 
 pub fn run(options: InitOptions) -> anyhow::Result<InitSummary> {
     write_guarded(&options.output, options.force)?;
-    let (mut client, catalog) = open(&options)?;
+    let (mut client, catalog, budget) = open(&options)?;
     let decisions = decisions(&catalog, options.confirm_read_only, &options.tools)?;
     let tool_count = catalog.tools.len() as u64;
-    let manifest = scaffold(&mut client, &catalog, &decisions)?;
+    let manifest = scaffold(&mut client, &catalog, &decisions, &budget)?;
     let body = serde_json::to_string_pretty(&manifest).context("serializing manifest")?;
     std::fs::write(&options.output, body + "\n").context("writing manifest")?;
     let mut kind_counts: Vec<(ProbeKind, usize)> = Vec::new();
@@ -442,7 +459,7 @@ pub struct ScaffoldRequest {
 /// Probe a live server and derive its starter manifest without touching
 /// the filesystem.
 pub fn probe_scaffold(request: ScaffoldRequest) -> anyhow::Result<crate::manifest::Manifest> {
-    let (mut client, catalog) = open(&InitOptions {
+    let (mut client, catalog, budget) = open(&InitOptions {
         server: request.server,
         output: std::path::PathBuf::new(),
         force: false,
@@ -453,7 +470,7 @@ pub fn probe_scaffold(request: ScaffoldRequest) -> anyhow::Result<crate::manifes
         allow_remote_http: request.allow_remote_http,
     })?;
     let decisions = decisions(&catalog, request.confirm_read_only, &[])?;
-    scaffold(&mut client, &catalog, &decisions)
+    scaffold(&mut client, &catalog, &decisions, &budget)
 }
 
 fn write_guarded(path: &Path, force: bool) -> anyhow::Result<()> {
@@ -469,6 +486,36 @@ fn write_guarded(path: &Path, force: bool) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn evaluation_budget_exhaustion_does_not_return_a_partial_scaffold() {
+        let options = InitOptions {
+            server: "fixture".into(),
+            output: PathBuf::new(),
+            force: false,
+            confirm_read_only: true,
+            tools: vec![],
+            command: vec![
+                "python3".into(),
+                concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/tests/fixtures/transport_fault_server.py"
+                )
+                .into(),
+            ],
+            http_url: None,
+            allow_remote_http: false,
+        };
+        let budget = crate::evaluation_budget::Budget::new(std::time::Duration::from_secs(10), 3);
+        let mut client = InitClient::connect(&options, &budget).unwrap();
+        client.initialize().unwrap();
+        let catalog = client.catalog().unwrap();
+        let decisions = decisions(&catalog, true, &[]).unwrap();
+        let error = scaffold(&mut client, &catalog, &decisions, &budget).unwrap_err();
+        assert!(error
+            .downcast_ref::<crate::evaluation_budget::Exhausted>()
+            .is_some());
+    }
 
     fn tool(input_schema: Value) -> ToolDefinition {
         ToolDefinition {

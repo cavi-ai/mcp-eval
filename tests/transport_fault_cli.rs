@@ -64,6 +64,41 @@ fn reasons(report: &Value) -> Vec<Value> {
 }
 
 #[test]
+fn evaluation_budget_exhaustion_keeps_earlier_verdicts_and_errors_unfinished_cases() {
+    let probes: Vec<_> = (0..42)
+        .map(|index| {
+            json!({
+                "id":format!("repeat-{index}"), "probe":"degradation-over-n", "tool":"ok",
+                "access":"read_only", "arguments":{}, "max_attempts":100
+            })
+        })
+        .collect();
+    let (output, report) = probe(json!({"version":1,"probes":probes}), &stdio());
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = report.unwrap();
+    let reasons = reasons(&report);
+    assert!(reasons[..40].iter().all(Value::is_null));
+    assert_eq!(
+        &reasons[40..],
+        &[
+            json!("evaluation-budget-exceeded"),
+            json!("evaluation-budget-exceeded")
+        ]
+    );
+    assert!(report["readiness"].is_null());
+    assert_eq!(report["readiness_error"], "evaluation-budget-exceeded");
+    let parsed = mcpeval::probe::ProbeReport::from_json_document(&report).unwrap();
+    assert!(parsed.cases[40..]
+        .iter()
+        .all(mcpeval::probe::CaseReport::errored));
+}
+
+#[test]
 fn a_server_crash_mid_battery_still_emits_the_report_and_exits_3() {
     let manifest = json!({"version": 1, "probes": [
         case("before", "ok", json!({}), 600_000),

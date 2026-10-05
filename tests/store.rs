@@ -7,6 +7,7 @@ use std::sync::{Arc, Barrier};
 
 fn sample(seq: u64) -> CallRecord {
     CallRecord {
+        identity: None,
         ts: "2026-08-04T12:00:00Z".into(),
         session: "11111111-1111-4111-8111-111111111111".into(),
         seq,

@@ -291,6 +291,17 @@ fn http_shim_records_content_free_markers_for_broken_json() {
         .collect::<String>();
     assert!(stored.contains("\"method\":\"unparsed/outbound\""));
     assert!(stored.contains("\"method\":\"unparsed/inbound\""));
+    let records: Vec<mcpeval::record::CallRecord> = stored
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(records.len(), 2);
+    let first = records[0].identity.as_ref().unwrap();
+    let second = records[1].identity.as_ref().unwrap();
+    first.validate().unwrap();
+    second.validate().unwrap();
+    assert_eq!(first.capture_id, second.capture_id);
+    assert_ne!(first.event_id, second.event_id);
     assert!(!stored.contains("PRIVATE_BROKEN_REQUEST"));
     assert!(!stored.contains("PRIVATE_BROKEN_RESPONSE"));
 }

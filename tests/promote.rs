@@ -132,6 +132,7 @@ fn tempdir() -> std::path::PathBuf {
 
 fn call(session: &str, seq: u64, tool: &str, outcome: &str, template_id: &str) -> CallRecord {
     CallRecord {
+        identity: None,
         ts: format!("2026-08-04T12:00:{seq:02}Z"),
         session: session.into(),
         seq,
@@ -152,6 +153,56 @@ fn call(session: &str, seq: u64, tool: &str, outcome: &str, template_id: &str) -
         shim_self_us: 1,
         kind: "real".into(),
     }
+}
+
+#[test]
+fn event_annotations_cannot_change_another_captures_finding_class() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let mut target = None;
+    for server in ["alpha", "beta"] {
+        for session in ["shared", "second"] {
+            let mut record = call(session, 1, "click", "error", "aaaaaaaaaaaaaaaa");
+            record.server = server.into();
+            record.identity = Some(mcpeval::record::EventIdentity::new(uuid::Uuid::new_v4()));
+            if server == "alpha" && session == "shared" {
+                target = record.identity.as_ref().map(|id| id.event_id);
+            }
+            store.append(&record).unwrap();
+        }
+    }
+    for (event_id, session, seq, kind) in [
+        (target, None, None, "false-success"),
+        (None, Some("shared".into()), Some(1), "blocked-optimal-path"),
+    ] {
+        store
+            .append_annotation(&AnnotationRecord {
+                ts: "2026-08-04T12:00:02Z".into(),
+                event_id,
+                session,
+                seq,
+                kind: kind.into(),
+                note: "observed".into(),
+            })
+            .unwrap();
+    }
+    index::build(&dir).unwrap();
+    promote(&dir, at(0)).unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let classes: Vec<(String, String)> = db
+        .prepare("SELECT server,class FROM issues ORDER BY server")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        classes,
+        vec![
+            ("alpha".into(), "false-success".into()),
+            ("beta".into(), "recurring-error".into())
+        ]
+    );
 }
 
 #[test]
@@ -529,8 +580,9 @@ fn promotion_classifies_each_issue_from_codes_annotations_and_retries() {
         store
             .append_annotation(&AnnotationRecord {
                 ts: "2026-08-04T12:00:01Z".into(),
-                session: mcpeval::privacy::opaque_session(session),
-                seq: 1,
+                event_id: None,
+                session: Some(mcpeval::privacy::opaque_session(session)),
+                seq: Some(1),
                 kind: kind.into(),
                 note: "observed".into(),
             })

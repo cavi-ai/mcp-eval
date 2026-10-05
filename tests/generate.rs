@@ -33,6 +33,7 @@ impl Drop for TempDir {
 
 fn call(session: &str, tool: &str, arguments: serde_json::Value, retryable: bool) -> CallRecord {
     CallRecord {
+        identity: None,
         ts: "2026-08-05T12:00:00Z".into(),
         session: session.into(),
         seq: 1,

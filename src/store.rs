@@ -32,6 +32,9 @@ impl Store {
     }
 
     pub fn append(&mut self, rec: &CallRecord) -> anyhow::Result<()> {
+        if let Some(identity) = &rec.identity {
+            identity.validate()?;
+        }
         let safe = rec.sanitized();
         let day = safe.ts.get(..10).unwrap_or("unknown");
         let path = self.root.join("store").join(format!("calls-{day}.jsonl"));
@@ -58,6 +61,7 @@ impl Store {
     /// to `server`/`method`/`tool`, for callers that reach the store
     /// directly without validating first.
     pub fn append_annotation(&mut self, rec: &AnnotationRecord) -> anyhow::Result<()> {
+        rec.validate_target()?;
         let day = rec.ts.get(..10).unwrap_or("unknown");
         let path = self
             .root
@@ -71,11 +75,7 @@ impl Store {
             .with_context(|| format!("opening {}", path.display()))?;
         file.lock()
             .with_context(|| format!("locking {}", path.display()))?;
-        let mut safe = rec.clone();
-        safe.session = crate::privacy::opaque_session(&safe.session);
-        if !crate::record::ANNOTATION_KINDS.contains(&safe.kind.as_str()) {
-            safe.kind = "invalid".into();
-        }
+        let safe = rec.sanitized();
         let mut line = serde_json::to_string(&safe)?;
         line.push('\n');
         file.write_all(line.as_bytes())?;

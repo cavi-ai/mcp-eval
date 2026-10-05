@@ -21,7 +21,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary.
 | `generate` | `--finding <FINDING> --output <OUTPUT> --confirm-read-only` | Generate a one-case read-only manifest: a `degradation-over-n` case whose attempts are sized from the observed failure rate to catch the defect with 95% probability (3 for a deterministic error, up to 100), with arguments rebuilt from the recorded shape and each placeholder printed as `fill: <path> (<shape>)`. `--force` replaces an existing output. |
 | `findings` | optional `--format agent\|md\|json` | Render sanitized findings; default format is `agent`. |
 | `serve` | `--listen <LISTEN>` | Serve findings and trends over a loopback Streamable HTTP MCP endpoint. `--allow-spawn` enables `run_probe`, `scaffold`, `score`, and `verify_finding`, which launch the server process an agent names. `--print-config` emits an MCP client config snippet for the endpoint and exits. |
-| `annotate` | `--session <SESSION> --seq <SEQ> --kind <KIND> --note <NOTE>` | Record a bounded agent-authored observation. |
+| `annotate` | `--event-id <UUID>` or `--session <SESSION> --seq <SEQ>`, plus `--kind <KIND> --note <NOTE>` | Record a bounded agent-authored observation; unknown or ambiguous targets stay unlinked. |
 | `doctor` | optional `--check-redaction` | Run store-hygiene checks. |
 | `share` | `--dir <DIR>` | Package the share-safe envelope: the store records plus a SHARE.md manifest, after a clean redaction sweep; a flagged sweep packages nothing and exits `1`. The salt, index databases, and manifests are never copied. Annotation prose is omitted by default. Supports `--include-probe-history`, `--include-annotation-notes` after manual review, and `--force` to replace the entire envelope. |
 

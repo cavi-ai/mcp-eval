@@ -73,6 +73,21 @@ fn sessions_are_stable_opaque_tokens_and_unlisted_tools_are_not_persisted() {
         .on_inbound(&json!({"jsonrpc":"2.0","id":1,"result":{}}), 1)
         .unwrap();
     assert_eq!(a.session, b.session);
+    assert_eq!(a.seq, b.seq);
+    let first_identity = a.identity.as_ref().unwrap();
+    let second_identity = b.identity.as_ref().unwrap();
+    assert_ne!(first_identity.capture_id, second_identity.capture_id);
+    assert_ne!(first_identity.event_id, second_identity.event_id);
+    let notification = first
+        .on_inbound(&json!({"method":"notifications/resources/updated"}), 2)
+        .unwrap();
+    let unparsed = first.on_unparsed("inbound", 3);
+    for record in [notification, unparsed] {
+        let identity = record.identity.unwrap();
+        assert_eq!(identity.capture_id, first_identity.capture_id);
+        assert_ne!(identity.event_id, first_identity.event_id);
+        identity.validate().unwrap();
+    }
     assert!(a.session.starts_with("session:"));
     assert!(!a.session.contains("secret"));
     assert_eq!(a.tool.as_deref(), Some("unlisted"));

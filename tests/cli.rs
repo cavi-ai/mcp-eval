@@ -80,6 +80,7 @@ fn promotion_home() -> std::path::PathBuf {
     for (session, seq) in [("s1", 1), ("s2", 1)] {
         store
             .append(&CallRecord {
+                identity: None,
                 ts: ts.clone(),
                 session: session.into(),
                 seq,
@@ -230,6 +231,7 @@ fn promote_cli_says_why_issues_were_not_promoted_and_findings_explains_an_empty_
     let mut store = Store::open(Some(dir.clone())).unwrap();
     store
         .append(&CallRecord {
+            identity: None,
             ts: chrono::Utc::now().to_rfc3339(),
             session: "only".into(),
             seq: 1,

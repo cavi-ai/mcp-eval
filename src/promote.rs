@@ -311,7 +311,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
             }
             let mut annotation_statement = transaction.prepare(
                 "SELECT DISTINCT a.kind FROM calls c JOIN annotations a
-                 ON a.session=c.session AND a.seq=c.seq
+                 ON a.call_id=c.id
                  WHERE c.id=?1 AND a.kind IN ('false-success','blocked-optimal-path')",
             )?;
             for kind in

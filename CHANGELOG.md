@@ -4,6 +4,8 @@
 
 ### Added
 
+- Recorder and event UUIDv4 identities for new captures and probe journals.
+  CLI and MCP annotations accept an event ID without legacy session coordinates.
 - Shared five-minute and 4096-request budgets for probe, score, verification,
   and scaffold operations across transports and reconnects. Exhaustion leaves
   unfinished cases errored and readiness unmeasured, without verification credit.
@@ -42,6 +44,10 @@
 
 ### Fixed
 
+- Failure windows cannot cross recorder captures or legacy server boundaries.
+  Ambiguous legacy sequences produce no windows, and ambiguous annotations
+  cannot affect finding classification. Identical modern event replays count
+  once; conflicting identities reject the rebuild and retain the prior index.
 - Stdio evaluation bounds frames, incoming queues, and retained notifications;
   pipe writes time out when a server stops reading. Interleaved messages do not
   restart response deadlines, and shutdown cancels and joins both I/O pumps.

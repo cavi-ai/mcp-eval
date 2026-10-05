@@ -879,6 +879,7 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     let mut reports = Vec::with_capacity(cases.len());
     let mut context = RunContext {
         journal: Some(Journal {
+            capture_id: uuid::Uuid::new_v4(),
             server: &options.server,
             session: &session,
             seq: &mut seq,
@@ -1165,6 +1166,7 @@ fn errored_case(case: &ProbeCase, reason: FailureReason) -> CaseReport {
 /// Where a run's calls are journaled. The standard battery runs without
 /// one: its deliberate calls must never become promoted findings.
 struct Journal<'a> {
+    capture_id: uuid::Uuid,
     server: &'a str,
     session: &'a str,
     seq: &'a mut u64,
@@ -1718,6 +1720,7 @@ fn record_response(
     journal
         .store
         .append(&CallRecord {
+            identity: Some(crate::record::EventIdentity::new(journal.capture_id)),
             ts: chrono::Utc::now()
                 .format("%Y-%m-%dT%H:%M:%S%.3fZ")
                 .to_string(),

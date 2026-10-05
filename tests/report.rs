@@ -14,6 +14,7 @@ fn tempdir() -> std::path::PathBuf {
 
 fn failure(session: &str, seq: u64, tool: &str, id: &str) -> CallRecord {
     CallRecord {
+        identity: None,
         ts: format!("2026-08-05T00:00:{seq:02}Z"),
         session: session.into(),
         seq,
@@ -50,8 +51,9 @@ fn promoted_home() -> std::path::PathBuf {
     store
         .append_annotation(&AnnotationRecord {
             ts: "2026-08-05T00:00:00Z".into(),
-            session: "raw-session-one".into(),
-            seq: 1,
+            event_id: None,
+            session: Some("raw-session-one".into()),
+            seq: Some(1),
             kind: "false-success".into(),
             note: "CANARY private annotation token=secret".into(),
         })

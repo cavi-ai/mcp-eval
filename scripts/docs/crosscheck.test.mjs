@@ -117,10 +117,13 @@ test("docs probe tables cover every probe kind the CLI accepts", async () => {
   // ProbeKind::as_str in src/manifest.rs is the canonical label set: the
   // match arms inside `pub fn as_str` under `impl ProbeKind`.
   const source = await readFile(path.join(ROOT, "src/manifest.rs"), "utf8");
-  const impl = source.slice(source.indexOf("impl ProbeKind"), source.indexOf("impl ProbeKind") + 2000);
+  const impl = source.slice(source.indexOf("impl ProbeKind"), source.indexOf("impl ProbeCase"));
   const body = impl.slice(impl.indexOf("pub fn as_str"));
   const labels = [...body.matchAll(/Self::[A-Za-z]+ => "([a-z0-9-]+)",/gmu)].map((match) => match[1]);
-  assert.equal(labels.length, 19, `unexpected probe-kind count in src/manifest.rs: ${labels.length}`);
+  const variants = source.match(/pub enum ProbeKind \{([\s\S]*?)\n\}/u)?.[1]
+    .split("\n").map((line) => line.trim()).filter(Boolean);
+  assert.ok(variants?.length, "ProbeKind variants were not found");
+  assert.equal(labels.length, variants.length, "as_str label extraction must cover every variant");
 
   const readme = await readFile(path.join(ROOT, "README.md"), "utf8");
   for (const label of labels) {

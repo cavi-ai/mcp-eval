@@ -506,7 +506,10 @@ mod tests {
             http_url: None,
             allow_remote_http: false,
         };
-        let budget = crate::evaluation_budget::Budget::new(std::time::Duration::from_secs(10), 3);
+        // This tests request exhaustion after discovery, not interpreter
+        // startup speed. Deadline behavior has separate short-call coverage.
+        let budget =
+            crate::evaluation_budget::Budget::new(crate::evaluation_budget::MAX_DURATION, 3);
         let mut client = InitClient::connect(&options, &budget).unwrap();
         client.initialize().unwrap();
         let catalog = client.catalog().unwrap();

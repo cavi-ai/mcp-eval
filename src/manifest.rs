@@ -53,8 +53,23 @@ pub struct Expectation {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkflowStep {
+    pub tool: String,
+    pub arguments: Value,
+    pub expect: Expectation,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "probe", deny_unknown_fields)]
 pub enum ProbeCase {
+    #[serde(rename = "workflow")]
+    Workflow {
+        id: String,
+        access: Access,
+        repetitions: u64,
+        steps: Vec<WorkflowStep>,
+    },
     #[serde(rename = "contention")]
     Contention {
         id: String,
@@ -285,6 +300,7 @@ pub enum ProbeKind {
     Elicitation,
     ResourceSubscription,
     Completion,
+    Workflow,
 }
 
 impl ProbeKind {
@@ -309,6 +325,7 @@ impl ProbeKind {
             Self::Elicitation => "elicitation",
             Self::ResourceSubscription => "resource-subscription",
             Self::Completion => "completion",
+            Self::Workflow => "workflow",
         }
     }
 }
@@ -316,7 +333,8 @@ impl ProbeKind {
 impl ProbeCase {
     pub fn id(&self) -> &str {
         match self {
-            Self::Contention { id, .. }
+            Self::Workflow { id, .. }
+            | Self::Contention { id, .. }
             | Self::ErrorHonesty { id, .. }
             | Self::StateRecovery { id, .. }
             | Self::DiscoveryCost { id, .. }
@@ -340,6 +358,7 @@ impl ProbeCase {
 
     pub fn tool(&self) -> Option<&str> {
         match self {
+            Self::Workflow { steps, .. } => steps.first().map(|step| step.tool.as_str()),
             Self::DiscoveryCost { .. }
             | Self::TokenCost { .. }
             | Self::Pagination { .. }
@@ -364,7 +383,8 @@ impl ProbeCase {
 
     pub fn access(&self) -> Access {
         match self {
-            Self::Contention { access, .. }
+            Self::Workflow { access, .. }
+            | Self::Contention { access, .. }
             | Self::ErrorHonesty { access, .. }
             | Self::StateRecovery { access, .. }
             | Self::DiscoveryCost { access, .. }
@@ -388,7 +408,8 @@ impl ProbeCase {
 
     pub fn sandbox(&self) -> Option<&str> {
         match self {
-            Self::DiscoveryCost { .. }
+            Self::Workflow { .. }
+            | Self::DiscoveryCost { .. }
             | Self::TokenCost { .. }
             | Self::Pagination { .. }
             | Self::SurfaceListing { .. }
@@ -413,7 +434,8 @@ impl ProbeCase {
 
     pub fn arguments(&self) -> Option<&Value> {
         match self {
-            Self::DiscoveryCost { .. }
+            Self::Workflow { .. }
+            | Self::DiscoveryCost { .. }
             | Self::TokenCost { .. }
             | Self::StateRecovery { .. }
             | Self::Pagination { .. }
@@ -437,6 +459,7 @@ impl ProbeCase {
 
     pub fn kind(&self) -> ProbeKind {
         match self {
+            Self::Workflow { .. } => ProbeKind::Workflow,
             Self::Contention { .. } => ProbeKind::Contention,
             Self::ErrorHonesty { .. } => ProbeKind::ErrorHonesty,
             Self::StateRecovery { .. } => ProbeKind::StateRecovery,
@@ -473,6 +496,7 @@ impl ProbeCase {
 
     pub fn required_tools(&self) -> Vec<&str> {
         match self {
+            Self::Workflow { steps, .. } => steps.iter().map(|step| step.tool.as_str()).collect(),
             Self::DiscoveryCost { .. }
             | Self::TokenCost { .. }
             | Self::Pagination { .. }
@@ -597,6 +621,25 @@ impl Manifest {
             (Access::Mutating, Some(_)) => {}
         }
         match case {
+            ProbeCase::Workflow {
+                access,
+                repetitions,
+                steps,
+                ..
+            } => {
+                if *access != Access::ReadOnly {
+                    bail!("workflow must be read-only");
+                }
+                if !(1..=20).contains(repetitions) || !(2..=32).contains(&steps.len()) {
+                    bail!("workflow requires 2 through 32 steps and 1 through 20 repetitions");
+                }
+                for step in steps {
+                    if !step.arguments.is_object() {
+                        bail!("workflow step arguments must be objects");
+                    }
+                    validate_expectation(&step.expect)?;
+                }
+            }
             ProbeCase::Contention { .. } => {}
             ProbeCase::ErrorHonesty { max_attempts, .. } => {
                 if !(2..=20).contains(max_attempts) {

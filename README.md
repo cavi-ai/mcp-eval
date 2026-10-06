@@ -421,7 +421,11 @@ or fragments; redirects are disabled. Optional authorization is read from
 Responses are bounded to 8 MiB with five-second network timeouts.
 
 Promotion counts captured calls only, never `mcpeval probe` calls, and
-groups failures by server, tool, and salted template identifier. A finding
+groups errors by server, tool, and salted template identifier. Successful
+calls with linked `false-success` annotations form separate groups by server
+and tool, so an observed wrong result can become a finding even when the call
+returned success. Duplicate annotations do not multiply its failure count;
+ordinary successes and unlinked annotations remain excluded. A finding
 keeps every distinct error code of its group in `err_codes` and the most
 frequent in `err_code`, and carries a defect class (`unstable-error-code`,
 `false-success`, `blocked-optimal-path`, `recovers-on-retry`,

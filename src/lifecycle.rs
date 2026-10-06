@@ -216,8 +216,22 @@ pub fn finding_id(
     err_code: Option<&str>,
     err_template_id: Option<&str>,
 ) -> String {
+    hash_finding_id(&[], &[Some(server), tool, err_code, err_template_id])
+}
+
+/// An observed semantic failure is distinct from a structured error, even
+/// when both have no error template. Existing error finding IDs stay unchanged.
+pub(crate) fn false_success_id(server: &str, tool: Option<&str>) -> String {
+    hash_finding_id(
+        b"mcpeval/annotated-success/false-success/v1",
+        &[Some(server), tool],
+    )
+}
+
+fn hash_finding_id(domain: &[u8], values: &[Option<&str>]) -> String {
     let mut hash = Sha256::new();
-    for value in [Some(server), tool, err_code, err_template_id] {
+    hash.update(domain);
+    for value in values {
         let bytes = value.unwrap_or("").as_bytes();
         hash.update((bytes.len() as u64).to_be_bytes());
         hash.update(bytes);

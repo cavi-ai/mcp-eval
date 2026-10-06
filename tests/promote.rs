@@ -206,6 +206,221 @@ fn event_annotations_cannot_change_another_captures_finding_class() {
 }
 
 #[test]
+fn false_success_annotations_promote_successful_real_calls_without_duplicate_counts() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    for session in ["first", "second"] {
+        let mut record = call(session, 1, "read_status", "ok", "");
+        let identity = mcpeval::record::EventIdentity::new(uuid::Uuid::new_v4());
+        record.identity = Some(identity.clone());
+        store.append(&record).unwrap();
+        for _ in 0..2 {
+            store
+                .append_annotation(&AnnotationRecord {
+                    ts: record.ts.clone(),
+                    event_id: Some(identity.event_id),
+                    session: None,
+                    seq: None,
+                    kind: "false-success".into(),
+                    note: "CANARY private observation".into(),
+                })
+                .unwrap();
+        }
+        store
+            .append(&call(session, 2, "read_status", "ok", ""))
+            .unwrap();
+    }
+    index::build(&dir).unwrap();
+    let stats = promote(&dir, at(0)).unwrap();
+    assert_eq!((stats.issues, stats.findings), (1, 1));
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let observed: (String, i64, i64, i64, String, Option<String>, Option<i64>) = db
+        .query_row(
+            "SELECT class,failures,calls,sessions,err_codes,err_code,retryable FROM issues",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        observed,
+        ("false-success".into(), 2, 4, 2, "[]".into(), None, None)
+    );
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+        .args(["findings", "--format", "json"])
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("CANARY"));
+}
+
+#[test]
+fn successful_calls_need_a_linked_false_success_annotation_and_two_real_sessions() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    for tool in [
+        "plain",
+        "workaround",
+        "synthetic",
+        "metadata",
+        "ambiguous",
+        "single",
+    ] {
+        for session in ["first", "second"] {
+            let mut record = call(session, 1, tool, "ok", "");
+            let identity = mcpeval::record::EventIdentity::new(uuid::Uuid::new_v4());
+            record.identity = Some(identity.clone());
+            if tool == "synthetic" {
+                record.kind = "synthetic".into();
+            }
+            if tool == "metadata" {
+                record.method = "tools/list".into();
+            }
+            store.append(&record).unwrap();
+            if tool != "plain" && tool != "ambiguous" && !(tool == "single" && session == "second")
+            {
+                store
+                    .append_annotation(&AnnotationRecord {
+                        ts: record.ts.clone(),
+                        event_id: Some(identity.event_id),
+                        session: None,
+                        seq: None,
+                        kind: if tool == "workaround" {
+                            "workaround"
+                        } else {
+                            "false-success"
+                        }
+                        .into(),
+                        note: "observed".into(),
+                    })
+                    .unwrap();
+            }
+        }
+    }
+    // These coordinates match several captures and must never link to one arbitrarily.
+    store
+        .append_annotation(&AnnotationRecord {
+            ts: "2026-08-04T12:00:02Z".into(),
+            event_id: None,
+            session: Some("first".into()),
+            seq: Some(1),
+            kind: "false-success".into(),
+            note: "observed".into(),
+        })
+        .unwrap();
+    store
+        .append_annotation(&AnnotationRecord {
+            ts: "2026-08-04T12:00:02Z".into(),
+            event_id: Some(uuid::Uuid::new_v4()),
+            session: None,
+            seq: None,
+            kind: "false-success".into(),
+            note: "unlinked".into(),
+        })
+        .unwrap();
+    index::build(&dir).unwrap();
+    let stats = promote(&dir, at(0)).unwrap();
+    assert_eq!(
+        (stats.issues, stats.findings, stats.single_session),
+        (1, 0, 1)
+    );
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let tool: String = db
+        .query_row("SELECT tool FROM issues", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(tool, "single");
+}
+
+#[test]
+fn annotated_success_and_untemplated_errors_keep_independent_lifecycle_history() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    for session in ["first", "second"] {
+        let mut success = call(session, 1, "read_status", "ok", "");
+        success.identity = Some(mcpeval::record::EventIdentity::new(uuid::Uuid::new_v4()));
+        store.append(&success).unwrap();
+        store
+            .append_annotation(&AnnotationRecord {
+                ts: success.ts.clone(),
+                event_id: Some(success.identity.unwrap().event_id),
+                session: None,
+                seq: None,
+                kind: "false-success".into(),
+                note: "observed".into(),
+            })
+            .unwrap();
+        let mut error = call(session, 2, "read_status", "error", "");
+        error.error.as_mut().unwrap().template_id = None;
+        store.append(&error).unwrap();
+    }
+    index::build(&dir).unwrap();
+    assert_eq!(promote(&dir, at(0)).unwrap().findings, 2);
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let rows: Vec<(String, String)> = db
+        .prepare("SELECT class,finding_id FROM issues ORDER BY class")
+        .unwrap()
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect();
+    assert_eq!(
+        rows.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
+        vec!["false-success", "recurring-error"]
+    );
+    assert_ne!(rows[0].1, rows[1].1);
+    for (index, (_, id)) in rows.iter().enumerate() {
+        mcpeval::lifecycle::record(
+            &dir,
+            id,
+            "test-probe",
+            &"a".repeat(64),
+            &uuid::Uuid::new_v4().to_string(),
+            index == 0,
+            at(1).now,
+        )
+        .unwrap();
+    }
+    index::build(&dir).unwrap();
+    assert_eq!(promote(&dir, at(2)).unwrap().findings, 2);
+    let evidence = rusqlite::Connection::open(dir.join("lifecycle.db")).unwrap();
+    for (index, (_, id)) in rows.iter().enumerate() {
+        let state: String = evidence
+            .query_row(
+                "SELECT state FROM finding_lifecycle WHERE finding_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            state,
+            if index == 0 {
+                "verifying"
+            } else {
+                "fix-claimed"
+            }
+        );
+        let history: i64 = evidence
+            .query_row(
+                "SELECT COUNT(*) FROM probe_history WHERE finding_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(history, 1);
+    }
+}
+
+#[test]
 fn aggregation_groups_complete_issue_keys_and_uses_server_tool_call_denominator() {
     let dir = tempdir();
     let mut store = Store::open(Some(dir.clone())).unwrap();

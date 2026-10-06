@@ -1,6 +1,6 @@
 # Findings and verification
 
-Indexing reads JSONL capture records into SQLite and derives failure windows. Promotion groups recurring failures from captured calls (never `mcpeval probe` calls) by server, tool, and salted template identifier:
+Indexing reads JSONL capture records into SQLite and derives error failure windows. Promotion groups recurring errors from captured calls (never `mcpeval probe` calls) by server, tool, and salted template identifier. It also counts successful calls with linked `false-success` annotations as a separate group for each server and tool:
 
 ```sh
 mcpeval index
@@ -13,13 +13,17 @@ A finding keeps every distinct error code of its group in `err_codes` and the mo
 | Class | Evidence |
 | --- | --- |
 | `unstable-error-code` | the group returned more than one error code |
-| `false-success` | a failure carries a `false-success` annotation |
+| `false-success` | a captured call carries a linked `false-success` annotation, including a call that returned success |
 | `blocked-optimal-path` | a failure carries a `blocked-optimal-path` annotation |
 | `recovers-on-retry` | every failure is retryable and, after at least one, a call to the same tool within the next three recorded calls of its failure window succeeded |
 | `retry-did-not-recover` | every failure is retryable and no such recovery was captured |
 | `recurring-error` | none of the above |
 
 Finding IDs from earlier releases, which included the error code, re-key once on the next `mcpeval promote`: the most recently updated lifecycle state moves to the new ID. Older duplicate state rows are retired; every historical verification is retained.
+
+Annotate a successful call when you observed that its result or effect contradicted the intended contract. That observation can become a finding after it recurs in two distinct captured sessions and meets the score threshold. Ordinary successes, other annotation kinds, and unknown or ambiguous annotation targets cannot create this group. Repeated annotations on one call count only once. Annotation prose is never used for grouping or exported in findings.
+
+Successful calls annotated this way have separate finding IDs and lifecycle history from structured errors, including errors without a template. Their `err_code` and `retryable` are null and `err_codes` is empty. The rate counts annotated calls divided by all captured calls to that server and tool; it does not estimate unannotated semantic failures. Because these calls have no error failure window, their cost is one observed call and their blast radius is the affected tool. Review the intended contract explicitly with `generate --expect` before verifying a repair.
 
 `mcpeval promote` prints `promoted F of I issues`, followed by how many issues were seen in one session only and how many scored below the threshold when either count is nonzero. When there are no promoted findings, `mcpeval findings` writes a one-line explanation to stderr and exits 0.
 

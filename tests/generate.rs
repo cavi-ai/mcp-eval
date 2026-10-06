@@ -298,8 +298,39 @@ fn false_success_rejects_a_success_only_oracle() {
 #[test]
 fn generated_false_success_can_use_only_a_nested_result_oracle() {
     let root = TempDir::new();
-    let finding = promoted_finding_for_tool(&root.path, "describe_status", json!({}));
-    set_issue(&root.path, &finding, "class", &"false-success");
+    let mut store = Store::open(Some(root.path.clone())).unwrap();
+    for session in ["first", "second"] {
+        let mut record = call(session, "describe_status", json!({}), false);
+        record.outcome = "ok".into();
+        record.error = None;
+        let identity = mcpeval::record::EventIdentity::new(uuid::Uuid::new_v4());
+        record.identity = Some(identity.clone());
+        store.append(&record).unwrap();
+        store
+            .append_annotation(&mcpeval::record::AnnotationRecord {
+                ts: record.ts,
+                event_id: Some(identity.event_id),
+                session: None,
+                seq: None,
+                kind: "false-success".into(),
+                note: "observed incorrect status".into(),
+            })
+            .unwrap();
+    }
+    index::build(&root.path).unwrap();
+    let stats = promote(
+        &root.path,
+        PromotionConfig {
+            threshold: 0.0,
+            now: Utc.with_ymd_and_hms(2026, 8, 6, 0, 0, 0).unwrap(),
+        },
+    )
+    .unwrap();
+    assert_eq!(stats.findings, 1);
+    let finding: String = rusqlite::Connection::open(root.path.join("index.db"))
+        .unwrap()
+        .query_row("SELECT finding_id FROM findings", [], |row| row.get(0))
+        .unwrap();
     let output = root.path.join("generated.json");
     let expect = root.path.join("expect.json");
     std::fs::write(

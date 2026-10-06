@@ -175,6 +175,7 @@ struct IssueKey {
     server: String,
     tool: Option<String>,
     err_template_id: Option<String>,
+    annotated_success: bool,
 }
 
 #[derive(Debug)]
@@ -219,8 +220,15 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
     let mut grouped: HashMap<IssueKey, Vec<Failure>> = HashMap::new();
     {
         let mut statement = db.prepare(
-            "SELECT id, session, ts, server, tool, err_code, err_template_id, args, err_retryable
-             FROM calls WHERE outcome='error' AND method='tools/call' AND kind='real'",
+            "SELECT c.id, c.session, c.ts, c.server, c.tool,
+                    CASE WHEN c.outcome='error' THEN c.err_code END,
+                    CASE WHEN c.outcome='error' THEN c.err_template_id END,
+                    c.args, CASE WHEN c.outcome='error' THEN c.err_retryable END,
+                    c.outcome='ok'
+             FROM calls c WHERE c.method='tools/call' AND c.kind='real'
+               AND (c.outcome='error' OR (c.outcome='ok' AND EXISTS (
+                   SELECT 1 FROM annotations a WHERE a.call_id=c.id AND a.kind='false-success'
+               )))",
         )?;
         let rows = statement.query_map([], |row| {
             Ok((
@@ -228,6 +236,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
                     server: row.get(3)?,
                     tool: row.get(4)?,
                     err_template_id: row.get(6)?,
+                    annotated_success: row.get(9)?,
                 },
                 Failure {
                     id: row.get(0)?,
@@ -290,6 +299,7 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
         });
         let mut evidence = crate::diagnosis::Evidence {
             all_retryable: retryable == Some(true),
+            false_success: key.annotated_success,
             ..Default::default()
         };
         for failure in &failures {
@@ -369,13 +379,18 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
             cost,
             blast,
         })?;
-        let finding_id = crate::lifecycle::finding_id(
-            &key.server,
-            key.tool.as_deref(),
-            None,
-            key.err_template_id.as_deref(),
-        );
-        migrate_lifecycle(&transaction, &key, &finding_id)?;
+        let finding_id = if key.annotated_success {
+            crate::lifecycle::false_success_id(&key.server, key.tool.as_deref())
+        } else {
+            let finding_id = crate::lifecycle::finding_id(
+                &key.server,
+                key.tool.as_deref(),
+                None,
+                key.err_template_id.as_deref(),
+            );
+            migrate_lifecycle(&transaction, &key, &finding_id)?;
+            finding_id
+        };
         let has_probe: bool = transaction
             .query_row(
                 "SELECT probe_id IS NOT NULL FROM evidence.finding_lifecycle WHERE finding_id=?1",
@@ -472,6 +487,8 @@ pub fn promote(root: &Path, config: PromotionConfig) -> anyhow::Result<Promotion
 /// Moves the most recently updated lifecycle row recorded for this
 /// server, tool, and template under an earlier finding ID onto `finding_id`,
 /// retaining every historical verification while retiring duplicate state rows.
+/// Annotated-success findings have an independent identity and are excluded,
+/// including when an error also has no template.
 fn migrate_lifecycle(
     transaction: &rusqlite::Transaction<'_>,
     key: &IssueKey,
@@ -480,12 +497,18 @@ fn migrate_lifecycle(
     let ids = transaction
         .prepare(
             "SELECT finding_id FROM evidence.finding_lifecycle
-             WHERE server=?1 AND tool IS ?2 AND err_template_id IS ?3
+             WHERE server=?1 AND tool IS ?2 AND err_template_id IS ?3 AND finding_id<>?4
              ORDER BY updated_at DESC, finding_id",
         )?
-        .query_map(params![key.server, key.tool, key.err_template_id], |row| {
-            row.get::<_, String>(0)
-        })?
+        .query_map(
+            params![
+                key.server,
+                key.tool,
+                key.err_template_id,
+                crate::lifecycle::false_success_id(&key.server, key.tool.as_deref())
+            ],
+            |row| row.get::<_, String>(0),
+        )?
         .collect::<Result<Vec<_>, _>>()?;
     if ids.iter().all(|id| id == finding_id) {
         return Ok(());

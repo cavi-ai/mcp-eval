@@ -175,6 +175,7 @@ fn non_object_tool_results_are_forwarded_exactly_and_recorded_as_unknown() {
     ] {
         let home = TestHome::new();
         let response = serde_json::json!({"jsonrpc":"2.0","id":1,"result":result}).to_string();
+        // Emit raw LF bytes; Python text stdout translates newlines on Windows.
         let mut child = Command::new(bin())
             .args([
                 "shim",
@@ -183,7 +184,7 @@ fn non_object_tool_results_are_forwarded_exactly_and_recorded_as_unknown() {
                 "--",
                 "python3",
                 "-c",
-                "import sys\nfor line in sys.stdin:\n print(sys.argv[1], flush=True)",
+                "import sys\nfor line in sys.stdin:\n sys.stdout.buffer.write(sys.argv[1].encode('utf-8') + bytes([10])); sys.stdout.buffer.flush()",
                 &response,
             ])
             .env("MCPEVAL_HOME", home.path())

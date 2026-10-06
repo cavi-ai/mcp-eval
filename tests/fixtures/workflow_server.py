@@ -46,6 +46,8 @@ def respond(request, session):
                   "status": status, "structuredContent.status": "literal",
                   "structuredContent": {"status": status, "items": [{"ready": True}],
                                         "nullable": None, "a/b": {"~state": "ready"}}}
+        if mode == "malformed-error-flag":
+            result["isError"] = "CANARY private flag"
     else:
         result = {}
     return {"jsonrpc": "2.0", "id": request["id"], "result": result}

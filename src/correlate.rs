@@ -121,10 +121,15 @@ impl Correlator {
                 // result's content.
                 let envelope_error = v.get("error");
                 let result = v.get("result");
-                let tool_error = result.is_some_and(|result| {
-                    result.get("isError").and_then(Value::as_bool) == Some(true)
-                });
-                let is_error = envelope_error.is_some() || tool_error;
+                let tool_error = if p.method == "tools/call" {
+                    result
+                        .map(crate::mcp_client::tool_result_is_error)
+                        .transpose()
+                } else {
+                    Ok(result
+                        .map(|result| result.get("isError").and_then(Value::as_bool) == Some(true)))
+                };
+                let is_error = envelope_error.is_some() || matches!(&tool_error, Ok(Some(true)));
                 self.seq += 1;
                 Some(CallRecord {
                     identity: Some(crate::record::EventIdentity::new(self.capture_id)),
@@ -138,6 +143,10 @@ impl Correlator {
                     latency_ms: Some(now_ms.saturating_sub(p.sent_ms)),
                     outcome: if is_error {
                         "error".into()
+                    } else if tool_error.is_err() {
+                        // The proxy forwards the original response, but an
+                        // invalid discriminator must never become success evidence.
+                        "unknown".into()
                     } else {
                         "ok".into()
                     },

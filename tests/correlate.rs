@@ -379,6 +379,34 @@ fn a_tool_result_with_is_error_false_stays_ok() {
 }
 
 #[test]
+fn malformed_tool_error_flags_are_unknown_without_payloads_or_invented_errors() {
+    for flag in [
+        json!("CANARY private flag"),
+        json!(1),
+        json!(null),
+        json!([]),
+        json!({}),
+    ] {
+        let mut c = Correlator::new("demo".into(), "sess".into(), Salt::for_tests());
+        c.on_outbound(
+            &json!({"jsonrpc":"2.0","id":1,"method":"tools/call",
+            "params":{"name":"read_status","arguments":{}}}),
+            0,
+        );
+        let record = c
+            .on_inbound(
+                &json!({"jsonrpc":"2.0","id":1,"result":{
+            "isError":flag,"content":[{"type":"text","text":"CANARY private output"}]}}),
+                1,
+            )
+            .unwrap();
+        assert_eq!(record.outcome, "unknown");
+        assert!(record.error.is_none());
+        assert!(!serde_json::to_string(&record).unwrap().contains("CANARY"));
+    }
+}
+
+#[test]
 fn tool_error_classification_matches_the_probe_client_code() {
     // The shim synthesizes the constant "tool-error" code for isError
     // results; the probe client's ToolResponse payload carries the same

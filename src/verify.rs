@@ -4,9 +4,11 @@
 //! definition, and record only evaluated outcomes in the durable journal.
 
 use anyhow::Context;
+use rusqlite::{Connection, OpenFlags};
 
+use crate::diagnosis::FindingClass;
 use crate::lifecycle::Status;
-use crate::manifest::Manifest;
+use crate::manifest::{Manifest, ProbeCase};
 use crate::probe::{FailureReason, ProbeOptions, ProbeReport};
 use crate::store::Store;
 
@@ -46,6 +48,34 @@ pub fn run(options: VerifyOptions, store: &mut Store) -> anyhow::Result<Verifica
         ))
     })?;
     let server = crate::lifecycle::prepare(store.root(), &options.finding, selected.id(), tool)?;
+    let db = Connection::open_with_flags(
+        store.root().join("index.db"),
+        OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    let class: FindingClass = db
+        .query_row(
+            "SELECT i.class FROM findings f JOIN issues i ON i.id=f.issue_id WHERE f.finding_id=?1",
+            [&options.finding],
+            |row| row.get(0),
+        )
+        .map_err(|_| {
+            anyhow::anyhow!("finding metadata is invalid; rebuild the index and promote")
+        })?;
+    drop(db);
+    let has_oracle = match selected {
+        ProbeCase::InstructionFidelity { expect, .. } => {
+            expect.has_result_assertion_or_expected_error()
+        }
+        ProbeCase::Workflow { steps, .. } => steps
+            .iter()
+            .any(|step| step.expect.has_result_assertion_or_expected_error()),
+        _ => false,
+    };
+    if class == FindingClass::FalseSuccess && !has_oracle {
+        return Err(crate::exit::usage(anyhow::anyhow!(
+            "false-success verification requires a result assertion or an expected error in an instruction-fidelity or workflow case"
+        )));
+    }
     let definition_id = crate::lifecycle::definition_id(
         store.root(),
         &options.manifest,

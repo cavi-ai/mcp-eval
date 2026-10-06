@@ -132,6 +132,15 @@ payload or intended effect, so generation cannot invent that oracle. A result
 assertion also cannot prove an external state change; author a separate
 validation workflow when that is the property under test.
 
+This minimum also applies to `verify` and MCP `verify_finding`, including
+handwritten manifests. A false-success finding requires an
+`instruction-fidelity` expectation, or at least one `workflow` step, with a
+result assertion or expected error. Other probes and success-only expectations
+are refused before server startup and leave verification history unchanged.
+The oracle can be in a later workflow step that checks the affected state.
+This checks that an oracle exists; review whether it actually distinguishes
+the reported defect from the repair.
+
 The supplied oracle is deliberate operator input and is copied into the local
 manifest, not derived from captured prose. Use share-safe values; successful
 string equalities must be identifiers, and nested equality values are refused.

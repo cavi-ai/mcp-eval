@@ -252,6 +252,106 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
         "{recorded_text}"
     );
 
+    // A false-success finding needs a semantic oracle even through MCP.
+    let mut store = mcpeval::store::Store::open(Some(dir.clone())).unwrap();
+    for session in ["first", "second"] {
+        store
+            .append(
+                &serde_json::from_value(json!({
+                    "ts":"2026-08-05T00:00:01Z", "session":session, "seq":1,
+                    "server":"fixture", "method":"tools/call", "tool":"read_status",
+                    "args":{}, "latency_ms":1, "outcome":"error", "shim_self_us":1,
+                    "kind":"real", "error":{"code":"broken", "retryable":false,
+                        "template_id":"aaaaaaaaaaaaaaaa"}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    mcpeval::index::build(&dir).unwrap();
+    mcpeval::promote::promote(
+        &dir,
+        mcpeval::promote::PromotionConfig {
+            threshold: 0.0,
+            now: chrono::Utc::now(),
+        },
+    )
+    .unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let finding: String = db
+        .query_row(
+            "SELECT f.finding_id FROM findings f JOIN issues i ON i.id=f.issue_id WHERE i.tool='read_status'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    db.execute(
+        "UPDATE issues SET class='false-success' WHERE finding_id=?1",
+        [&finding],
+    )
+    .unwrap();
+    let marker = dir.join("unexpected-launch");
+    let rejected = call(
+        &http,
+        "verify_finding",
+        json!({
+            "finding_id":finding, "case_id":"check",
+            "manifest":{"version":1,"probes":[{
+                "id":"check","probe":"instruction-fidelity","access":"read_only",
+                "tool":"read_status","arguments":{},"expect":{"outcome":"ok"}
+            }]},
+            "command":["python3","-c","import pathlib,sys; pathlib.Path(sys.argv[1]).touch()",marker]
+        }),
+    );
+    assert!(
+        rejected["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("result assertion or an expected error"),
+        "{rejected}"
+    );
+    assert!(
+        !marker.exists(),
+        "MCP verification launched a rejected case"
+    );
+    let evidence = rusqlite::Connection::open(dir.join("lifecycle.db")).unwrap();
+    let history: i64 = evidence
+        .query_row("SELECT COUNT(*) FROM probe_history", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(history, 0);
+    let state: (String, i64) = evidence
+        .query_row(
+            "SELECT state,consecutive_passes FROM finding_lifecycle WHERE finding_id=?1",
+            [&finding],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(state, ("open".into(), 0));
+
+    let fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/workflow_server.py");
+    let verified = call(
+        &http,
+        "verify_finding",
+        json!({
+            "finding_id":finding, "case_id":"check",
+            "manifest":{"version":1,"probes":[{
+                "id":"check","probe":"instruction-fidelity","access":"read_only",
+                "tool":"read_status","arguments":{},"expect":{"outcome":"ok",
+                    "equals_paths":{"/structuredContent/status":"ready"}}
+            }]}, "command":["python3",fixture,"clean"]
+        }),
+    );
+    assert_eq!(
+        verified["result"]["structuredContent"]["verified"], true,
+        "{verified}"
+    );
+    assert_eq!(
+        verified["result"]["structuredContent"]["lifecycle"]["consecutive_passes"],
+        1
+    );
+    assert!(!verified.to_string().contains("CANARY"));
+
     drop(server);
     let mut stored = Vec::new();
     for entry in std::fs::read_dir(dir.join("store")).unwrap() {

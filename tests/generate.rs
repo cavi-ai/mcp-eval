@@ -296,6 +296,135 @@ fn false_success_rejects_a_success_only_oracle() {
 }
 
 #[test]
+fn verification_refuses_false_success_cases_without_an_oracle_before_launch() {
+    let root = TempDir::new();
+    let finding = promoted_finding_for_tool(&root.path, "read_status", json!({}));
+    set_issue(&root.path, &finding, "class", &"false-success");
+    let manifest = root.path.join("verify.json");
+    let log = root.path.join("calls.jsonl");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/workflow_server.py");
+    for case in [
+        json!({"id":"check","probe":"latency-budget","access":"read_only",
+            "tool":"read_status","arguments":{},"attempts":3,"max_latency_ms":10000}),
+        json!({"id":"check","probe":"instruction-fidelity","access":"read_only",
+            "tool":"read_status","arguments":{},"expect":{"outcome":"ok"}}),
+        json!({"id":"check","probe":"workflow","access":"read_only","repetitions":1,
+        "steps":[
+            {"tool":"read_status","arguments":{},"expect":{"outcome":"ok"}},
+            {"tool":"read_other","arguments":{},"expect":{"outcome":"ok"}}
+        ]}),
+    ] {
+        mcpeval::manifest::Manifest::parse(
+            json!({"version":1,"probes":[case.clone()]})
+                .to_string()
+                .as_bytes(),
+        )
+        .unwrap()
+        .validate()
+        .unwrap();
+        std::fs::write(&manifest, json!({"version":1,"probes":[case]}).to_string()).unwrap();
+        let result = Command::new(bin())
+            .args([
+                "verify",
+                "--finding",
+                &finding,
+                "--case",
+                "check",
+                "--manifest",
+            ])
+            .arg(&manifest)
+            .args(["--", "python3", fixture.to_str().unwrap(), "clean"])
+            .env("MCPEVAL_HOME", &root.path)
+            .env("WORKFLOW_CALL_LOG", &log)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(2),
+            "{} {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&result.stderr)
+                .contains("result assertion or an expected error"),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(!log.exists(), "rejected verification launched the server");
+    }
+    let db = rusqlite::Connection::open(root.path.join("lifecycle.db")).unwrap();
+    let state: (String, i64, Option<String>) = db
+        .query_row(
+            "SELECT state,consecutive_passes,probe_id FROM finding_lifecycle WHERE finding_id=?1",
+            [&finding],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(state, ("open".into(), 0, None));
+    let history: i64 = db
+        .query_row("SELECT COUNT(*) FROM probe_history", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(history, 0);
+}
+
+#[test]
+fn false_success_workflow_can_validate_with_a_later_step_oracle() {
+    let root = TempDir::new();
+    let finding = promoted_finding_for_tool(&root.path, "read_status", json!({}));
+    set_issue(&root.path, &finding, "class", &"false-success");
+    let manifest = root.path.join("verify.json");
+    std::fs::write(
+        &manifest,
+        json!({"version":1,"probes":[
+            {"id":"check","probe":"workflow","access":"read_only","repetitions":1,"steps":[
+                {"tool":"read_status","arguments":{},"expect":{"outcome":"ok"}},
+                {"tool":"read_other","arguments":{},"expect":{"outcome":"ok",
+                    "equals_paths":{"/structuredContent/status":"ready"}}}
+            ]}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/workflow_server.py");
+    for (mode, code, state, passes) in [
+        ("poison", 1, "fix-claimed", 0),
+        ("clean", 0, "verifying", 1),
+    ] {
+        let result = Command::new(bin())
+            .args([
+                "verify",
+                "--finding",
+                &finding,
+                "--case",
+                "check",
+                "--manifest",
+            ])
+            .arg(&manifest)
+            .args(["--", "python3", fixture.to_str().unwrap(), mode])
+            .env("MCPEVAL_HOME", &root.path)
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(code),
+            "{} {}",
+            String::from_utf8_lossy(&result.stdout),
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let actual: (String, i64) = rusqlite::Connection::open(root.path.join("lifecycle.db"))
+            .unwrap()
+            .query_row(
+                "SELECT state,consecutive_passes FROM finding_lifecycle WHERE finding_id=?1",
+                [&finding],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(actual, (state.into(), passes));
+    }
+}
+
+#[test]
 fn generated_false_success_can_use_only_a_nested_result_oracle() {
     let root = TempDir::new();
     let mut store = Store::open(Some(root.path.clone())).unwrap();

@@ -9,7 +9,7 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde_json::{Map, Value};
 
 use crate::diagnosis::FindingClass;
-use crate::manifest::{Access, Expectation, Manifest, OutcomeExpectation, ProbeCase};
+use crate::manifest::{Access, Expectation, Manifest, ProbeCase};
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 const UNKNOWN_SHAPE: &str = "finding arguments are not a recorded argument shape";
@@ -125,13 +125,7 @@ pub fn run_with_expectation(
     let arguments = skeleton(&shape, "", &mut placeholders)?;
 
     let probe = if let Some(expect) = expectation {
-        if class == FindingClass::FalseSuccess
-            && expect.outcome == OutcomeExpectation::Ok
-            && expect.required_result_fields.is_empty()
-            && expect.equals.is_empty()
-            && expect.required_result_paths.is_empty()
-            && expect.equals_paths.is_empty()
-        {
+        if class == FindingClass::FalseSuccess && !expect.has_result_assertion_or_expected_error() {
             bail!("false-success requires a result assertion or an expected error in --expect");
         }
         ProbeCase::InstructionFidelity {

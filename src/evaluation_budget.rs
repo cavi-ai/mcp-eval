@@ -76,18 +76,22 @@ impl Budget {
     /// Reserve exactly one client request before touching the transport.
     pub(crate) fn acquire(&self) -> anyhow::Result<()> {
         self.check()?;
-        if self
-            .0
-            .requests
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |count| {
-                (count < self.0.max_requests).then_some(count + 1)
-            })
-            .is_err()
-        {
-            self.0.denied.store(true, Ordering::Relaxed);
-            return Err(Exhausted.into());
+        let mut count = self.0.requests.load(Ordering::Relaxed);
+        loop {
+            if count >= self.0.max_requests {
+                self.0.denied.store(true, Ordering::Relaxed);
+                return Err(Exhausted.into());
+            }
+            match self.0.requests.compare_exchange_weak(
+                count,
+                count + 1,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Ok(()),
+                Err(current) => count = current,
+            }
         }
-        Ok(())
     }
 
     pub(crate) fn timeout(&self, requested: Duration) -> anyhow::Result<Duration> {

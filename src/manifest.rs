@@ -56,6 +56,18 @@ pub struct Expectation {
     pub error_code: Option<i64>,
 }
 
+impl Expectation {
+    /// A structural minimum for checking false success. The operator must still
+    /// choose an assertion that distinguishes the reported defect from repair.
+    pub fn has_result_assertion_or_expected_error(&self) -> bool {
+        self.outcome == OutcomeExpectation::Error
+            || !self.required_result_fields.is_empty()
+            || !self.equals.is_empty()
+            || !self.required_result_paths.is_empty()
+            || !self.equals_paths.is_empty()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowStep {

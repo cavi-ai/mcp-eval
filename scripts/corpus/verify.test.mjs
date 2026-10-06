@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, stat, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { collectCorpus } from "./collect.mjs";
+import { checkEvidence } from "./check-evidence.mjs";
 import { verifyCorpus, driftOf, driftedResults, platformMismatch } from "./verify.mjs";
 import { AREAS, COUNTS, ROOT, commandFor, validateTargets, runCommand, sha256, environmentFor } from "./contract.mjs";
 
@@ -222,6 +223,156 @@ test("valid unobserved replay reports are retained while original untested targe
   assert.equal(sha256(await readFile(path.join(evidencePath, "reports/one.json"))), result.results[0].replay_report_sha256);
   assert.equal(result.results[1].replay_report_sha256, null);
   assert.deepEqual(await readdir(path.join(evidencePath, "reports")), ["one.json"]);
+  assert.deepEqual(await checkEvidence({ ...f.options, corpusPath: f.options.output, reportsPath: collection.reports, evidencePath }), result);
+});
+
+test("offline evidence CLI reconstructs passing and drifted verdicts without the evaluator", async (t) => {
+  let catalog = 50;
+  const f = await fixture(t, [target("one")], (server) => {
+    const value = report(server);
+    value.readiness.areas.find((area) => area.name === "catalog").score = catalog;
+    return value;
+  });
+  const collection = await collectCorpus(f.options);
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports };
+  const receipts = [];
+  for (const [label, score] of [["passing", 50], ["drifted", 51]]) {
+    catalog = score;
+    const evidencePath = path.join(f.dir, label);
+    receipts.push({ evidencePath, receipt: await verifyCorpus({ ...options, evidencePath }) });
+  }
+  await rm(f.options.binary);
+  for (const { evidencePath, receipt } of receipts) {
+    const cli = await runCommand([process.execPath, path.join(ROOT, "scripts/corpus/check-evidence.mjs"), "--corpus", options.corpusPath, "--targets", options.targetsPath, "--reports", options.reportsPath, "--evidence", evidencePath, "--json"]);
+    assert.equal(cli.code, receipt.passed ? 0 : 1, cli.stdout);
+    assert.deepEqual(JSON.parse(cli.stdout), receipt);
+    assert.ok(!cli.stdout.includes(f.dir));
+  }
+});
+
+test("offline checking rejects changed identities, policies, summaries, and incomplete report sets", async (t) => {
+  const f = await fixture(t, [target("one")]);
+  const collection = await collectCorpus(f.options);
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports, evidencePath: path.join(f.dir, "evidence") };
+  const receipt = await verifyCorpus(options);
+  const marker = path.join(options.evidencePath, "verification.json");
+  for (const corrupt of [
+    (doc) => { doc.schema = "mcpeval.corpus-verification/v99"; },
+    (doc) => { doc.corpus_sha256 = "0".repeat(64); },
+    (doc) => { doc.targets_sha256 = "0".repeat(64); },
+    (doc) => { doc.evaluator.version = "different"; },
+    (doc) => { doc.evaluator.sha256 = "0".repeat(64); },
+    (doc) => { doc.standard = "mcpeval-standard/99"; },
+    (doc) => { doc.platform = "another-platform"; },
+    (doc) => { doc.policy.reliability_tolerance = 11; },
+    (doc) => { doc.passed = false; },
+    (doc) => { doc.observations = 0; },
+    (doc) => { doc.population = 2; },
+    (doc) => { doc.results = []; },
+    (doc) => { doc.results.push(doc.results[0]); },
+    (doc) => { doc.results[0].server = "../outside"; },
+    (doc) => { doc.results[0].expected = 49; },
+    (doc) => { doc.results[0].observed = 51; },
+    (doc) => { doc.results[0].expected_report_sha256 = "0".repeat(64); },
+    (doc) => { doc.results[0].replay_report_sha256 = null; },
+    (doc) => { doc.results[0].moved = ["catalog 50→51"]; doc.results[0].drifted = true; doc.passed = false; },
+    (doc) => { doc.results[0].reason = "evaluation-failed"; },
+  ]) {
+    const doc = structuredClone(receipt); corrupt(doc);
+    await writeFile(marker, JSON.stringify(doc));
+    await assert.rejects(checkEvidence(options));
+  }
+  const extended = structuredClone(receipt);
+  extended.private_note = "PRIVATE_ROOT_METADATA";
+  extended.evaluator.private_note = "PRIVATE_EVALUATOR_METADATA";
+  extended.policy.private_note = "PRIVATE_POLICY_METADATA";
+  extended.results[0].private_note = "PRIVATE_RESULT_METADATA";
+  await writeFile(marker, JSON.stringify(extended));
+  assert.deepEqual(await checkEvidence(options), receipt);
+  await writeFile(marker, JSON.stringify(receipt));
+  const replayFile = path.join(options.evidencePath, "reports/one.json");
+  const original = await readFile(replayFile);
+  await writeFile(replayFile, "changed replay");
+  await assert.rejects(checkEvidence(options), /replay report digest mismatch/u);
+  const modified = JSON.parse(original);
+  modified.readiness.areas.find((area) => area.name === "catalog").score = 51;
+  const raw = JSON.stringify(modified);
+  await writeFile(replayFile, raw);
+  await writeFile(marker, JSON.stringify({ ...receipt, results: [{ ...receipt.results[0], replay_report_sha256: sha256(raw) }] }));
+  await assert.rejects(checkEvidence(options), /result does not match/u);
+  await writeFile(marker, JSON.stringify(receipt));
+  await rm(replayFile);
+  await assert.rejects(checkEvidence(options), { code: "ENOENT" });
+  await writeFile(replayFile, original);
+  const extra = path.join(options.evidencePath, "reports/extra.json");
+  await writeFile(extra, "PRIVATE_UNREFERENCED_REPORT");
+  await assert.rejects(checkEvidence(options), /unexpected replay reports/u);
+  await rm(extra);
+  await rm(marker);
+  await assert.rejects(checkEvidence(options), /incomplete evidence/u);
+});
+
+test("offline checking accepts reportless failures and rejects malformed failure reasons", async (t) => {
+  let unavailable = false;
+  const f = await fixture(t, [target("one")], (server) => unavailable ? "PRIVATE_INVALID_REPORT" : report(server));
+  const collection = await collectCorpus(f.options);
+  unavailable = true;
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports, evidencePath: path.join(f.dir, "evidence") };
+  const receipt = await verifyCorpus(options);
+  assert.equal(receipt.passed, false);
+  assert.deepEqual(await checkEvidence(options), receipt);
+  const marker = path.join(options.evidencePath, "verification.json");
+  for (const reason of [["evaluation-failed"], "no-tool-calls", "unrecognized"]) {
+    const doc = structuredClone(receipt); doc.results[0].reason = reason;
+    await writeFile(marker, JSON.stringify(doc));
+    await assert.rejects(checkEvidence(options));
+  }
+});
+
+test("offline CLI rejects malformed private JSON without echoing it", async (t) => {
+  const f = await fixture(t, [target("one")]);
+  const collection = await collectCorpus(f.options);
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports, evidencePath: path.join(f.dir, "evidence") };
+  await verifyCorpus(options);
+  await writeFile(path.join(options.evidencePath, "verification.json"), "PRIVATE_INVALID_JSON");
+  const cli = await runCommand([process.execPath, path.join(ROOT, "scripts/corpus/check-evidence.mjs"), "--corpus", options.corpusPath, "--targets", options.targetsPath, "--reports", options.reportsPath, "--evidence", options.evidencePath, "--json"]);
+  assert.equal(cli.code, 2);
+  assert.equal(cli.stdout, "");
+  await assert.rejects(checkEvidence(options), (error) => !error.message.includes("PRIVATE_"));
+});
+
+test("offline checking binds original input bytes and projections and refuses linked evidence", async (t) => {
+  const f = await fixture(t, [target("one")]);
+  const collection = await collectCorpus(f.options);
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports, evidencePath: path.join(f.dir, "evidence") };
+  await verifyCorpus(options);
+  for (const file of [options.corpusPath, options.targetsPath, path.join(collection.reports, "one.json")]) {
+    const original = await readFile(file);
+    await writeFile(file, Buffer.concat([original, Buffer.from("\n")]));
+    await assert.rejects(checkEvidence(options), /mismatch/u);
+    await writeFile(file, "PRIVATE_INVALID_JSON");
+    await assert.rejects(checkEvidence(options), (error) => !error.message.includes("PRIVATE_"));
+    await writeFile(file, original);
+  }
+  assert.equal((await checkEvidence(options)).passed, true);
+  const replayFile = path.join(options.evidencePath, "reports/one.json");
+  const raw = await readFile(replayFile);
+  await rm(replayFile);
+  await mkdir(replayFile);
+  await assert.rejects(checkEvidence(options), /regular files/u);
+  await rm(replayFile, { recursive: true });
+  if (process.platform !== "win32") {
+    const external = path.join(f.dir, "external.json");
+    await writeFile(external, raw);
+    await symlink(external, replayFile);
+    await assert.rejects(checkEvidence(options), /regular files/u);
+    await rm(replayFile);
+    const alias = path.join(f.dir, "bundle-link");
+    await symlink(options.evidencePath, alias);
+    await assert.rejects(checkEvidence({ ...options, evidencePath: alias }), /directories/u);
+  }
+  await writeFile(replayFile, raw);
+  assert.equal((await checkEvidence(options)).passed, true);
 });
 
 test("target locks reject ranges, tags, duplicate labels, implicit prerequisites, and unknown runtimes", () => {

@@ -7,6 +7,7 @@ import { deploymentDigest } from "./deployment.mjs";
 import { commandFor, evaluateTarget, ROOT, runCommand, sha256 } from "./contract.mjs";
 import { collectCorpus } from "./collect.mjs";
 import { verifyCorpus, driftedResults } from "./verify.mjs";
+import { checkEvidence } from "./check-evidence.mjs";
 
 async function bundle(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), "mcpeval-deployment-test-"));
@@ -122,6 +123,12 @@ test("native bundled deployment collects and replays without a package-launch su
   assert.deepEqual(JSON.parse(await readFile(path.join(evidencePath, "verification.json"))), receipt);
   assert.ok(!cli.stdout.includes(root));
   await writeFile(path.join(root, "deps", "dependency.mjs"), "changed dependency");
+  // Offline checking uses retained bytes, even when the live deployment no longer matches.
+  assert.deepEqual(await checkEvidence({ ...replay, evidencePath }), receipt);
+  const checkCommand = [process.execPath, path.join(ROOT, "scripts/corpus/check-evidence.mjs"), "--corpus", options.output, "--targets", targetsPath, "--reports", collection.reports, "--json"];
+  const checkedCli = await runCommand([...checkCommand, "--evidence", evidencePath], { timeoutMs: 10_000 });
+  assert.equal(checkedCli.code, 0);
+  assert.deepEqual(JSON.parse(checkedCli.stdout), receipt);
   let scores = 0;
   const result = await verifyCorpus({ ...replay, execute: (command, settings) => {
     if (command[1] === "score") scores++;
@@ -141,4 +148,11 @@ test("native bundled deployment collects and replays without a package-launch su
   assert.equal(failedReceipt.results[0].replay_report_sha256, null);
   assert.deepEqual(JSON.parse(await readFile(path.join(failedPath, "verification.json"))), failedReceipt);
   assert.deepEqual(await readdir(path.join(failedPath, "reports")), []);
+  const checkedFailed = await runCommand([...checkCommand, "--evidence", failedPath], { timeoutMs: 10_000 });
+  assert.equal(checkedFailed.code, 1);
+  assert.deepEqual(JSON.parse(checkedFailed.stdout), failedReceipt);
+  await writeFile(path.join(evidencePath, "reports/fixture.json"), "tampered report");
+  const checkedTampered = await runCommand([...checkCommand, "--evidence", evidencePath], { timeoutMs: 10_000 });
+  assert.equal(checkedTampered.code, 2);
+  assert.equal(checkedTampered.stdout, "");
 });

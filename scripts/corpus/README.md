@@ -157,6 +157,41 @@ bundle. A process crash or failed cleanup can leave partial output; absence of
 `verification.json` means the bundle is incomplete. Do not modify a reserved
 directory during replay. This is not a transactional or crash-durable store.
 
+Check saved evidence without launching the evaluator, package runners, health
+checks, state adapters, or servers:
+
+```sh
+node scripts/corpus/check-evidence.mjs --evidence /absolute/private/replay-evidence \
+  --corpus /absolute/private/corpus.json \
+  --targets /absolute/private/targets.json \
+  --reports /absolute/private/corpus.json.reports-UUID --json
+```
+
+The checker validates the original corpus/target bytes and original report
+projections, matches the recorded evaluator identity to the corpus, and checks
+every retained replay report digest. It reconstructs scores, area drift, counts,
+and the aggregate verdict using the same replay policy. It rejects missing,
+unexpected, linked, or non-file bundle entries and inconsistent summaries.
+All four paths are required. The original evaluator executable, deployment,
+credentials, and backing services are not needed; their recorded identities
+are checked against the original inputs rather than their current live state.
+
+Exit status is zero for intact passing evidence, one for intact failed evidence,
+and two for invalid or incomplete evidence. `--json` emits the reconstructed
+verification artifact only after integrity checks pass; invalid evidence emits
+a diagnostic on stderr and no JSON. Schema-permitted extension metadata is
+not echoed.
+The checker does not change inputs or the bundle. Keep all inputs immutable
+during checking; this is not a filesystem snapshot or security sandbox.
+
+Checking establishes consistency of the supplied files. It does not independently
+establish that an evaluation or external health/state check ran, or verify the
+claimed reason when report bytes are unavailable. A valid failed verdict remains
+a failure. Author authentication and trusted records of both the original
+inputs and verification artifact must be managed separately. Rewritten replay
+reports with matching rewritten digests and summaries can pass this consistency
+check even when the original collection is unchanged.
+
 Hashes and schema validation do not authenticate
 the artifact's author. Labels are operator-supplied; review artifacts before
 sharing them. A verification artifact does not prove the cause of score drift

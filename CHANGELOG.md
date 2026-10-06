@@ -4,6 +4,9 @@
 
 ### Added
 
+- Offline corpus evidence checking validates original input identities, report
+  bytes, projected scores, and replay verdicts without launching an evaluator
+  or server. Invalid evidence has a distinct exit status from a failed replay.
 - Optional corpus replay `--out` retains verification JSON and digest-bound
   reports in a private directory, refuses existing outputs, and cleans up
   incomplete bundles on fatal errors. Failed verdicts retain their evidence.

@@ -37,6 +37,20 @@ mod tests {
         assert_eq!(allowed, 100);
         assert!(budget.check().is_err());
     }
+
+    #[test]
+    fn evaluation_budget_enforces_empty_and_single_request_limits() {
+        for limit in [0, 1] {
+            let budget = Budget::new(Duration::from_secs(10), limit);
+            for _ in 0..limit {
+                assert!(budget.acquire().is_ok());
+            }
+            assert!(budget.acquire().is_err());
+            assert!(budget.acquire().is_err());
+            assert!(budget.check().is_err());
+            assert_eq!(budget.0.requests.load(Ordering::Relaxed), limit);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

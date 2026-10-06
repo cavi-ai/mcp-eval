@@ -159,6 +159,67 @@ jobs:
           npm run test:action
           npm run test:corpus
 
+      - name: Prepare native corpus action fixtures
+        run: node scripts/corpus/fixtures/prepare-action-evidence.mjs --out "$RUNNER_TEMP/corpus-action-fixtures"
+
+      - name: Intact passing corpus evidence
+        id: corpus-passing
+        uses: ./actions/corpus-evidence
+        with:
+          evidence: ${{ runner.temp }}/corpus-action-fixtures/passing
+          corpus: ${{ runner.temp }}/corpus-action-fixtures/corpus.json
+          targets: ${{ runner.temp }}/corpus-action-fixtures/targets.json
+          reports: ${{ runner.temp }}/corpus-action-fixtures/original-reports
+
+      - name: Intact failed corpus evidence
+        id: corpus-failed
+        continue-on-error: true
+        uses: ./actions/corpus-evidence
+        with:
+          evidence: ${{ runner.temp }}/corpus-action-fixtures/failed
+          corpus: ${{ runner.temp }}/corpus-action-fixtures/corpus.json
+          targets: ${{ runner.temp }}/corpus-action-fixtures/targets.json
+          reports: ${{ runner.temp }}/corpus-action-fixtures/original-reports
+
+      - name: Invalid corpus evidence
+        id: corpus-invalid
+        continue-on-error: true
+        uses: ./actions/corpus-evidence
+        with:
+          evidence: ${{ runner.temp }}/corpus-action-fixtures/invalid
+          corpus: ${{ runner.temp }}/corpus-action-fixtures/corpus.json
+          targets: ${{ runner.temp }}/corpus-action-fixtures/targets.json
+          reports: ${{ runner.temp }}/corpus-action-fixtures/original-reports
+
+      - name: Assert corpus action gates and outputs
+        env:
+          PASS_OUTCOME: ${{ steps.corpus-passing.outcome }}
+          PASS_VALID: ${{ steps.corpus-passing.outputs.evidence-valid }}
+          PASS_VERDICT: ${{ steps.corpus-passing.outputs.passed }}
+          PASS_CODE: ${{ steps.corpus-passing.outputs.exit-code }}
+          PASS_OBSERVATIONS: ${{ steps.corpus-passing.outputs.observations }}
+          PASS_POPULATION: ${{ steps.corpus-passing.outputs.population }}
+          FAIL_OUTCOME: ${{ steps.corpus-failed.outcome }}
+          FAIL_VALID: ${{ steps.corpus-failed.outputs.evidence-valid }}
+          FAIL_VERDICT: ${{ steps.corpus-failed.outputs.passed }}
+          FAIL_CODE: ${{ steps.corpus-failed.outputs.exit-code }}
+          INVALID_OUTCOME: ${{ steps.corpus-invalid.outcome }}
+          INVALID_VALID: ${{ steps.corpus-invalid.outputs.evidence-valid }}
+          INVALID_VERDICT: ${{ steps.corpus-invalid.outputs.passed }}
+          INVALID_CODE: ${{ steps.corpus-invalid.outputs.exit-code }}
+          INVALID_OBSERVATIONS: ${{ steps.corpus-invalid.outputs.observations }}
+          INVALID_POPULATION: ${{ steps.corpus-invalid.outputs.population }}
+        run: |
+          node --input-type=module -e '
+          import assert from "node:assert/strict";
+          const env = process.env;
+          for (const [key, expected] of Object.entries({
+            PASS_OUTCOME: "success", PASS_VALID: "true", PASS_VERDICT: "true", PASS_CODE: "0", PASS_OBSERVATIONS: "1", PASS_POPULATION: "1",
+            FAIL_OUTCOME: "failure", FAIL_VALID: "true", FAIL_VERDICT: "false", FAIL_CODE: "1",
+            INVALID_OUTCOME: "failure", INVALID_VALID: "false", INVALID_VERDICT: "false", INVALID_CODE: "2", INVALID_OBSERVATIONS: "", INVALID_POPULATION: "",
+          })) assert.equal(env[key], expected, key);
+          '
+
       - name: Distribution contract
         run: |
           npm run test:distribution

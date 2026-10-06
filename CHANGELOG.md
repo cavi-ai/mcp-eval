@@ -65,6 +65,9 @@
 
 ### Fixed
 
+- Corpus collection and replay reject missing, empty, or incorrectly typed
+  source/platform metadata and non-string standards under the existing v3
+  contract. Zero-observation candidates remain valid collection artifacts.
 - Failure windows cannot cross recorder captures or legacy server boundaries.
   Ambiguous legacy sequences produce no windows, and ambiguous annotations
   cannot affect finding classification. Identical modern event replays count

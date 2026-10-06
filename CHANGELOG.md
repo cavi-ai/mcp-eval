@@ -4,6 +4,9 @@
 
 ### Added
 
+- Dedicated corpus evidence GitHub Action gates on offline integrity and replay
+  verdicts, exposes fixed step outputs, and writes a summary without private
+  report payloads, labels, or paths.
 - Offline corpus evidence checking validates original input identities, report
   bytes, projected scores, and replay verdicts without launching an evaluator
   or server. Invalid evidence has a distinct exit status from a failed replay.

@@ -192,6 +192,11 @@ inputs and verification artifact must be managed separately. Rewritten replay
 reports with matching rewritten digests and summaries can pass this consistency
 check even when the original collection is unchanged.
 
+For CI consumption, the [corpus evidence action](../../actions/corpus-evidence/README.md)
+uses the offline checker and exposes integrity/verdict outputs plus a job
+summary containing only counts and verdicts. It fails on invalid or failed
+evidence without uploading raw reports or executing servers.
+
 Hashes and schema validation do not authenticate
 the artifact's author. Labels are operator-supplied; review artifacts before
 sharing them. A verification artifact does not prove the cause of score drift

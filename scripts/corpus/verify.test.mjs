@@ -1,36 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile, rm } from "node:fs/promises";
-import os from "node:os";
+import { mkdir, readFile, readdir, stat, symlink, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { fixture, target, report } from "./fixtures/evidence-fixture.mjs";
 import { collectCorpus } from "./collect.mjs";
 import { checkEvidence } from "./check-evidence.mjs";
 import { verifyCorpus, driftOf, driftedResults, platformMismatch } from "./verify.mjs";
-import { AREAS, COUNTS, ROOT, commandFor, validateTargets, runCommand, sha256, environmentFor } from "./contract.mjs";
-
-const target = (server, extra = {}) => ({ server, runtime: "npm", package: "fixture-package", version: "1.2.3", bin: "fixture-server", args: [], prerequisites: { environment: [], checks: [] }, ...extra });
-const report = (server, changes = {}) => ({ schema: "mcpeval.probe-report/v2", server, generator: { name: "mcpeval", version: "0.4.0" }, gate: null, cases: [], passed: true, readiness: {
-  standard: "mcpeval-standard/2", score: 50, surface: { tools: 1, read_only: 1, writers: 0, exercised: 0 },
-  areas: AREAS.map((name) => ({ name, score: 50, measurements: name === "reliability" ? Object.fromEntries(COUNTS.map((key) => [key, key === "tool_errors" ? 3 : 0])) : name === "context" ? { catalog_tokens: 100 } : {} })), ...changes,
-} });
-
-async function fixture(t, targets, evaluate = (server) => report(server)) {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpeval-corpus-test-"));
-  t.after(() => rm(dir, { recursive: true, force: true }));
-  const binary = path.join(dir, "evaluator"); await writeFile(binary, "fixture executable identity");
-  const targetsPath = path.join(dir, "targets.json");
-  await writeFile(targetsPath, JSON.stringify({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets }));
-  const launches = [];
-  const execute = async (command, options) => {
-    launches.push({ command, options });
-    if (command[1] === "--version") return { code: 0, stdout: "mcpeval 0.4.0\n" };
-    if (command[0] !== binary) return { code: 1, stdout: "PRIVATE_PREREQUISITE_OUTPUT" };
-    const value = await evaluate(command[3]);
-    return typeof value === "string" ? { code: 3, stdout: value } : { code: 0, stdout: `${JSON.stringify(value)}\n` };
-  };
-  const options = { targetsPath, binary, output: path.join(dir, "corpus.json"), minimum: 1, execute, environment: { PATH: process.env.PATH, PRIVATE_UNDECLARED: "SECRET" } };
-  return { dir, options, launches };
-}
+import { ROOT, commandFor, validateTargets, runCommand, sha256, environmentFor } from "./contract.mjs";
 
 test("collector keeps declared population and distinguishes real failing calls from untested targets", async (t) => {
   const targets = [target("failing"), target("missing", { prerequisites: { environment: ["FIXTURE_TOKEN"], checks: [] } }), target("service", { prerequisites: { environment: [], checks: [{ name: "backend", command: [process.execPath, "health.mjs"] }] } }), target("no-calls"), target("broken")];

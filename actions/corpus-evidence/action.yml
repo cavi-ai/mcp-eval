@@ -1,0 +1,33 @@
+name: 'mcp-eval corpus evidence'
+description: 'Check saved corpus replay evidence offline and gate on its verified verdict.'
+author: 'CAVI'
+
+inputs:
+  evidence:
+    description: 'Directory containing verification.json and retained replay reports.'
+    required: true
+  corpus:
+    description: 'Original provenance-bearing corpus JSON.'
+    required: true
+  targets:
+    description: 'Original target file used for collection.'
+    required: true
+  reports:
+    description: 'Directory containing original collection reports.'
+    required: true
+
+outputs:
+  evidence-valid:
+    description: "'true' when all offline evidence consistency checks pass."
+  passed:
+    description: "'true' for an intact passing replay verdict; 'false' otherwise."
+  exit-code:
+    description: '0 for intact passing evidence, 1 for intact failed evidence, 2 for invalid evidence or reporting failure.'
+  observations:
+    description: 'Originally observed target count; empty when evidence is invalid.'
+  population:
+    description: 'Original target population count; empty when evidence is invalid.'
+
+runs:
+  using: 'node24'
+  main: 'index.mjs'

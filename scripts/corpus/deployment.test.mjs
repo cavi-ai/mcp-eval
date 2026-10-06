@@ -129,6 +129,18 @@ test("native bundled deployment collects and replays without a package-launch su
   const checkedCli = await runCommand([...checkCommand, "--evidence", evidencePath], { timeoutMs: 10_000 });
   assert.equal(checkedCli.code, 0);
   assert.deepEqual(JSON.parse(checkedCli.stdout), receipt);
+  async function checkAction(evidence, code) {
+    const output = path.join(dir, `action-${code}-output`); const summary = path.join(dir, `action-${code}-summary`);
+    const result = await runCommand([process.execPath, path.join(ROOT, "actions/corpus-evidence/index.mjs")], { timeoutMs: 10_000, env: {
+      ...process.env, INPUT_EVIDENCE: evidence, INPUT_CORPUS: options.output, INPUT_TARGETS: targetsPath, INPUT_REPORTS: collection.reports,
+      GITHUB_OUTPUT: output, GITHUB_STEP_SUMMARY: summary,
+    } });
+    assert.equal(result.code, code);
+    assert.match(await readFile(output, "utf8"), new RegExp(`^exit-code=${code}$`, "mu"));
+    const markdown = await readFile(summary, "utf8");
+    assert.ok(!markdown.includes(root)); assert.ok(!markdown.includes(dir));
+  }
+  await checkAction(evidencePath, 0);
   let scores = 0;
   const result = await verifyCorpus({ ...replay, execute: (command, settings) => {
     if (command[1] === "score") scores++;
@@ -151,8 +163,10 @@ test("native bundled deployment collects and replays without a package-launch su
   const checkedFailed = await runCommand([...checkCommand, "--evidence", failedPath], { timeoutMs: 10_000 });
   assert.equal(checkedFailed.code, 1);
   assert.deepEqual(JSON.parse(checkedFailed.stdout), failedReceipt);
+  await checkAction(failedPath, 1);
   await writeFile(path.join(evidencePath, "reports/fixture.json"), "tampered report");
   const checkedTampered = await runCommand([...checkCommand, "--evidence", evidencePath], { timeoutMs: 10_000 });
   assert.equal(checkedTampered.code, 2);
   assert.equal(checkedTampered.stdout, "");
+  await checkAction(evidencePath, 2);
 });

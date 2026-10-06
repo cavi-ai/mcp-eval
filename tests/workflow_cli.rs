@@ -319,6 +319,43 @@ fn workflow_http_uses_one_fresh_session_for_all_steps() {
 }
 
 #[test]
+fn malformed_error_flags_receive_no_workflow_credit_over_stdio_or_http() {
+    for http in [false, true] {
+        let root = Temp::new();
+        let mut server = http.then(|| {
+            Server(
+                Command::new("python3")
+                    .args([fixture().to_str().unwrap(), "malformed-error-flag", "http"])
+                    .env("WORKFLOW_CALL_LOG", root.0.join("calls.jsonl"))
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .unwrap(),
+            )
+        });
+        let mut url = String::new();
+        if let Some(server) = server.as_mut() {
+            BufReader::new(server.0.stdout.take().unwrap())
+                .read_line(&mut url)
+                .unwrap();
+        }
+        let output = run(
+            &root.0,
+            workflow(),
+            "malformed-error-flag",
+            http.then(|| url.trim()),
+        );
+        assert_eq!(output.status.code(), Some(3));
+        let document = report(&output);
+        assert_eq!(document["gate"]["passed"], 0);
+        assert_eq!(document["cases"][0]["reason"], "transport-error");
+        assert_eq!(document["cases"][0]["first_failure"], Value::Null);
+        assert_eq!(calls(&root.0).len(), 1);
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("CANARY"));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("CANARY"));
+    }
+}
+
+#[test]
 fn workflow_reports_can_gate_a_regression_through_the_native_diff() {
     let root = Temp::new();
     for (mode, name) in [("clean", "baseline.json"), ("poison", "current.json")] {
@@ -475,6 +512,42 @@ fn workflow_verification_closes_only_after_complete_passes_and_reopens_on_a_mism
         );
         assert!(String::from_utf8_lossy(&output.stdout).contains(state));
     }
+    // A malformed outcome cannot add pass evidence or alter a closed finding.
+    let malformed = Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+        .args([
+            "verify",
+            "--finding",
+            &finding,
+            "--case",
+            "read-sequence",
+            "--manifest",
+            manifest.to_str().unwrap(),
+            "--",
+            "python3",
+            fixture().to_str().unwrap(),
+            "malformed-error-flag",
+        ])
+        .env("MCPEVAL_HOME", &root.0)
+        .output()
+        .unwrap();
+    assert_eq!(malformed.status.code(), Some(3));
+    let evidence = rusqlite::Connection::open(root.0.join("lifecycle.db")).unwrap();
+    let state: String = evidence
+        .query_row(
+            "SELECT state FROM finding_lifecycle WHERE finding_id=?1",
+            [&finding],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(state, "closed");
+    let history: i64 = evidence
+        .query_row(
+            "SELECT COUNT(*) FROM probe_history WHERE finding_id=?1",
+            [&finding],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(history, 3);
     // The same target command is required by lifecycle binding. Altering the
     // oracle instead proves a mismatch reopens an already closed workflow.
     let mut case = workflow();

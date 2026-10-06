@@ -71,6 +71,12 @@ The loaded definition is also the one executed; editing the manifest during a
 run cannot change its verification identity. Transport failures still record
 no verification evidence.
 
+A present non-boolean `isError` in a tool result is malformed; missing remains
+equivalent to false. Probes report `transport-error` and add no verification
+evidence for that case. Passive capture forwards the response unchanged and
+records `outcome: unknown`, with no invented error metadata. The malformed
+flag and result payload never appear in diagnostics or the journal.
+
 The authoritative state and history live in `<MCPEVAL_HOME>/lifecycle.db`.
 `index.db` contains derived query tables; deleting it and running `index` then
 `promote` restores the lifecycle view from the durable database. Back up

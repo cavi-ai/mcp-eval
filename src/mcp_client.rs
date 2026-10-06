@@ -849,9 +849,19 @@ impl Drop for McpClient {
 /// no text.
 pub(crate) const UNTEXTED_TOOL_ERROR: &str = "tool error";
 
+/// Missing means successful; a present error discriminator must be boolean.
+/// Share this check with passive capture without echoing malformed values.
+pub(crate) fn tool_result_is_error(result: &Value) -> anyhow::Result<bool> {
+    match result.get("isError") {
+        None => Ok(false),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(_) => bail!("tools/call result isError must be boolean"),
+    }
+}
+
 pub fn classify_tool_response(response: &Value) -> anyhow::Result<ToolResponse> {
     if let Some(result) = response.get("result") {
-        if result.get("isError").and_then(Value::as_bool) == Some(true) {
+        if tool_result_is_error(result)? {
             let message = result
                 .get("content")
                 .and_then(Value::as_array)

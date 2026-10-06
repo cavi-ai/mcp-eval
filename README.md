@@ -541,6 +541,11 @@ present. It does not persist raw response bodies. Every unparseable frame
 produces a content-free record; the raw bytes are forwarded unchanged but
 never stored.
 
+A tool result's optional `isError` flag must be boolean. Capture records a
+present non-boolean flag as `outcome: unknown`, without inventing error
+metadata or altering the forwarded response. Probes treat it as an incomplete
+exchange (`transport-error`), with no pass credit or verification evidence.
+
 Argument values are reduced as follows:
 
 - object keys, container sizes, and the shape of the first array item;

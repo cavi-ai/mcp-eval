@@ -4,6 +4,23 @@ use serde_json::json;
 const FIXTURE: &str = "tests/fixtures/probe_clean_server.py";
 
 #[test]
+fn non_object_tool_results_are_rejected_without_echoing_payloads() {
+    for result in [
+        json!(null),
+        json!(true),
+        json!(7),
+        json!("CANARY private result"),
+        json!(["CANARY private result"]),
+    ] {
+        let error = mcpeval::mcp_client::classify_tool_response(&json!({"result":result}))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("must be an object"));
+        assert!(!error.contains("CANARY"));
+    }
+}
+
+#[test]
 fn malformed_tool_error_flags_are_rejected_instead_of_success() {
     for flag in [
         json!("CANARY private flag"),

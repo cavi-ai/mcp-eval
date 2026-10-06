@@ -165,6 +165,54 @@ fn proxies_messages_and_records_privacy_safe_shapes() {
 }
 
 #[test]
+fn non_object_tool_results_are_forwarded_exactly_and_recorded_as_unknown() {
+    for result in [
+        serde_json::json!(null),
+        serde_json::json!(true),
+        serde_json::json!(7),
+        serde_json::json!("CANARY private result"),
+        serde_json::json!(["CANARY private result"]),
+    ] {
+        let home = TestHome::new();
+        let response = serde_json::json!({"jsonrpc":"2.0","id":1,"result":result}).to_string();
+        let mut child = Command::new(bin())
+            .args([
+                "shim",
+                "--server",
+                "demo",
+                "--",
+                "python3",
+                "-c",
+                "import sys\nfor line in sys.stdin:\n print(sys.argv[1], flush=True)",
+                &response,
+            ])
+            .env("MCPEVAL_HOME", home.path())
+            .env_remove("MCPEVAL_SESSION")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(
+            b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"read_status\",\"arguments\":{}}}\n"
+        ).unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, format!("{response}\n").as_bytes());
+        let records = read_records(&home);
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["outcome"], "unknown");
+        assert!(records[0]["error"].is_null());
+        assert!(!read_store(&home).contains("CANARY"));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("CANARY"));
+    }
+}
+
+#[test]
 fn forwards_unparsed_bytes_exactly_without_persisting_them() {
     const UNPARSED: &[u8] = b"RAW-CANARY /Users/someone/private.pdf?token=CANARY-query \xff";
 

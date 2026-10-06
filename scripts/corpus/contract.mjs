@@ -98,7 +98,8 @@ export function observationFrom(raw, target, evaluator, standard) {
 
 export function validateCorpus(corpus) {
   require(corpus?.schema === SCHEMA, "corpus lacks v3 provenance; historical data cannot be replayed as a pinned collection");
-  require(typeof corpus.platform === "string" && /^mcpeval-standard\/\d+$/u.test(corpus.standard ?? ""), "invalid corpus context");
+  require(typeof corpus.source === "string" && corpus.source.length > 0, "invalid corpus source");
+  require(typeof corpus.platform === "string" && corpus.platform.length > 0 && typeof corpus.standard === "string" && /^mcpeval-standard\/\d+$/u.test(corpus.standard), "invalid corpus context");
   require(typeof corpus.evaluator?.version === "string" && corpus.evaluator.version.length > 0 && digest(corpus.evaluator.sha256) && digest(corpus.targets_sha256), "invalid evaluator or targets provenance");
   require(Array.isArray(corpus.population) && corpus.population.length > 0 && Array.isArray(corpus.observations), "invalid corpus population");
   const seen = new Set(); const observed = new Set();

@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { commandFor, readinessScore, driftedResults } from "./verify.mjs";
+import { validateCorpus } from "./contract.mjs";
+
+const corpusFixture = JSON.parse(await readFile(new URL("../../tests/fixtures/corpus-v3.json", import.meta.url), "utf8"));
+const metadataCases = JSON.parse(await readFile(new URL("../../tests/fixtures/corpus-v3-metadata-cases.json", import.meta.url), "utf8"));
+
+for (const scenario of metadataCases) {
+  test(`corpus metadata contract: ${scenario.name}`, () => {
+    const document = { ...structuredClone(corpusFixture), ...scenario.set };
+    for (const key of scenario.remove) delete document[key];
+    if (scenario.valid) assert.equal(validateCorpus(document), document);
+    else assert.throws(() => validateCorpus(document));
+  });
+}
 
 test("launches only an explicitly pinned package target", () => {
   const target = { server: "memory", runtime: "npm", package: "@modelcontextprotocol/server-memory", version: "1.2.3", bin: "fixture-memory", args: [], prerequisites: { environment: [], checks: [] } };

@@ -261,6 +261,44 @@ mod tests {
     }
 
     #[test]
+    fn corpus_metadata_matches_shared_contract_cases_and_calibration_requirements() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../tests/fixtures/corpus-v3.json")).unwrap();
+        let scenarios: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/corpus-v3-metadata-cases.json"
+        ))
+        .unwrap();
+        let schema: serde_json::Value =
+            serde_json::from_str(include_str!("../docs/mcp-eval.corpus.schema.json")).unwrap();
+        let home =
+            std::env::temp_dir().join(format!("mcpeval-corpus-contract-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&home).unwrap();
+        let file = home.join("corpus.json");
+        for scenario in scenarios.as_array().unwrap() {
+            let mut document = fixture.clone();
+            let fields = document.as_object_mut().unwrap();
+            fields.extend(scenario["set"].as_object().unwrap().clone());
+            for key in scenario["remove"].as_array().unwrap() {
+                fields.remove(key.as_str().unwrap());
+            }
+            assert_eq!(
+                crate::schema::conforms(&schema, &document),
+                scenario["valid"].as_bool().unwrap(),
+                "published schema: {}",
+                scenario["name"]
+            );
+            std::fs::write(&file, document.to_string()).unwrap();
+            assert_eq!(
+                Corpus::load(&file).is_ok(),
+                scenario["calibratable"].as_bool().unwrap(),
+                "calibration loader: {}",
+                scenario["name"]
+            );
+        }
+        std::fs::remove_dir_all(home).unwrap();
+    }
+
+    #[test]
     fn placement_counts_ties_at_the_top() {
         let mut scores = vec![100; 33];
         scores.push(75);

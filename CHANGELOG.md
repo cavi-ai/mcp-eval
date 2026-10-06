@@ -4,6 +4,9 @@
 
 ### Added
 
+- Optional corpus replay `--out` retains verification JSON and digest-bound
+  reports in a private directory, refuses existing outputs, and cleans up
+  incomplete bundles on fatal errors. Failed verdicts retain their evidence.
 - Versioned corpus verification JSON binds replay outcomes to corpus/target
   bytes, evaluator identity, comparison policy, and report digests.
   `mcpeval schema corpus-verification` prints its published schema.

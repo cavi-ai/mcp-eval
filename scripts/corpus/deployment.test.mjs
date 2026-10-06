@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -102,7 +102,8 @@ test("native bundled deployment collects and replays without a package-launch su
   assert.ok(!JSON.stringify(collection.corpus).includes(root));
   const replay = { ...options, corpusPath: options.output, reportsPath: collection.reports };
   const cliCommand = [process.execPath, path.join(ROOT, "scripts/corpus/verify.mjs"), "--corpus", options.output, "--targets", targetsPath, "--reports", collection.reports, "--binary", binary, "--json"];
-  const cli = await runCommand(cliCommand, { timeoutMs: 60_000 });
+  const evidencePath = path.join(dir, "passing-evidence");
+  const cli = await runCommand([...cliCommand, "--out", evidencePath], { timeoutMs: 60_000 });
   assert.equal(cli.code, 0, cli.stdout);
   const receipt = JSON.parse(cli.stdout);
   assert.equal(receipt.schema, "mcpeval.corpus-verification/v1");
@@ -113,6 +114,12 @@ test("native bundled deployment collects and replays without a package-launch su
   assert.deepEqual(driftedResults(receipt.results), []);
   assert.equal(receipt.results[0].expected_report_sha256, sha256(await readFile(path.join(collection.reports, "fixture.json"))));
   assert.match(receipt.results[0].replay_report_sha256, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(JSON.parse(await readFile(path.join(evidencePath, "verification.json"))), receipt);
+  assert.equal(sha256(await readFile(path.join(evidencePath, "reports/fixture.json"))), receipt.results[0].replay_report_sha256);
+  const duplicate = await runCommand([...cliCommand, "--out", evidencePath], { timeoutMs: 60_000 });
+  assert.equal(duplicate.code, 1);
+  assert.equal(duplicate.stdout, "");
+  assert.deepEqual(JSON.parse(await readFile(path.join(evidencePath, "verification.json"))), receipt);
   assert.ok(!cli.stdout.includes(root));
   await writeFile(path.join(root, "deps", "dependency.mjs"), "changed dependency");
   let scores = 0;
@@ -124,11 +131,14 @@ test("native bundled deployment collects and replays without a package-launch su
   assert.equal(result.passed, false);
   assert.equal(result.results[0].replay_report_sha256, null);
   assert.deepEqual(result.results.map(({ status, reason }) => ({ status, reason })), [{ status: "errored", reason: "deployment-mismatch" }]);
-  const failedCli = await runCommand(cliCommand, { timeoutMs: 60_000 });
+  const failedPath = path.join(dir, "failed-evidence");
+  const failedCli = await runCommand([...cliCommand, "--out", failedPath], { timeoutMs: 60_000 });
   assert.equal(failedCli.code, 1);
   const failedReceipt = JSON.parse(failedCli.stdout);
   assert.equal(failedReceipt.schema, receipt.schema);
   assert.equal(failedReceipt.corpus_sha256, receipt.corpus_sha256);
   assert.equal(failedReceipt.passed, false);
   assert.equal(failedReceipt.results[0].replay_report_sha256, null);
+  assert.deepEqual(JSON.parse(await readFile(path.join(failedPath, "verification.json"))), failedReceipt);
+  assert.deepEqual(await readdir(path.join(failedPath, "reports")), []);
 });

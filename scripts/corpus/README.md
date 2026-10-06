@@ -125,8 +125,39 @@ original-artifact provenance aborts before replay, emits an error on stderr,
 and produces no verification artifact.
 
 Keep the original corpus, targets, and reports with the verification artifact.
-The artifact identifies replay report bytes seen in memory but does not retain
-them or include their payloads. Hashes and schema validation do not authenticate
+Without `--out`, the artifact identifies replay report bytes seen in memory but
+does not retain them or include their payloads. To retain inspectable replay
+evidence, select a new directory under an existing private parent:
+
+```sh
+node scripts/corpus/verify.mjs --corpus /absolute/private/corpus.json \
+  --targets /absolute/private/targets.json \
+  --reports /absolute/private/corpus.json.reports-UUID \
+  --out /absolute/private/replay-evidence --json
+```
+
+The bundle contains `verification.json` and `reports/<server>.json` for each
+replay report with a non-null digest. Report bytes match the artifact's replay
+digests, including valid reports from unobserved outcomes. Missing, invalid,
+or discarded reports are not saved. Original reports, targets, and the corpus
+are not copied; retain them separately using the artifact's original digests.
+`--out` works with text or JSON stdout and preserves the replay exit status.
+
+The output directory is reserved exclusively before evaluator execution;
+existing files, directories, or links are refused without replacement. There
+is no force mode. On POSIX, new directories use owner-only permissions and
+files use owner read/write permissions. On Windows, use a private parent with
+appropriate ACLs. Raw reports can contain sensitive server output; the bundle
+is not a redacted sharing envelope.
+
+Reports are written before `verification.json`, whose complete bytes are
+published atomically without overwriting a file. Completed failed verdicts
+retain their bundle for inspection. Fatal errors remove the reserved incomplete
+bundle. A process crash or failed cleanup can leave partial output; absence of
+`verification.json` means the bundle is incomplete. Do not modify a reserved
+directory during replay. This is not a transactional or crash-durable store.
+
+Hashes and schema validation do not authenticate
 the artifact's author. Labels are operator-supplied; review artifacts before
 sharing them. A verification artifact does not prove the cause of score drift
 or freeze host or service state.

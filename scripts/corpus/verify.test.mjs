@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat, writeFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -116,6 +116,112 @@ test("historical corpus refusal happens before any package or evaluator executio
   let launched = false;
   await assert.rejects(verifyCorpus({ execute: () => { launched = true; throw new Error("must not launch"); } }), /historical/u);
   assert.equal(launched, false);
+});
+
+test("replay evidence retains exact reports and both passing and drifted verdicts privately", async (t) => {
+  let catalog = 50;
+  const f = await fixture(t, [target("one")], (server) => {
+    const value = report(server);
+    value.readiness.areas.find((area) => area.name === "catalog").score = catalog;
+    return value;
+  });
+  const collection = await collectCorpus(f.options);
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports };
+  for (const [label, score, passed] of [["passing", 50, true], ["drifted", 51, false]]) {
+    catalog = score;
+    const evidencePath = path.join(f.dir, label);
+    const result = await verifyCorpus({ ...options, evidencePath });
+    assert.equal(result.passed, passed);
+    assert.deepEqual(JSON.parse(await readFile(path.join(evidencePath, "verification.json"))), result);
+    const raw = await readFile(path.join(evidencePath, "reports/one.json"));
+    assert.equal(raw.toString(), `${JSON.stringify(report("one", { areas: report("one").readiness.areas.map((area) => area.name === "catalog" ? { ...area, score } : area) }))}\n`);
+    assert.equal(sha256(raw), result.results[0].replay_report_sha256);
+    assert.deepEqual(await readdir(evidencePath), ["reports", "verification.json"]);
+    assert.ok(!JSON.stringify(result).includes(f.dir));
+    if (process.platform !== "win32") {
+      assert.equal((await stat(evidencePath)).mode & 0o077, 0);
+      assert.equal((await stat(path.join(evidencePath, "reports"))).mode & 0o077, 0);
+      for (const file of ["verification.json", "reports/one.json"]) assert.equal((await stat(path.join(evidencePath, file))).mode & 0o077, 0);
+    }
+  }
+});
+
+test("existing replay outputs and concurrent writers are never replaced or launched over", async (t) => {
+  const f = await fixture(t, [target("one")]);
+  const collection = await collectCorpus(f.options);
+  const evidencePath = path.join(f.dir, "evidence");
+  await mkdir(evidencePath);
+  await writeFile(path.join(evidencePath, "verification.json"), "EXISTING_EVIDENCE");
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports, evidencePath };
+  const before = f.launches.length;
+  await assert.rejects(verifyCorpus(options), { code: "EEXIST" });
+  assert.equal(f.launches.length, before);
+  assert.equal(await readFile(path.join(evidencePath, "verification.json"), "utf8"), "EXISTING_EVIDENCE");
+  await rm(evidencePath, { recursive: true });
+  const results = await Promise.allSettled([verifyCorpus(options), verifyCorpus(options)]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal(results.find((result) => result.status === "rejected").reason.code, "EEXIST");
+  const saved = JSON.parse(await readFile(path.join(evidencePath, "verification.json")));
+  assert.equal(saved.passed, true);
+  assert.equal(sha256(await readFile(path.join(evidencePath, "reports/one.json"))), saved.results[0].replay_report_sha256);
+});
+
+test("fatal replay errors remove incomplete evidence, but unavailable report verdicts are retained", async (t) => {
+  const f = await fixture(t, [target("one")]);
+  const collection = await collectCorpus(f.options);
+  const evidencePath = path.join(f.dir, "evidence");
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports, evidencePath };
+  const execute = async (command, settings) => {
+    const result = await f.options.execute(command, settings);
+    if (command[1] === "score") {
+      await writeFile(f.options.binary, "changed evaluator");
+      assert.ok((await stat(evidencePath)).isDirectory());
+      await assert.rejects(stat(path.join(evidencePath, "verification.json")), { code: "ENOENT" });
+    }
+    return result;
+  };
+  await assert.rejects(verifyCorpus({ ...options, execute }), /evaluator changed/u);
+  await assert.rejects(stat(evidencePath), { code: "ENOENT" });
+  await writeFile(f.options.binary, "fixture executable identity");
+  const unavailable = await verifyCorpus({ ...options, execute: async (command, settings) => command[1] === "score" ? { code: 3, stdout: "PRIVATE_INVALID_REPORT" } : f.options.execute(command, settings) });
+  assert.equal(unavailable.passed, false);
+  assert.equal(unavailable.results[0].replay_report_sha256, null);
+  assert.deepEqual(await readdir(path.join(evidencePath, "reports")), []);
+  assert.deepEqual(JSON.parse(await readFile(path.join(evidencePath, "verification.json"))), unavailable);
+});
+
+test("report write failures remove the reserved bundle without a verification marker", async (t) => {
+  const f = await fixture(t, [target("one")]);
+  const collection = await collectCorpus(f.options);
+  const evidencePath = path.join(f.dir, "evidence");
+  const options = { ...f.options, corpusPath: f.options.output, reportsPath: collection.reports, evidencePath };
+  const execute = async (command, settings) => {
+    if (command[1] === "score") await mkdir(path.join(evidencePath, "reports/one.json"));
+    return f.options.execute(command, settings);
+  };
+  await assert.rejects(verifyCorpus({ ...options, execute }), { code: "EEXIST" });
+  await assert.rejects(stat(evidencePath), { code: "ENOENT" });
+  await writeFile(path.join(collection.reports, "one.json"), "tampered original report");
+  await assert.rejects(verifyCorpus(options), /original report digest mismatch/u);
+  await assert.rejects(stat(evidencePath), { code: "ENOENT" });
+});
+
+test("valid unobserved replay reports are retained while original untested targets have no reports", async (t) => {
+  let unobserved = false;
+  const f = await fixture(t, [target("one"), target("missing", { prerequisites: { environment: ["FIXTURE_TOKEN"], checks: [] } })], (server) => {
+    const value = report(server);
+    if (unobserved) value.readiness.areas.find((area) => area.name === "reliability").measurements.tool_errors = 0;
+    return value;
+  });
+  const collection = await collectCorpus(f.options);
+  unobserved = true;
+  const evidencePath = path.join(f.dir, "evidence");
+  const result = await verifyCorpus({ ...f.options, corpusPath: f.options.output, reportsPath: collection.reports, evidencePath });
+  assert.equal(result.passed, false);
+  assert.equal(result.results[0].reason, "no-tool-calls");
+  assert.equal(sha256(await readFile(path.join(evidencePath, "reports/one.json"))), result.results[0].replay_report_sha256);
+  assert.equal(result.results[1].replay_report_sha256, null);
+  assert.deepEqual(await readdir(path.join(evidencePath, "reports")), ["one.json"]);
 });
 
 test("target locks reject ranges, tags, duplicate labels, implicit prerequisites, and unknown runtimes", () => {

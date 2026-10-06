@@ -1854,20 +1854,28 @@ fn check_expectation(expect: &Expectation, response: &ToolResponse) -> Option<Fa
             .filter(|expected| expected != code)
             .map(|_| FailureReason::ErrorCodeMismatch),
         (OutcomeExpectation::Ok, ToolResponse::Success(result)) => {
-            let Some(result) = result.as_object() else {
+            let Some(object) = result.as_object() else {
                 return Some(FailureReason::MissingField);
             };
             if expect
                 .required_result_fields
                 .iter()
-                .any(|field| !result.contains_key(field))
+                .any(|field| !object.contains_key(field))
+                || expect
+                    .required_result_paths
+                    .iter()
+                    .any(|path| result.pointer(path).is_none())
             {
                 return Some(FailureReason::MissingField);
             }
             if expect
                 .equals
                 .iter()
-                .any(|(field, expected)| result.get(field) != Some(expected))
+                .any(|(field, expected)| object.get(field) != Some(expected))
+                || expect
+                    .equals_paths
+                    .iter()
+                    .any(|(path, expected)| result.pointer(path) != Some(expected))
             {
                 return Some(FailureReason::ValueMismatch);
             }

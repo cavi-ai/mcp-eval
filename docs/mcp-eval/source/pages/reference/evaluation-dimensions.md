@@ -43,7 +43,7 @@ Repeats the declared tool call through `max_attempts`. The first error fails the
 
 ### `instruction-fidelity`
 
-Runs one call and compares its machine-readable outcome with the declared `expect` object. It can check required result fields, exact scalar values, or an error code. It does not invoke an external model.
+Runs one call and compares its machine-readable outcome with the declared `expect` object. It can check required result fields and exact scalar values at literal top-level keys or nested JSON Pointer paths, or an error code. It does not invoke an external model.
 
 ### `latency-budget`
 

@@ -57,7 +57,11 @@ Supplemental probe fields:
 - `completion`: read-only only, with `ref_type` (`ref/prompt` or `ref/resource`), `ref_uri` (1–512 characters), `argument_name`, identifier-shaped `argument_value`, and `max_values` from 1 through 100.
 - `workflow`: read-only only, with `repetitions` from 1 through 20 and `steps` containing 2 through 32 objects, each with a valid `tool`, object `arguments`, and `expect`. It has no sandbox. The first step's tool is the case's primary tool for finding verification and report identity.
 
-An `expect` object declares `outcome` as `ok` or `error`. Successful expectations may include unique `required_result_fields` and scalar `equals` values. Error expectations may include a numeric `error_code`, but cannot declare result fields. This probe checks declared machine-readable result fields, values, outcomes, and error codes; it does not send descriptions or results to an external LLM.
+An `expect` object declares `outcome` as `ok` or `error`. Successful expectations may include unique `required_result_fields` and scalar `equals` values for literal top-level keys, or unique `required_result_paths` and scalar `equals_paths` values for nested fields. All declared assertions must pass. Error expectations may include a numeric `error_code`, but cannot declare result assertions. This probe checks declared machine-readable result fields, values, outcomes, and error codes; it does not send descriptions or results to an external LLM.
+
+Nested paths use JSON Pointer, starting at the complete MCP result: `/structuredContent/status` selects a status field, and `/structuredContent/items/0/ready` selects a field in the first array item. Escape `/` in a key as `~1` and `~` as `~0`. Paths must start with `/`, be at most 512 ASCII characters, and contain only letters, digits, `_`, `.`, `:`, `-`, separators, and these escapes. The empty root pointer is rejected. String equality values must remain identifier-shaped; objects and arrays cannot be equality values. Review paths and values before sharing a manifest.
+
+A required path passes for an existing null value and fails for a missing path. Equality with `null` requires an existing null value. Existing `equals` keys retain their literal meaning: `structuredContent.status` selects a top-level key with that exact name. Earlier binaries reject the new optional path fields; existing manifests retain their behavior.
 
 ## Read-only workflows
 
@@ -77,9 +81,9 @@ incorrect, or an expected validation error poisoning subsequent calls.
     "access": "read_only",
     "repetitions": 3,
     "steps": [
-      {"tool": "read_status", "arguments": {}, "expect": {"outcome": "ok", "equals": {"status": "ready"}}},
+      {"tool": "read_status", "arguments": {}, "expect": {"outcome": "ok", "equals_paths": {"/structuredContent/status": "ready"}}},
       {"tool": "read_other", "arguments": {}, "expect": {"outcome": "ok"}},
-      {"tool": "read_status", "arguments": {}, "expect": {"outcome": "ok", "equals": {"status": "ready"}}}
+      {"tool": "read_status", "arguments": {}, "expect": {"outcome": "ok", "equals_paths": {"/structuredContent/status": "ready"}}}
     ]
   }]
 }
@@ -88,8 +92,8 @@ incorrect, or an expected validation error poisoning subsequent calls.
 Run it with `mcpeval probe --server local --probe workflow --manifest
 workflow.json -- your-mcp-server`. Tool names and assertions in the example
 must be replaced with the target's actual contract. Expectations use the same
-top-level MCP result fields as `instruction-fidelity`; this example assumes
-the result itself has a `status` field, not a nested `structuredContent.status`.
+contract as `instruction-fidelity`; this example checks `status` inside
+the result's `structuredContent` object.
 
 Every completed call counts as one `attempt`. `first_failure` is the one-based
 call number across the whole sequence and all repetitions: with three steps,

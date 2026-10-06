@@ -94,7 +94,7 @@ makes one call. For example, create `expect.json` with:
 ```json
 {
   "outcome": "ok",
-  "equals": {"status": "ready"}
+  "equals_paths": {"/structuredContent/status": "ready"}
 }
 ```
 
@@ -107,8 +107,10 @@ mcpeval generate --finding finding-0123456789abcdef \
 
 The file uses the manifest's existing `expect` contract: `outcome` is `ok` or
 `error`; successful expectations can include `required_result_fields` and
-scalar `equals`; errors can include a numeric `error_code`. Assertions address
-top-level MCP result fields, not nested `structuredContent` paths. Files are
+scalar `equals` for literal top-level keys, or `required_result_paths` and
+scalar `equals_paths` for nested fields using JSON Pointer. See the
+[manifest contract](../reference/manifest.md) for path restrictions, escaping,
+and null handling. Errors can include a numeric `error_code`. Files are
 limited to 64 KiB, reject unknown properties, and undergo manifest validation
 before the output is opened. Invalid input never replaces an existing manifest,
 even with `--force`.

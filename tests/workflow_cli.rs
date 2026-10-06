@@ -161,6 +161,91 @@ fn workflow_checks_state_after_an_expected_error() {
 }
 
 #[test]
+fn nested_assertions_check_structured_content_arrays_nulls_and_escaped_keys() {
+    for (mode, code) in [("clean", 0), ("poison", 1)] {
+        let root = Temp::new();
+        let mut case = workflow();
+        case["steps"][2]["expect"] = json!({"outcome":"ok",
+            "equals":{"structuredContent.status":"literal"},
+            "required_result_paths":["/structuredContent/items/0/ready","/structuredContent/nullable"],
+            "equals_paths":{"/structuredContent/status":"ready","/structuredContent/items/0/ready":true,
+                "/structuredContent/nullable":null,"/structuredContent/a~1b/~0state":"ready"}});
+        let output = run(&root.0, case, mode, None);
+        let manifest: Value =
+            serde_json::from_slice(&std::fs::read(root.0.join("manifest.json")).unwrap()).unwrap();
+        jsonschema::validator_for(
+            &serde_json::from_str::<Value>(include_str!("../docs/mcp-eval.manifest.schema.json"))
+                .unwrap(),
+        )
+        .unwrap()
+        .validate(&manifest)
+        .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(code),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let document = report(&output);
+        if code == 1 {
+            assert_eq!(document["cases"][0]["reason"], "value-mismatch");
+        }
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("structuredContent"));
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("CANARY"));
+    }
+}
+
+#[test]
+fn missing_paths_are_distinct_from_existing_null_values() {
+    for (expect, reason) in [
+        (
+            json!({"outcome":"ok","required_result_paths":["/structuredContent/missing"]}),
+            "missing-field",
+        ),
+        (
+            json!({"outcome":"ok","equals_paths":{"/structuredContent/missing":null}}),
+            "value-mismatch",
+        ),
+    ] {
+        let root = Temp::new();
+        let mut case = workflow();
+        case["steps"][0]["expect"] = expect;
+        let output = run(&root.0, case, "clean", None);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(report(&output)["cases"][0]["reason"], reason);
+        assert_eq!(calls(&root.0).len(), 1);
+    }
+}
+
+#[test]
+fn invalid_nested_assertions_fail_before_startup_without_echoing_values() {
+    let invalid = [
+        json!({"outcome":"ok","required_result_paths":[""]}),
+        json!({"outcome":"ok","required_result_paths":["structuredContent/status"]}),
+        json!({"outcome":"ok","required_result_paths":["/bad~2escape"]}),
+        json!({"outcome":"ok","required_result_paths":[format!("/{}","x".repeat(512))]}),
+        json!({"outcome":"ok","required_result_paths":["/structuredContent/status","/structuredContent/status"]}),
+        json!({"outcome":"error","equals_paths":{"/structuredContent/status":"ready"}}),
+        json!({"outcome":"ok","equals_paths":{"/structuredContent/status":{"raw":"CANARY private content"}}}),
+        json!({"outcome":"ok","equals_paths":{"/CANARY private path":"ready"}}),
+    ];
+    for expect in invalid {
+        let root = Temp::new();
+        let mut case = workflow();
+        case["steps"][0]["expect"] = expect;
+        let output = run(&root.0, case, "clean", None);
+        assert_eq!(output.status.code(), Some(2));
+        assert!(!root.0.join("calls.jsonl").exists());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("CANARY"));
+    }
+}
+
+#[test]
 fn workflow_refuses_annotated_writers_before_any_step() {
     let root = Temp::new();
     let output = run(&root.0, workflow(), "writer", None);
@@ -214,7 +299,10 @@ fn workflow_http_uses_one_fresh_session_for_all_steps() {
         BufReader::new(server.0.stdout.take().unwrap())
             .read_line(&mut url)
             .unwrap();
-        let output = run(&root.0, workflow(), mode, Some(url.trim()));
+        let mut case = workflow();
+        case["steps"][2]["expect"] =
+            json!({"outcome":"ok","equals_paths":{"/structuredContent/status":"ready"}});
+        let output = run(&root.0, case, mode, Some(url.trim()));
         assert_eq!(
             output.status.code(),
             Some(code),

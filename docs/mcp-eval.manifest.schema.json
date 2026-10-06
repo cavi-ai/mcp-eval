@@ -53,6 +53,13 @@
       "type": "object",
       "description": "Arguments passed to tools/call. Never persisted or printed."
     },
+    "resultPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?:/(?:[A-Za-z0-9_.:-]|~[01])*)+$",
+      "description": "Non-root JSON Pointer with share-safe structural tokens. Escape slash as ~1 and tilde as ~0."
+    },
     "expectation": {
       "type": "object",
       "additionalProperties": false,
@@ -71,6 +78,17 @@
           "additionalProperties": {
             "type": ["null", "boolean", "number", "string"]
           }
+        },
+        "required_result_paths": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/resultPath" },
+          "uniqueItems": true
+        },
+        "equals_paths": {
+          "type": "object",
+          "description": "JSON Pointer targets that must equal these scalar values; string values must be identifier-shaped.",
+          "propertyNames": { "$ref": "#/$defs/resultPath" },
+          "additionalProperties": { "type": ["null", "boolean", "number", "string"] }
         },
         "error_code": {
           "type": "integer",

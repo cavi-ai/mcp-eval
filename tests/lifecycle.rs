@@ -115,6 +115,7 @@ fn changing_a_launch_artifact_during_verification_records_no_credit() {
         .query_row("SELECT COUNT(*) FROM probe_history", [], |row| row.get(0))
         .unwrap();
     assert_eq!(count, 0);
+    drop(db);
     std::fs::remove_dir_all(home).unwrap();
 }
 

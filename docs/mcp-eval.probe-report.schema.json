@@ -216,6 +216,36 @@
           "items": {
             "$ref": "#/$defs/area"
           }
+        },
+        "measurement_profile": {
+          "$ref": "#/$defs/measurement_profile"
+        },
+        "assessment": {
+          "type": "object",
+          "required": [
+            "scope",
+            "semantic_correctness",
+            "tools_exercised",
+            "read_only_tools",
+            "writer_tools_excluded"
+          ],
+          "properties": {
+            "scope": {
+              "const": "read-only-structural"
+            },
+            "semantic_correctness": {
+              "const": "requires-reviewed-oracle"
+            },
+            "tools_exercised": {
+              "$ref": "#/$defs/count"
+            },
+            "read_only_tools": {
+              "$ref": "#/$defs/count"
+            },
+            "writer_tools_excluded": {
+              "$ref": "#/$defs/count"
+            }
+          }
         }
       }
     },
@@ -515,6 +545,61 @@
         "hint": {
           "type": "string",
           "minLength": 1
+        }
+      }
+    },
+    "measurement_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "evaluator_version",
+        "platform",
+        "architecture",
+        "client_capabilities",
+        "attested_read_only",
+        "skip_tools",
+        "call_timeout_ms",
+        "repeats"
+      ],
+      "properties": {
+        "schema": {
+          "const": "mcpeval.measurement-profile/v1"
+        },
+        "evaluator_version": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "platform": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,63}$"
+        },
+        "architecture": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,63}$"
+        },
+        "client_capabilities": {
+          "const": "none"
+        },
+        "attested_read_only": {
+          "type": "boolean"
+        },
+        "skip_tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          }
+        },
+        "call_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repeats": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     }

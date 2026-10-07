@@ -81,20 +81,33 @@ brew test cavi-ai/tap/mcpeval
 
 ## Corpus drift check
 
-The corpus re-scores live public servers over the network, so it is not a CI
-gate. Before a release, re-score every server in `data/readiness-corpus.json`
-with the current binary, on the platform the corpus records:
+Live corpus replay is a separately authorized pre-release check, not a CI
+gate. The checked-in standard/1 snapshot is historical and has no replayable
+deployment provenance. Keep it unchanged. Collect a candidate under the current
+standard using reviewed pinned targets and declared service prerequisites,
+then replay with the same evaluator binary and platform. Store target files,
+reports, and replay evidence privately:
 
 ```sh
-cargo build --release
-node scripts/corpus/verify.mjs          # prose summary, exits non-zero on drift
-node scripts/corpus/verify.mjs --json   # machine-readable per-server results
+cargo build --release --locked --bins
+node scripts/corpus/collect.mjs --targets /private/targets.json \
+  --out /private/corpus.json
+# Use the original report directory printed by collection.
+node scripts/corpus/verify.mjs --corpus /private/corpus.json \
+  --targets /private/targets.json --reports /private/original-reports \
+  --out /private/replay-evidence --json
+node scripts/corpus/check-evidence.mjs --corpus /private/corpus.json \
+  --targets /private/targets.json --reports /private/original-reports \
+  --evidence /private/replay-evidence
 ```
 
-A moved score is a legitimate outcome: the server changed. Refresh the
-corpus deliberately with `scripts/corpus/collect.sh`, commit the new
-`data/readiness-corpus.json`, and explain the movement in the pull request.
-Drift must be explained, never silent.
+A moved score requires investigation: deployment dependencies, service state,
+and execution conditions can change too. Do not infer the cause from a score
+delta. A small reference set is not a representative calibration population;
+collection defaults to at least ten observed targets. Review measurements and
+their provenance before any deliberate publication. Never commit private
+target files, raw reports, or retained replay evidence. See
+[corpus collection and replay](scripts/corpus/README.md).
 
 ## Pre-1.0 policy
 

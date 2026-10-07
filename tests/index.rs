@@ -825,3 +825,18 @@ fn windows_never_cross_session_boundaries() {
         .unwrap();
     assert_eq!(count, 0);
 }
+#[test]
+fn oversized_complete_journal_records_refuse_rebuild_without_replacing_index() {
+    let dir = std::env::temp_dir().join(format!("mcpeval-index-bound-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(dir.join("store")).unwrap();
+    mcpeval::index::build(&dir).unwrap();
+    let mut record = vec![b' '; 4 * 1024 * 1024 + 1];
+    record.push(b'\n');
+    std::fs::write(dir.join("store/calls-overflow.jsonl"), record).unwrap();
+    assert!(mcpeval::index::build(&dir).is_err());
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    let calls: i64 = db
+        .query_row("SELECT COUNT(*) FROM calls", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(calls, 0);
+}

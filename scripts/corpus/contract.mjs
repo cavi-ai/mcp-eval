@@ -19,19 +19,24 @@ const score = (value) => count(value) && value <= 100;
 const explicitCommand = (value) => Array.isArray(value) && value.length > 0 && value.every((arg) => typeof arg === "string" && arg.length > 0 && arg.length <= 8192 && !arg.includes("\0"));
 function require(condition, message) { if (!condition) throw new Error(message); }
 
-export function commandFor(target) {
+function validateTargetIdentity(target) {
   require(target && label(target.server), "target requires a server label");
-  require(["npm", "uvx"].includes(target.runtime), "target requires npm or uvx runtime");
-  const packagePattern = target.runtime === "npm" ? /^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]{0,127}$/u : /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
-  const versionPattern = target.runtime === "npm" ? /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u : /^\d+(?:\.\d+){1,3}(?:(?:a|b|rc|\.post|\.dev)\d+)?$/u;
+  require(["npm", "uvx", "native"].includes(target.runtime), "target requires npm, uvx, or native runtime");
+  const packagePattern = target.runtime !== "uvx" ? /^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]{0,127}$/u : /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
+  const versionPattern = target.runtime !== "uvx" ? /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u : /^\d+(?:\.\d+){1,3}(?:(?:a|b|rc|\.post|\.dev)\d+)?$/u;
   require(typeof target.package === "string" && packagePattern.test(target.package), "invalid package name");
   require(typeof target.version === "string" && versionPattern.test(target.version), "target requires an exact package version");
   require(typeof target.bin === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(target.bin), "target requires an explicit executable name");
+}
+
+export function commandFor(target) {
+  validateTargetIdentity(target);
   require(Array.isArray(target.args) && target.args.every((arg) => typeof arg === "string" && arg.length <= 8192 && !arg.includes("\0")), "target requires an argument array");
   if (target.deployment !== undefined) {
     const deployment = validateDeployment(target.deployment);
     return [path.join(deployment.root, deployment.executable), ...(deployment.entrypoint === undefined ? [] : [path.join(deployment.root, deployment.entrypoint)]), ...target.args];
   }
+  require(target.runtime !== "native", "native targets require a deployment lock");
   return target.runtime === "npm"
     ? ["npx", "--yes", "--package", `${target.package}@${target.version}`, "--", target.bin, ...target.args]
     : ["uvx", "--from", `${target.package}==${target.version}`, target.bin, ...target.args];
@@ -123,7 +128,8 @@ export function validateCorpus(corpus) {
       states.add(check.name);
     }
     require(states.size === source.prerequisites.filter((name) => name.startsWith("state:")).length, "incomplete state provenance");
-    commandFor({ ...source, server: observation.server, args: [] });
+    validateTargetIdentity({ ...source, server: observation.server });
+    require(source.runtime !== "native" || digest(source.deployment_sha256), "native provenance requires a deployment digest");
   }
   require(rows.size === observed.size, "population observations are incomplete");
   return corpus;

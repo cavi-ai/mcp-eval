@@ -55,6 +55,8 @@ pub struct ReadinessMovement {
     pub current: Option<u64>,
     pub baseline_standard: Option<String>,
     pub current_standard: Option<String>,
+    pub baseline_profile: Option<crate::measurement::MeasurementProfile>,
+    pub current_profile: Option<crate::measurement::MeasurementProfile>,
 }
 
 impl ReadinessMovement {
@@ -70,6 +72,14 @@ impl ReadinessMovement {
             current: current_score,
             baseline_standard,
             current_standard,
+            baseline_profile: baseline
+                .readiness
+                .as_ref()
+                .and_then(|r| r.measurement_profile.clone()),
+            current_profile: current
+                .readiness
+                .as_ref()
+                .and_then(|r| r.measurement_profile.clone()),
         }
     }
 
@@ -79,11 +89,18 @@ impl ReadinessMovement {
             && self.current.is_some()
             && self.baseline_standard.is_some()
             && self.baseline_standard == self.current_standard
+            && self.baseline_profile.is_some()
+            && self.baseline_profile == self.current_profile
     }
 
     pub fn text(&self) -> String {
         match (self.comparable(), self.baseline, self.current) {
             (true, Some(baseline), Some(current)) => format!("{baseline} → {current}"),
+            _ if self.baseline_standard.is_some()
+                && self.baseline_standard == self.current_standard =>
+            {
+                "not comparable (measurement profile changed or unavailable)".into()
+            }
             _ => format!(
                 "not comparable ({} → {})",
                 self.baseline_standard.as_deref().unwrap_or("legacy"),
@@ -316,6 +333,8 @@ pub fn to_json(outcome: &Diff) -> serde_json::Value {
             "baseline_standard": outcome.readiness.baseline_standard,
             "current_standard": outcome.readiness.current_standard,
             "comparable": outcome.readiness.comparable(),
+            "baseline_profile": outcome.readiness.baseline_profile,
+            "current_profile": outcome.readiness.current_profile,
         },
         "summary": {
             "regressed": outcome.regressed(),
@@ -578,6 +597,8 @@ mod tests {
             let mut readiness = crate::score::fold(&crate::standard::Observations::default());
             readiness.score = score;
             readiness.standard = standard.into();
+            readiness.measurement_profile =
+                Some(crate::measurement::MeasurementProfile::current(false, &[]));
             ProbeReport {
                 readiness: Some(readiness),
                 ..ProbeReport::default()
@@ -591,6 +612,20 @@ mod tests {
         assert_eq!(same.readiness.text(), "90 → 85");
         assert_eq!(to_json(&same)["readiness"]["comparable"], true);
         assert_eq!(to_json(&same)["schema"], "mcpeval.probe-diff/v2");
+
+        let baseline = scored(90, "mcpeval-standard/2");
+        let mut current = scored(85, "mcpeval-standard/2");
+        current
+            .readiness
+            .as_mut()
+            .unwrap()
+            .measurement_profile
+            .as_mut()
+            .unwrap()
+            .attested_read_only = true;
+        assert!(!diff(&baseline, &current).readiness.comparable());
+        current.readiness.as_mut().unwrap().measurement_profile = None;
+        assert!(!diff(&baseline, &current).readiness.comparable());
 
         let legacy = ProbeReport {
             legacy_score: Some(100),

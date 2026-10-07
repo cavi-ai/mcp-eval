@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/cavi-ai/mcp-eval/main/docs/mcp-eval.probe-diff.schema.json",
   "title": "mcpeval.probe-diff/v2",
-  "description": "Deterministic diff of two mcpeval.probe-report documents (v1 or v2) of one server, emitted by `mcpeval diff --format json`. Readiness moves only when both sides were scored under the same standard. Version 2 grows only by optional fields, so unknown properties are allowed. Retrieve with: mcpeval schema diff",
+  "description": "Deterministic diff of two mcpeval.probe-report documents (v1 or v2) of one server, emitted by `mcpeval diff --format json`. Readiness moves only when both sides were scored under the same standard and known measurement profile. Version 2 grows only by optional fields, so unknown properties are allowed. Retrieve with: mcpeval schema diff",
   "type": "object",
   "required": [
     "schema",
@@ -64,6 +64,26 @@
         },
         "comparable": {
           "type": "boolean"
+        },
+        "baseline_profile": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/measurement_profile"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "current_profile": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/measurement_profile"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       }
     },
@@ -262,6 +282,61 @@
               "$ref": "#/$defs/pair"
             }
           }
+        }
+      }
+    },
+    "measurement_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "evaluator_version",
+        "platform",
+        "architecture",
+        "client_capabilities",
+        "attested_read_only",
+        "skip_tools",
+        "call_timeout_ms",
+        "repeats"
+      ],
+      "properties": {
+        "schema": {
+          "const": "mcpeval.measurement-profile/v1"
+        },
+        "evaluator_version": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+        },
+        "platform": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,63}$"
+        },
+        "architecture": {
+          "type": "string",
+          "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,63}$"
+        },
+        "client_capabilities": {
+          "const": "none"
+        },
+        "attested_read_only": {
+          "type": "boolean"
+        },
+        "skip_tools": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$"
+          }
+        },
+        "call_timeout_ms": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "repeats": {
+          "type": "integer",
+          "minimum": 1
         }
       }
     }

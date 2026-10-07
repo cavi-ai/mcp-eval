@@ -282,3 +282,38 @@ fn export_issues_refuses_a_populated_directory_without_force() {
         String::from_utf8_lossy(&forced.stderr)
     );
 }
+#[test]
+fn trend_deltas_do_not_compare_different_read_only_attestations() {
+    let dir = std::env::temp_dir().join(format!("mcpeval-policy-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let manifest = dir.join("manifest.json");
+    std::fs::write(&manifest, r#"{"version":1,"probes":[{"id":"catalog","probe":"discovery-cost","access":"read_only","max_tools":20,"max_schema_bytes":100000}]}"#).unwrap();
+    for flags in [vec![], vec!["--confirm-read-only"]] {
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+            .args([
+                "probe",
+                "--server",
+                "fixture",
+                "--manifest",
+                manifest.to_str().unwrap(),
+            ])
+            .args(flags)
+            .args(["--", "python3", "tests/fixtures/probe_clean_server.py"])
+            .env("MCPEVAL_HOME", &dir)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+        .arg("trends")
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    let text = String::from_utf8(output.stdout).unwrap();
+    assert!(text.contains("measurement profile changed"), "{text}");
+    assert!(!text.contains(" +28"), "{text}");
+}

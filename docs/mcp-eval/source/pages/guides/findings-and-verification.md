@@ -65,11 +65,20 @@ The first green result moves an open finding to `verifying`; the third consecuti
 
 Pass credit is bound to the selected case definition, manifest version, timeout,
 referenced sandbox declaration, target command or endpoint configuration, and
-evaluator executable fingerprint. Changing any of those starts a fresh streak.
+evaluator executable fingerprint. For stdio, the resolved executable and regular
+files passed as arguments are also bound by their bytes. The executable is pinned
+before launch and these files are checked again before recording credit; a change
+during execution records no credit. Changing any of those starts a fresh streak.
 Formatting, object-key order, and unrelated cases do not change the binding.
 The loaded definition is also the one executed; editing the manifest during a
 run cannot change its verification identity. Transport failures still record
 no verification evidence.
+
+This binds observed launch artifacts, not their complete dependency closure,
+environment variables, or the software and data behind an HTTP endpoint.
+Use an immutable deployment and controlled service state when those inputs matter.
+The native findings tools return an explicit unavailable-evidence error when the
+index is missing, corrupt, or incomplete. An empty valid index returns no findings.
 
 A tool result must be an object; null, arrays, and scalar results are malformed.
 A present non-boolean `isError` is also malformed; missing remains equivalent

@@ -49,7 +49,9 @@ copying empty prerequisite arrays when the server needs them:
 }
 ```
 
-`runtime` can also be `uvx`. Package versions must be exact; floating tags,
+`runtime` can also be `uvx`, or `native` for a locally prepared executable.
+Native targets require an explicit deployment tree and SHA-256 lock; they never
+fall back to a package runner. Package versions must be exact; floating tags,
 ranges, and URLs are refused. Supply credentials at execution time, never in
 labels or prerequisite names. Target arguments can contain sensitive inputs,
 so keep the target file private.

@@ -194,6 +194,32 @@ fn call(endpoint: &str, tool: &str, arguments: Value) -> (u16, Value) {
 }
 
 #[test]
+fn findings_queries_report_unavailable_evidence_without_private_diagnostics() {
+    let dir = home();
+    let (_server, port) = start_serve(&dir, &[]);
+    let endpoint = format!("http://127.0.0.1:{port}/mcp");
+    for database in [None, Some("PRIVATE corrupt database bytes"), Some("")] {
+        if let Some(bytes) = database {
+            std::fs::write(dir.join("index.db"), bytes).unwrap();
+        }
+        for (tool, arguments) in [
+            ("list_findings", json!({})),
+            ("get_finding", json!({"finding_id":"finding-unknown"})),
+        ] {
+            let (status, response) = call(&endpoint, tool, arguments);
+            assert_eq!(status, 200);
+            assert!(response.get("error").is_some(), "{response}");
+            assert_eq!(
+                response["error"]["message"],
+                "findings unavailable; run `mcpeval index` and `mcpeval promote` and retry"
+            );
+            assert!(!response.to_string().contains("PRIVATE"));
+            assert!(!response.to_string().contains(dir.to_str().unwrap()));
+        }
+    }
+}
+
+#[test]
 fn serve_exposes_findings_and_trends_over_streamable_http() {
     let dir = home();
     // Two full-battery runs record two trend points.
@@ -268,6 +294,15 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
         "{text}"
     );
 
+    mcpeval::index::build(&dir).unwrap();
+    mcpeval::promote::promote(
+        &dir,
+        mcpeval::promote::PromotionConfig {
+            threshold: 0.0,
+            now: chrono::Utc::now(),
+        },
+    )
+    .unwrap();
     let (_, findings) = call(&http, "list_findings", json!({}));
     let text = findings["result"]["content"][0]["text"].as_str().unwrap();
     assert!(text.contains("no findings"), "{text}");
@@ -489,6 +524,16 @@ fn promoted_finding(dir: &std::path::Path) -> String {
 #[test]
 fn queries_remain_responsive_and_overlapping_evaluations_are_refused() {
     let dir = home();
+    let _store = mcpeval::store::Store::open(Some(dir.clone())).unwrap();
+    mcpeval::index::build(&dir).unwrap();
+    mcpeval::promote::promote(
+        &dir,
+        mcpeval::promote::PromotionConfig {
+            threshold: 0.0,
+            now: chrono::Utc::now(),
+        },
+    )
+    .unwrap();
     let marker = dir.join("evaluation-started");
     let (_server, port) = start_serve(&dir, &["--allow-spawn"]);
     let http = format!("http://127.0.0.1:{port}/mcp");

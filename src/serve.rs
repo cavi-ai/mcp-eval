@@ -33,6 +33,8 @@ const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 
 const SPAWN_DISABLED: &str = "launches server processes and is disabled; restart `mcpeval serve` with --allow-spawn to enable it";
+const FINDINGS_UNAVAILABLE: &str =
+    "findings unavailable; run `mcpeval index` and `mcpeval promote` and retry";
 
 struct Server {
     root: PathBuf,
@@ -422,7 +424,8 @@ fn handle_call(message: &Value, server: &Server) -> anyhow::Result<Value> {
     match name {
         "list_findings" => {
             let state_filter = arguments.get("state").and_then(Value::as_str);
-            let findings = crate::report::load_findings(root).unwrap_or_default();
+            let findings = crate::report::load_findings(root)
+                .map_err(|_| anyhow::anyhow!(FINDINGS_UNAVAILABLE))?;
             let payload: Vec<Value> = findings
                 .iter()
                 .map(serde_json::to_value)
@@ -441,10 +444,8 @@ fn handle_call(message: &Value, server: &Server) -> anyhow::Result<Value> {
                 .get("finding_id")
                 .and_then(Value::as_str)
                 .context("get_finding requires finding_id")?;
-            let findings = match crate::report::load_findings(root) {
-                Ok(findings) => findings,
-                Err(_) => bail!("no such finding"),
-            };
+            let findings = crate::report::load_findings(root)
+                .map_err(|_| anyhow::anyhow!(FINDINGS_UNAVAILABLE))?;
             let payload: Vec<Value> = findings
                 .iter()
                 .map(serde_json::to_value)

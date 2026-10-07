@@ -114,6 +114,26 @@ It runs on full-battery `probe` runs and on `compare`; `--gate-only` skips it, a
 
 ## Calibration
 
+Readiness measures read-only structural behavior. It does not establish semantic
+correctness; use reviewed result assertions in manifest cases for that. Writer
+tools are excluded from the standard battery. Three repeated calls are a bounded
+consistency check, not an estimate of long-term availability. Unexercised tools
+remain visible in coverage and carry the reason they were not measured.
+
+New reports and trend points record a `measurement_profile`: evaluator version,
+platform, architecture, client capabilities, read-only attestation, sorted skip
+rules, call timeout, and repetition count. Diff and trend score deltas require
+the same standard and a known, matching profile. Older reports remain readable;
+their missing conditions are reported as unavailable rather than inferred.
+Target deployments and backing state must still be controlled by the operator.
+
+Index rebuilds stream journal records into a transaction with disk-backed scratch
+tables. Recent trends retain at most the requested count per server while scanning
+history. Both readers reject records larger than 4 MiB and tolerate an unfinished
+trailing record from an active writer. Index failures preserve the prior database.
+Rebuild and history-scan time still grow with the retained journal; there is no
+automatic pruning or incremental checkpointing.
+
 The shipped corpus is a historical `mcpeval-standard/1` snapshot. Its readiness scores are not compared with `mcpeval-standard/2`; catalog token comparisons remain available. Recollect under the current standard to produce a new readiness baseline. The placement example below belongs to a standard/1 report.
 
 The historical corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v2`)

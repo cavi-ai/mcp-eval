@@ -30,7 +30,7 @@ pub struct Verification {
     pub reason: Option<FailureReason>,
 }
 
-pub fn run(options: VerifyOptions, store: &mut Store) -> anyhow::Result<Verification> {
+pub fn run(mut options: VerifyOptions, store: &mut Store) -> anyhow::Result<Verification> {
     options.manifest.validate().map_err(crate::exit::usage)?;
     let selected = options
         .manifest
@@ -76,12 +76,16 @@ pub fn run(options: VerifyOptions, store: &mut Store) -> anyhow::Result<Verifica
             "false-success verification requires a result assertion or an expected error in an instruction-fidelity or workflow case"
         )));
     }
+    let identity = crate::target_identity::observe(&options.command)?;
+    if let Some(identity) = &identity {
+        identity.pin(&mut options.command);
+    }
     let definition_id = crate::lifecycle::definition_id(
         store.root(),
         &options.manifest,
         selected,
         serde_json::json!({"command": options.command, "url": options.http_url,
-            "allow_remote_http": options.allow_remote_http}),
+            "allow_remote_http": options.allow_remote_http, "launch_identity": identity}),
     )?;
     let run_id = uuid::Uuid::new_v4().to_string();
     let report = crate::probe::run(
@@ -92,7 +96,7 @@ pub fn run(options: VerifyOptions, store: &mut Store) -> anyhow::Result<Verifica
             selected_probe: None,
             selected_case: Some(options.case.clone()),
             allow_mutation: options.allow_mutation,
-            command: options.command,
+            command: options.command.clone(),
             http_url: options.http_url,
             allow_remote_http: options.allow_remote_http,
             standard: false,
@@ -101,6 +105,9 @@ pub fn run(options: VerifyOptions, store: &mut Store) -> anyhow::Result<Verifica
         },
         store,
     )?;
+    if let Some(identity) = &identity {
+        identity.unchanged(&options.command)?;
+    }
     let reason = report
         .cases
         .first()

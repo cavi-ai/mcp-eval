@@ -22,6 +22,15 @@ test("launches only an explicitly pinned package target", () => {
   assert.throws(() => commandFor({ ...target, version: "latest" }));
 });
 
+test("native targets require an immutable deployment rather than a package runner", () => {
+  const target = { server: "bobby", runtime: "native", package: "bobby-browser", version: "0.19.1", bin: "mcp-gateway", args: [],
+    deployment: { root: "/private/reference", executable: "mcp-gateway", sha256: "a".repeat(64) } };
+  assert.deepEqual(commandFor(target), ["/private/reference/mcp-gateway"]);
+  const { deployment, ...unlocked } = target;
+  assert.throws(() => commandFor(unlocked), /deployment/);
+  assert.throws(() => commandFor({ ...target, version: "latest" }));
+});
+
 test("out of range and fractional scores are not observations", () => {
   for (const score of [-1, 101, 20.5, "40", null]) {
     assert.equal(readinessScore({ readiness: { score } }), null);

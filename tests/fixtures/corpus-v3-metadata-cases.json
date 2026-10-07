@@ -32,5 +32,88 @@
     "name": "zero-observation candidate",
     "set": { "population": [{ "server": "fixture", "status": "untested", "reason": "missing-environment" }], "observations": [] },
     "remove": [], "valid": true, "calibratable": false
+  },
+  {
+    "name": "native deployment provenance",
+    "calibratable": true,
+    "set": {
+      "observations": [
+        {
+          "server": "fixture",
+          "score": 50,
+          "areas": {
+            "protocol": 50,
+            "catalog": 50,
+            "context": 50,
+            "error-honesty": 50,
+            "reliability": 50,
+            "coverage": 50
+          },
+          "tool_count": 1,
+          "catalog_tokens": 100,
+          "calls": {
+            "successful_calls": 0,
+            "tool_errors": 3,
+            "rpc_errors": 0,
+            "rejected_calls": 0,
+            "transport_errors": 0,
+            "untested_tools": 0
+          },
+          "provenance": {
+            "runtime": "native",
+            "package": "bobby-browser",
+            "version": "0.19.1",
+            "bin": "fixture-server",
+            "launch_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "report_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "prerequisites": [],
+            "deployment_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      ]
+    },
+    "remove": [],
+    "valid": true
+  },
+  {
+    "name": "native missing deployment provenance",
+    "calibratable": false,
+    "set": {
+      "observations": [
+        {
+          "server": "fixture",
+          "score": 50,
+          "areas": {
+            "protocol": 50,
+            "catalog": 50,
+            "context": 50,
+            "error-honesty": 50,
+            "reliability": 50,
+            "coverage": 50
+          },
+          "tool_count": 1,
+          "catalog_tokens": 100,
+          "calls": {
+            "successful_calls": 0,
+            "tool_errors": 3,
+            "rpc_errors": 0,
+            "rejected_calls": 0,
+            "transport_errors": 0,
+            "untested_tools": 0
+          },
+          "provenance": {
+            "runtime": "native",
+            "package": "bobby-browser",
+            "version": "0.19.1",
+            "bin": "fixture-server",
+            "launch_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "report_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "prerequisites": []
+          }
+        }
+      ]
+    },
+    "remove": [],
+    "valid": false
   }
 ]

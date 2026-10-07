@@ -55,7 +55,7 @@ fn render_probe_text(
             let reason = case.reason.expect("errored case has a reason");
             println!("{} {probe} error reason={}", case.id, reason.as_str());
             if !brief {
-                println!("  hint: {}", mcpeval::remediation::hint(reason));
+                println!("  hint: {}", case.hint().expect("errored case has a hint"));
             }
         } else {
             let reason = case.reason.expect("failed case has a reason");
@@ -73,7 +73,7 @@ fn render_probe_text(
                 reason.as_str()
             );
             if !brief {
-                println!("  hint: {}", mcpeval::remediation::hint(reason));
+                println!("  hint: {}", case.hint().expect("failed case has a hint"));
                 if let (mcpeval::probe::FailureReason::TokenBudgetExceeded, Some(usage)) =
                     (reason, &case.token_usage)
                 {
@@ -651,6 +651,11 @@ fn run() -> anyhow::Result<()> {
                 std::process::exit(mcpeval::exit::INFRASTRUCTURE);
             }
             let reason = verification.reason;
+            let hint = verification
+                .report
+                .cases
+                .first()
+                .and_then(|case| case.hint());
             let status = verification
                 .status
                 .context("verification produced no lifecycle outcome")?;
@@ -665,7 +670,11 @@ fn run() -> anyhow::Result<()> {
                 return Ok(());
             };
             println!("{line} reason={}", reason.as_str());
-            println!("  hint: {}", mcpeval::remediation::hint(reason));
+            println!(
+                "  hint: {}",
+                hint.as_deref()
+                    .unwrap_or_else(|| mcpeval::remediation::hint(reason))
+            );
             std::process::exit(mcpeval::exit::VERDICT);
         }
         cli::Command::Index => {

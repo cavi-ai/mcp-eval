@@ -2,8 +2,26 @@
 
 ## Unreleased
 
+## 0.5.0
+
 ### Added
 
+- Capability-aware `guidance` checks compare server instructions with tool
+  catalogs under five client profiles and identify references to tools that
+  are unavailable to the selected profile without exporting instruction prose.
+- Finding-based `generate` produces class-specific read-only regression cases.
+  Semantic findings require a reviewed `--expect` oracle instead of guessing
+  intended behavior from captured outcomes.
+- Bounded read-only `workflow` probes evaluate 2–32 ordered steps in one fresh
+  session, repeated 1–20 times, and stop at the first failed expectation.
+- Expectations support nested JSON Pointer assertions through
+  `required_result_paths` and `equals_paths`, alongside literal top-level keys.
+- Workflow failure guidance identifies the failed call across CLI, JSON,
+  Markdown, SARIF, and MCP results, and explains how to check state leakage
+  and verify the full sequence after a repair.
+- Corpus documentation covers pinned collection, replay, saved evidence checks,
+  and CI gating from a repository checkout. It distinguishes private target
+  and report artifacts from content-minimized capture journals.
 - Dedicated corpus evidence GitHub Action gates on offline integrity and replay
   verdicts, exposes fixed step outputs, and writes a summary without private
   report payloads, labels, or paths.
@@ -41,6 +59,7 @@
 
 ### Changed
 
+- Refresh JSON Schema validation, UUID, and public suffix dependencies.
 - Verification state and history live in a durable `lifecycle.db`, separate
   from the rebuildable index. Existing lifecycle rows are imported once;
   finding-ID migrations retain every historical verification.
@@ -65,6 +84,18 @@
 
 ### Fixed
 
+- Incomplete tool discovery cannot scaffold a manifest, produce readiness,
+  execute ordinary probe cases, or add verification credit. Failed later
+  pages and continuation beyond the 20-page limit are errors; pagination
+  probes remain available to diagnose the broken listing.
+- Active evaluation rejects non-object tool results and non-boolean `isError`
+  flags as transport errors, without inventing successful outcomes. Passive
+  capture retains unknown outcomes without exporting malformed payloads.
+- False-success verification requires a result assertion or expected error
+  in an instruction-fidelity case or workflow step. Success-only expectations
+  and unrelated probes cannot close semantic findings.
+- Annotated successful calls can promote false-success findings. Finding
+  identity and verification history remain distinct from ordinary error groups.
 - Corpus collection and replay reject missing, empty, or incorrectly typed
   source/platform metadata and non-string standards under the existing v3
   contract. Zero-observation candidates remain valid collection artifacts.

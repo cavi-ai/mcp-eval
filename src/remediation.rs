@@ -13,16 +13,17 @@ pub fn hint(reason: FailureReason) -> &'static str {
         FailureReason::UnexpectedOutcome => {
             "the call returned the opposite outcome of the expectation; check the \
              tool's contract — a read-only call must succeed for `outcome: ok` and \
-             must surface a structured JSON-RPC error for `outcome: error`"
+             must report an error through a JSON-RPC error or a tool result with \
+             `isError: true` for `outcome: error`"
         }
         FailureReason::MissingField => {
             "the response is missing a machine-readable field the manifest declared; \
-             return every field from `required_result_fields` as a top-level key of \
-             the structured result, not inside prose"
+             return `required_result_fields` at their literal top-level keys and \
+             `required_result_paths` at their declared JSON Pointer locations"
         }
         FailureReason::ValueMismatch => {
             "a result field returned a different value than declared; align the \
-             tool's actual output with the manifest's `equals` expectations or fix \
+             tool's actual output with the manifest's `equals` and `equals_paths` expectations or fix \
              the tool — do not loosen the expectation to make the gate green"
         }
         FailureReason::ErrorCodeMismatch => {

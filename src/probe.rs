@@ -636,6 +636,24 @@ impl CaseReport {
     pub fn errored(&self) -> bool {
         self.reason.is_some_and(|reason| reason.is_transport())
     }
+
+    /// Context-aware guidance shared by every output surface. Workflow call
+    /// numbers come from evaluated outcomes; payloads and assertion values do not.
+    pub fn hint(&self) -> Option<String> {
+        let reason = self.reason?;
+        let hint = crate::remediation::hint(reason);
+        if self.probe == ProbeKind::Workflow && !reason.is_transport() {
+            if let Some(call) = self.first_failure {
+                return Some(format!(
+                    "Workflow call {call}: {hint}. Locate this call using first_failure and the \
+                     manifest's ordered steps, then compare the same call in a fresh session. \
+                     If it only fails after earlier steps, investigate leaked state or incomplete \
+                     error recovery. Verify the repair with the full sequence."
+                ));
+            }
+        }
+        Some(hint.to_owned())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -849,7 +867,7 @@ impl ProbeReport {
                     "attempts": case.attempts,
                     "first_failure": case.first_failure,
                     "reason": case.reason.map(|reason| reason.as_str()),
-                    "hint": case.reason.map(crate::remediation::hint),
+                    "hint": case.hint(),
                     "detail": case.detail.map(|detail| serde_json::json!({
                         "bound": detail.bound,
                         "limit": detail.limit,

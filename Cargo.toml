@@ -1,6 +1,6 @@
 [package]
 name = "mcpeval"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["Sasan Sotoodehfar"]
 description = "Privacy-preserving MCP friction capture and evaluation"

@@ -557,8 +557,8 @@ fn run_probe_tool_call(root: &std::path::Path, arguments: &Value) -> anyhow::Res
 
 fn report_result(report: &crate::probe::ProbeReport, server: &str) -> Value {
     let document = report.to_json(server);
-    // The report document is the structured payload; the text block adds
-    // the remediation hints that the raw document does not carry.
+    // The report document is the structured payload; the text block repeats
+    // the same case guidance for clients that display only text content.
     let mut lines = Vec::new();
     for case in &report.cases {
         if let Some(reason) = case.reason {
@@ -566,7 +566,7 @@ fn report_result(report: &crate::probe::ProbeReport, server: &str) -> Value {
                 "{}: {} — {}",
                 case.id,
                 reason.as_str(),
-                crate::remediation::hint(reason)
+                case.hint().expect("failed case has a hint")
             ));
         }
     }
@@ -670,7 +670,12 @@ fn verify_finding_tool_call(root: &std::path::Path, arguments: &Value) -> anyhow
         Some(reason) => format!(
             "{text} reason={}\n  hint: {}",
             reason.as_str(),
-            crate::remediation::hint(reason)
+            verification
+                .report
+                .cases
+                .first()
+                .and_then(|case| case.hint())
+                .unwrap_or_else(|| crate::remediation::hint(reason).to_owned())
         ),
         None => text,
     };

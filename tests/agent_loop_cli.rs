@@ -206,6 +206,31 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
     assert_eq!(document["passed"], true);
     assert!(document["readiness"]["score"].as_u64().unwrap() >= 80);
 
+    // Workflow guidance must agree between MCP text and structured content.
+    let workflow_fixture =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/workflow_server.py");
+    let workflow = call(
+        &http,
+        "run_probe",
+        json!({
+            "manifest":{"version":1,"probes":[{"id":"state-check","probe":"workflow","access":"read_only",
+                "repetitions":1,"steps":[
+                    {"tool":"read_status","arguments":{},"expect":{"outcome":"ok"}},
+                    {"tool":"read_other","arguments":{},"expect":{"outcome":"ok"}},
+                    {"tool":"read_status","arguments":{},"expect":{"outcome":"ok","equals_paths":{"/structuredContent/status":"ready"}}}
+                ]}]},
+            "command":["python3",workflow_fixture.to_str().unwrap(),"poison"],"server_label":"fixture"
+        }),
+    );
+    let workflow_case = &workflow["result"]["structuredContent"]["cases"][0];
+    assert_eq!(workflow_case["reason"], "value-mismatch");
+    let hint = workflow_case["hint"].as_str().unwrap();
+    assert!(hint.contains("Workflow call 3"), "{hint}");
+    assert!(hint.contains("fresh session"), "{hint}");
+    let workflow_text = workflow["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(workflow_text.contains(hint), "{workflow_text}");
+    assert!(!serde_json::to_string(&workflow).unwrap().contains("CANARY"));
+
     // Step 3: a broken server yields a failing report whose text carries
     // the remediation hint.
     let failing = call(

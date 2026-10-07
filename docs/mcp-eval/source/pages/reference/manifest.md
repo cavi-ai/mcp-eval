@@ -102,6 +102,14 @@ The report's `tool` remains the first step's tool, so report comparisons and
 finding verification keep a stable identity. The failing step can be located
 from `first_failure` and the manifest without exporting arguments or values.
 
+Completed workflow failures include guidance keyed to that call number in
+text, JSON, Markdown, SARIF, and the MCP evaluation tools. Locate the call in
+the ordered steps and repetitions, then compare the same call in a fresh
+session. If it only fails after earlier steps, investigate state those steps
+left behind or incomplete error recovery. Keep the full sequence when
+verifying the repair; an isolated passing call does not establish recovery.
+Hints distinguish literal top-level assertions from JSON Pointer assertions.
+
 `access: read_only` attests that every declared step is read-only, including
 unannotated tools. A tool declaring `readOnlyHint: false` or
 `destructiveHint: true` refuses the entire workflow before any step runs,

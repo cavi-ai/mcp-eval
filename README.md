@@ -16,8 +16,11 @@ complementary tracks:
    act on. Findings close only after three consecutive green verification
    runs and reopen automatically on regression.
 
-Both tracks share one privacy boundary: raw payloads, error prose, and
-credentials never persist. Only `<MCPEVAL_HOME>/store/` is share-safe.
+Capture journals and probe summaries omit raw payloads, error prose, and
+credentials. Store records under `<MCPEVAL_HOME>/store/` are eligible for sharing
+after reviewing annotation notes and the remaining files. Manifests, corpus
+target files, and retained corpus evidence are private artifacts outside that
+boundary; see [Privacy and authorization](docs/mcp-eval/source/pages/security/privacy-and-authorization.md).
 
 Documentation: [cavi-ai.xyz/docs/mcp-eval](https://cavi-ai.xyz/docs/mcp-eval/).
 
@@ -246,8 +249,8 @@ rejected arguments, transport errors, and untested tools.
 The shipped corpus retains historical observations under `mcpeval-standard/1`.
 It is not a readiness baseline for `mcpeval-standard/2`; catalog token comparisons
 remain available. A newly collected corpus must name the standard that measured it.
-The corpus (`data/readiness-corpus.json`, refreshed by
-`scripts/corpus/collect.sh`) holds readiness scores under the standard, so
+The historical corpus (`data/readiness-corpus.json`) holds readiness scores
+under its recorded standard, so
 text and markdown reports place your score and your catalog among the
 observed servers — *"standard corpus (mcpeval-standard/1): above 26, tied 0,
 below 7 of 33 observed servers"* and *"catalog: 566 tokens over 12 tools,
@@ -260,7 +263,8 @@ the corpus is also published: how healthy are the MCP servers agents actually
 use? 33 popular public servers, scored by the same standard battery,
 distribution published with full method notes. Its missing historical package
 and evaluator provenance cannot be recovered. New collections require explicit
-package pins and declared prerequisites; see the [corpus harness](scripts/corpus/README.md).
+package pins and declared prerequisites; follow [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md)
+or the detailed [corpus harness reference](scripts/corpus/README.md).
 The v3 format records every target as observed, untested, or errored and keeps
 evaluator and report hashes. Historical v2 data remains readable, but the drift
 checker refuses to replay it as a pinned collection.

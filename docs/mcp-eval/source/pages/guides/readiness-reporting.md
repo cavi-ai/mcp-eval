@@ -116,7 +116,13 @@ It runs on full-battery `probe` runs and on `compare`; `--gate-only` skips it, a
 
 The shipped corpus is a historical `mcpeval-standard/1` snapshot. Its readiness scores are not compared with `mcpeval-standard/2`; catalog token comparisons remain available. Recollect under the current standard to produce a new readiness baseline. The placement example below belongs to a standard/1 report.
 
-The corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v2`, refreshed by `scripts/corpus/collect.sh`) holds the readiness and area scores of popular public servers under one named standard. Text and markdown reports from `probe` and `score` place your readiness among them when your report was scored under the same standard, counting ties explicitly, and place your catalog among the servers that recorded `catalog_tokens`; the median is the lower middle for an even count:
+The historical corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v2`)
+holds readiness and area scores under its recorded standard. New collection
+uses v3 with explicit pinned targets and retained provenance; see
+[Corpus collection and replay](corpus-replay.md). Text and markdown reports from
+`probe` and `score` place your readiness among observations of the same standard,
+counting ties explicitly, and place your catalog among servers that recorded
+`catalog_tokens`; the median is the lower middle for an even count:
 
 ```text
   standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers

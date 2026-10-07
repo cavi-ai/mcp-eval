@@ -77,6 +77,27 @@ fn explain_lists_reasons_and_prints_the_matching_hint() {
 }
 
 #[test]
+fn explanation_supports_nested_assertions_and_both_tool_error_channels() {
+    let dir = home();
+    for (reason, terms) in [
+        (
+            "missing-field",
+            ["required_result_fields", "required_result_paths"],
+        ),
+        ("value-mismatch", ["equals", "equals_paths"]),
+        ("unexpected-outcome", ["JSON-RPC", "isError: true"]),
+    ] {
+        let output = run(&dir, &["explain", reason]);
+        assert!(output.status.success());
+        let text = String::from_utf8(output.stdout).unwrap();
+        for term in terms {
+            assert!(text.contains(term), "{reason}: {text}");
+        }
+        assert!(!text.contains("Workflow call"));
+    }
+}
+
+#[test]
 fn text_output_carries_a_hint_that_brief_suppresses() {
     let dir = home();
     let manifest = dir.join("m.json");

@@ -40,7 +40,7 @@ pub fn render_sarif(server: &str, report: &ProbeReport, manifest: &ManifestSourc
         .iter()
         .filter_map(|case| {
             let reason = case.reason?;
-            let hint = crate::remediation::hint(reason);
+            let hint = case.hint().expect("failed case has a hint");
             let mut physical_location = serde_json::json!({
                 "artifactLocation": {"uri": manifest.uri},
             });

@@ -397,7 +397,7 @@ pub fn render_probe_markdown(
                 "- **`{}` (`{}`):** {}",
                 case.id,
                 reason.as_str(),
-                crate::remediation::hint(reason)
+                case.hint().expect("failed case has a hint")
             )
             .ok();
             if let (crate::probe::FailureReason::TokenBudgetExceeded, Some(usage)) =

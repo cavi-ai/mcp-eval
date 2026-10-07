@@ -142,6 +142,56 @@ fn workflow_fails_at_the_cross_tool_corruption_and_stops() {
 }
 
 #[test]
+fn workflow_remediation_identifies_the_failed_call_across_output_formats() {
+    let root = Temp::new();
+    let output = run(&root.0, workflow(), "poison", None);
+    let document = report(&output);
+    assert_eq!(document["cases"][0]["reason"], "value-mismatch");
+    let hint = document["cases"][0]["hint"].as_str().unwrap();
+    assert!(hint.contains("Workflow call 3"), "{hint}");
+    assert!(hint.contains("fresh session"), "{hint}");
+    assert!(hint.contains("equals_paths"), "{hint}");
+    let parsed = mcpeval::probe::ProbeReport::from_json_document(&document).unwrap();
+    assert_eq!(parsed.to_json("fixture")["cases"][0]["hint"], hint);
+    for format in ["text", "markdown", "sarif"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+            .args([
+                "probe",
+                "--server",
+                "fixture",
+                "--manifest",
+                root.0.join("manifest.json").to_str().unwrap(),
+                "--format",
+                format,
+                "--probe",
+                "workflow",
+                "--",
+                "python3",
+                fixture().to_str().unwrap(),
+                "poison",
+            ])
+            .env("MCPEVAL_HOME", &root.0)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let text = if format == "sarif" {
+            serde_json::from_str::<Value>(&stdout).unwrap()["runs"][0]["results"][0]["message"]
+                ["text"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        } else {
+            stdout.to_string()
+        };
+        assert!(text.contains(hint), "{format}: {text}");
+        assert!(!text.contains("CANARY"));
+    }
+    let clean = run(&root.0, workflow(), "clean", None);
+    assert_eq!(report(&clean)["cases"][0]["hint"], Value::Null);
+}
+
+#[test]
 fn workflow_checks_state_after_an_expected_error() {
     for (mode, code) in [("clean", 0), ("error-poison", 1)] {
         let root = Temp::new();
@@ -217,7 +267,12 @@ fn missing_paths_are_distinct_from_existing_null_values() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(report(&output)["cases"][0]["reason"], reason);
+        let document = report(&output);
+        assert_eq!(document["cases"][0]["reason"], reason);
+        assert!(document["cases"][0]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("Workflow call 1"));
         assert_eq!(calls(&root.0).len(), 1);
     }
 }
@@ -362,6 +417,10 @@ fn malformed_tool_results_receive_no_workflow_credit_over_stdio_or_http() {
             assert_eq!(document["gate"]["passed"], 0);
             assert_eq!(document["cases"][0]["reason"], "transport-error");
             assert_eq!(document["cases"][0]["first_failure"], Value::Null);
+            assert!(!document["cases"][0]["hint"]
+                .as_str()
+                .unwrap()
+                .contains("Workflow call"));
             assert_eq!(calls(&root.0).len(), 1);
             assert!(!String::from_utf8_lossy(&output.stdout).contains("CANARY"));
             assert!(!String::from_utf8_lossy(&output.stderr).contains("CANARY"));
@@ -597,4 +656,6 @@ fn workflow_verification_closes_only_after_complete_passes_and_reopens_on_a_mism
         .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&output.stdout).contains("open"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("Workflow call 3"));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("fresh session"));
 }

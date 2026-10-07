@@ -48,6 +48,15 @@ def respond(request, session):
                                         "nullable": None, "a/b": {"~state": "ready"}}}
         if mode == "malformed-error-flag":
             result["isError"] = "CANARY private flag"
+        malformed_results = {
+            "malformed-result-null": None,
+            "malformed-result-bool": True,
+            "malformed-result-number": 7,
+            "malformed-result-string": "CANARY private result",
+            "malformed-result-array": ["CANARY private result"],
+        }
+        if mode in malformed_results:
+            result = malformed_results[mode]
     else:
         result = {}
     return {"jsonrpc": "2.0", "id": request["id"], "result": result}

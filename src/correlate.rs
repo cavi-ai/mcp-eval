@@ -144,8 +144,8 @@ impl Correlator {
                     outcome: if is_error {
                         "error".into()
                     } else if tool_error.is_err() {
-                        // The proxy forwards the original response, but an
-                        // invalid discriminator must never become success evidence.
+                        // The proxy forwards the original response, but a
+                        // malformed tool result must never become success evidence.
                         "unknown".into()
                     } else {
                         "ok".into()

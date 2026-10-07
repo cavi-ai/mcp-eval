@@ -319,12 +319,14 @@ pub fn render_probe_markdown(
         writeln!(out, "**Gate:** {passed}/{total} cases passed\n").ok();
     }
     if let Some(corpus) = corpus {
-        if let Some(readiness) = report
+        if let Some(placement) = report
             .readiness
             .as_ref()
             .filter(|readiness| readiness.standard == corpus.standard)
+            .and_then(|readiness| {
+                corpus.placement_for(readiness.score, readiness.measurement_profile.as_ref())
+            })
         {
-            let placement = corpus.placement(readiness.score);
             writeln!(
                 out,
                 "*Standard corpus ({}): above {}, tied {}, below {} of {} observed servers.*\n",
@@ -332,7 +334,7 @@ pub fn render_probe_markdown(
                 placement.above,
                 placement.tied,
                 placement.below,
-                corpus.observations.len()
+                placement.above + placement.tied + placement.below
             )
             .ok();
         }

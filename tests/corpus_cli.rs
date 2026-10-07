@@ -26,10 +26,30 @@ fn provenance_corpus_places_only_observed_targets_and_rejects_inconsistent_popul
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains(
+    // Historical rows lacking measurement conditions remain readable, but
+    // cannot establish a comparable readiness percentile.
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("standard corpus"));
+    let mut valid: serde_json::Value = serde_json::from_str(fixture).unwrap();
+    let profile = mcpeval::measurement::MeasurementProfile::current(false, &[]);
+    valid["evaluator"]["version"] = profile.evaluator_version.clone().into();
+    valid["observations"][0]["measurement_profile"] = serde_json::to_value(&profile).unwrap();
+    std::fs::write(home.join("corpus.json"), valid.to_string()).unwrap();
+    let comparable = Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+        .args([
+            "score",
+            "--server",
+            "fixture",
+            "--",
+            "python3",
+            "tests/fixtures/probe_clean_server.py",
+        ])
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(comparable.status.success());
+    assert!(String::from_utf8_lossy(&comparable.stdout).contains(
         "standard corpus (mcpeval-standard/2): above 0, tied 0, below 1 of 1 observed servers"
     ));
-    let mut valid: serde_json::Value = serde_json::from_str(fixture).unwrap();
     valid["observations"][0]["provenance"]["deployment_sha256"] = "a".repeat(64).into();
     valid["population"][1]["status"] = "errored".into();
     valid["population"][1]["reason"] = "deployment-mismatch".into();
@@ -54,6 +74,8 @@ fn provenance_corpus_places_only_observed_targets_and_rejects_inconsistent_popul
         "state-duplicate",
         "state-prerequisite",
         "state-missing",
+        "profile-version",
+        "profile-skips",
     ] {
         let mut invalid = valid.clone();
         match mutation {
@@ -82,6 +104,14 @@ fn provenance_corpus_places_only_observed_targets_and_rejects_inconsistent_popul
             }
             "state-missing" => {
                 invalid["observations"][0]["provenance"]["state_checks"] = serde_json::json!([])
+            }
+            "profile-version" => {
+                invalid["observations"][0]["measurement_profile"]["evaluator_version"] =
+                    "1.2.3".into()
+            }
+            "profile-skips" => {
+                invalid["observations"][0]["measurement_profile"]["skip_tools"] =
+                    serde_json::json!(["z", "a"])
             }
             _ => unreachable!(),
         }

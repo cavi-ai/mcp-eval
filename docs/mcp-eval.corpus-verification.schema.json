@@ -41,7 +41,7 @@
         "reason": { "enum": ["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report", "deployment-mismatch", "state-check-failed", "state-mismatch"] },
         "expected": { "$ref": "#/$defs/nullableScore" }, "observed": { "$ref": "#/$defs/nullableScore" },
         "expected_report_sha256": { "$ref": "#/$defs/nullableDigest" }, "replay_report_sha256": { "$ref": "#/$defs/nullableDigest" },
-        "moved": { "type": "array", "items": { "type": "string", "pattern": "^(protocol|catalog|context|error-honesty|reliability|coverage) [0-9]{1,3}→([0-9]{1,3}|none)$" } },
+        "moved": { "type": "array", "items": { "type": "string", "pattern": "^(measurement-profile|(protocol|catalog|context|error-honesty|reliability|coverage) [0-9]{1,3}→([0-9]{1,3}|none))$" } },
         "drifted": { "type": "boolean" }
       },
       "allOf": [

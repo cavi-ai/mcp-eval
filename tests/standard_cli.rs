@@ -830,17 +830,18 @@ fn synthesized_arguments_reach_required_argument_tools() {
 }
 
 #[test]
-fn score_places_readiness_only_among_a_corpus_of_its_own_standard() {
+fn score_places_readiness_only_among_a_corpus_of_its_own_standard_and_profile() {
     let dir = home();
     let (_, document) = score(&dir, &[demo()]);
     let standard = document["readiness"]["standard"]
         .as_str()
         .unwrap()
         .to_owned();
+    let profile = &document["readiness"]["measurement_profile"];
     let corpus = |standard: &str| {
         format!(
             r#"{{"schema":"mcpeval.readiness-corpus/v2","source":"test","standard":"{standard}",
-                "observations":[{{"server":"a","score":40}},{{"server":"b","score":100}}]}}"#
+                "observations":[{{"server":"a","score":40,"measurement_profile":{profile}}},{{"server":"b","score":100,"measurement_profile":{profile}}}]}}"#
         )
     };
     let text = |dir: &Path| {

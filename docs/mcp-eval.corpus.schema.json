@@ -40,6 +40,7 @@
           },
           "tool_count": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
           "catalog_tokens": { "$ref": "#/$defs/count" },
+          "measurement_profile": { "$ref": "#/$defs/measurement-profile" },
           "calls": {
             "type": "object", "required": ["successful_calls", "tool_errors", "rpc_errors", "rejected_calls", "transport_errors", "untested_tools"],
             "properties": { "successful_calls": { "$ref": "#/$defs/count" }, "tool_errors": { "$ref": "#/$defs/count" }, "rpc_errors": { "$ref": "#/$defs/count" }, "rejected_calls": { "$ref": "#/$defs/count" }, "transport_errors": { "$ref": "#/$defs/count" }, "untested_tools": { "$ref": "#/$defs/count" } }
@@ -72,6 +73,19 @@
     }
   },
   "$defs": {
+    "measurement-profile": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "evaluator_version", "platform", "architecture", "client_capabilities", "attested_read_only", "skip_tools", "call_timeout_ms", "repeats"],
+      "properties": {
+        "schema": { "const": "mcpeval.measurement-profile/v1" },
+        "evaluator_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$", "maxLength": 64 },
+        "platform": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,63}$" },
+        "architecture": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,63}$" },
+        "client_capabilities": { "const": "none" }, "attested_read_only": { "type": "boolean" },
+        "skip_tools": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Za-z0-9_.:-]{1,128}$" } },
+        "call_timeout_ms": { "const": 15000 }, "repeats": { "const": 3 }
+      }
+    },
     "server": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_.:-]{0,127}$" },
     "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "count": { "type": "integer", "minimum": 0, "maximum": 9007199254740991 },

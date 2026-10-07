@@ -43,6 +43,9 @@ pub struct Observation {
     /// The server's catalog token estimate, when recorded.
     #[serde(default)]
     pub catalog_tokens: Option<u64>,
+    /// Historical rows remain readable without inventing their conditions.
+    #[serde(default)]
+    pub measurement_profile: Option<crate::measurement::MeasurementProfile>,
 }
 
 /// Where a score sits among all observations: observed servers it scores
@@ -95,6 +98,9 @@ impl Corpus {
         }
         let mut servers = HashSet::new();
         for observation in &self.observations {
+            if let Some(profile) = &observation.measurement_profile {
+                profile.validate()?;
+            }
             if !crate::privacy::valid_server(&observation.server)
                 || !servers.insert(&observation.server)
                 || observation.score > 100
@@ -118,6 +124,29 @@ impl Corpus {
             tied: scores.clone().filter(|&observed| observed == score).count(),
             below: scores.filter(|&observed| observed > score).count(),
         }
+    }
+
+    /// Empirical readiness comparisons require known, identical conditions.
+    pub fn placement_for(
+        &self,
+        score: u64,
+        profile: Option<&crate::measurement::MeasurementProfile>,
+    ) -> Option<Placement> {
+        let profile = profile?;
+        let scores: Vec<_> = self
+            .observations
+            .iter()
+            .filter(|row| row.measurement_profile.as_ref() == Some(profile))
+            .map(|row| row.score)
+            .collect();
+        if scores.is_empty() {
+            return None;
+        }
+        Some(Placement {
+            above: scores.iter().filter(|&&value| value < score).count(),
+            tied: scores.iter().filter(|&&value| value == score).count(),
+            below: scores.iter().filter(|&&value| value > score).count(),
+        })
     }
 
     /// `None` when no observation recorded a catalog estimate.
@@ -167,6 +196,14 @@ fn validate_provenance(document: &serde_json::Value) -> anyhow::Result<()> {
     let observations = document["observations"]
         .as_array()
         .expect("validated observations");
+    for observation in observations {
+        if let Some(profile) = observation.get("measurement_profile") {
+            anyhow::ensure!(
+                profile["evaluator_version"] == document["evaluator"]["version"],
+                "corpus measurement evaluator mismatch"
+            );
+        }
+    }
     if observed.len() != observations.len() {
         anyhow::bail!("corpus population and observations disagree");
     }
@@ -249,9 +286,31 @@ mod tests {
                     areas: BTreeMap::new(),
                     tool_count: None,
                     catalog_tokens: None,
+                    measurement_profile: None,
                 })
                 .collect(),
         }
+    }
+
+    #[test]
+    fn readiness_placement_excludes_unknown_and_different_profiles() {
+        let mut corpus = corpus(&[10, 50, 90]);
+        let profile = crate::measurement::MeasurementProfile::current(false, &[]);
+        corpus.observations[0].measurement_profile = Some(profile.clone());
+        corpus.observations[1].measurement_profile =
+            Some(crate::measurement::MeasurementProfile::current(true, &[]));
+        assert_eq!(corpus.placement_for(20, None), None);
+        assert_eq!(
+            corpus.placement_for(20, Some(&profile)),
+            Some(Placement {
+                above: 1,
+                tied: 0,
+                below: 0
+            })
+        );
+        let mut changed = profile;
+        changed.skip_tools.push("read_other".into());
+        assert_eq!(corpus.placement_for(20, Some(&changed)), None);
     }
 
     fn parse(document: &str) -> anyhow::Result<Corpus> {

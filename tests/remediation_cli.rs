@@ -232,15 +232,20 @@ fn calibration_context_appears_when_the_corpus_resolves() {
 
     // A home corpus overrides the repository default; its catalog
     // measurements drive the catalog line.
+    let profile = serde_json::to_string(&mcpeval::measurement::MeasurementProfile::current(
+        false,
+        &[],
+    ))
+    .unwrap();
     std::fs::write(
         dir.join("corpus.json"),
         format!(
             r#"{{"schema":"mcpeval.readiness-corpus/v2","source":"test corpus","standard":"{standard}",
             "observations":[
-                {{"server":"a","score":100,"tool_count":3,"catalog_tokens":1}},
-                {{"server":"b","score":100,"tool_count":90,"catalog_tokens":1000000}},
-                {{"server":"c","score":50,"tool_count":200,"catalog_tokens":2000000}},
-                {{"server":"d","score":25}}
+                {{"server":"a","score":100,"tool_count":3,"catalog_tokens":1,"measurement_profile":{profile}}},
+                {{"server":"b","score":100,"tool_count":90,"catalog_tokens":1000000,"measurement_profile":{profile}}},
+                {{"server":"c","score":50,"tool_count":200,"catalog_tokens":2000000,"measurement_profile":{profile}}},
+                {{"server":"d","score":25,"measurement_profile":{profile}}}
         ]}}"#
         ),
     )

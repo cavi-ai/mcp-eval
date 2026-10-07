@@ -91,11 +91,11 @@ reports, and replay evidence privately:
 ```sh
 cargo build --release --locked --bins
 node scripts/corpus/collect.mjs --targets /private/targets.json \
-  --out /private/corpus.json
+  --out /private/corpus.json --require-deployments
 # Use the original report directory printed by collection.
 node scripts/corpus/verify.mjs --corpus /private/corpus.json \
   --targets /private/targets.json --reports /private/original-reports \
-  --out /private/replay-evidence --json
+  --out /private/replay-evidence --require-deployments --json
 node scripts/corpus/check-evidence.mjs --corpus /private/corpus.json \
   --targets /private/targets.json --reports /private/original-reports \
   --evidence /private/replay-evidence
@@ -104,8 +104,10 @@ node scripts/corpus/check-evidence.mjs --corpus /private/corpus.json \
 A moved score requires investigation: deployment dependencies, service state,
 and execution conditions can change too. Do not infer the cause from a score
 delta. A small reference set is not a representative calibration population;
-collection defaults to at least ten observed targets. Review measurements and
-their provenance before any deliberate publication. Never commit private
+collection defaults to at least ten observed targets. This is a size check,
+not evidence of representativeness. Review the target population, exclusions,
+measurement profiles, and provenance before accepting a calibration baseline
+or deliberately publishing it. Never commit private
 target files, raw reports, or retained replay evidence. See
 [corpus collection and replay](scripts/corpus/README.md).
 

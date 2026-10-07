@@ -18,6 +18,13 @@ Create a private target file with schema `mcpeval.corpus-targets/v1`, a
 - `package`, `version`, and `bin`: package name, an exact version, and its
   actual executable name. Versions cannot be tags, ranges, URLs, or wildcards.
 - `args`: an explicit array, including `[]` when no arguments are needed.
+- Optional `assessment`: `{ "attest_read_only": true, "skip_tools": [] }`
+  declares the existing evaluator policy. Both fields are required when this
+  object is present. Omission uses annotation-only calling with no skips.
+  Attest only after reviewing every unannotated tool in the pinned deployment;
+  exclude any unannotated writer using `skip_tools`. Tools annotated as writers
+  remain forbidden even with attestation. Never add an attestation merely to
+  increase a score or convert an untested target into an observation.
 - `prerequisites.environment`: required environment-variable names, including
   `[]` when none are needed. Values must be supplied at execution time.
 - `prerequisites.checks`: named health-check commands, each with `name` and a
@@ -58,6 +65,14 @@ An optional `deployment` replaces the package runner with a prepared local
 bundle. Include the installed dependencies and a native runtime executable in
 one directory; prepare and validate it separately using the package ecosystem's
 lock file. The collector does not install or resolve packages for this mode.
+
+For release calibration, pass `--require-deployments` to collection and replay.
+It refuses an unresolved package runner before executing an evaluator or
+service. Resolve compatible dependencies during preparation, retain the exact
+lock file and installed runtime/dependency tree in the bundle, and use the
+ecosystem's locked installation mode. A top-level package version alone cannot
+prevent an incompatible transitive SDK upgrade. Ordinary package-runner
+collection remains available for diagnostics, with its weaker identity limits.
 
 ```sh
 node scripts/corpus/deployment.mjs --root /absolute/private/deployment
@@ -102,9 +117,9 @@ launch hash as a credential protection mechanism.
 ```sh
 cargo build --release --locked --bins
 scripts/corpus/collect.sh --targets /absolute/private/targets.json \
-  --out /absolute/private/corpus.json
+  --out /absolute/private/corpus.json --require-deployments
 node scripts/corpus/verify.mjs --corpus /absolute/private/corpus.json \
-  --targets /absolute/private/targets.json \
+  --targets /absolute/private/targets.json --require-deployments \
   --reports /absolute/private/corpus.json.reports-UUID --json
 ```
 
@@ -121,6 +136,16 @@ missing or discarded replay reports have a null replay digest.
 comparison tolerance. It means replay agreement, not server health: replay can
 reproduce a consistently failing server. Equal raw-report digests are not a
 pass requirement; timings and other measurements may differ within the policy.
+New observations retain the measurement profile from the original report.
+Collection checks its attestation and skip policy against the target declaration;
+replay also requires agreement with the original profile. Old v3 artifacts stay
+readable without inventing missing profiles. Readiness percentile comparisons
+use only observations with the report's exact known measurement profile;
+unknown profiles and different policies provide no readiness comparison.
+The minimum observation count is a size check, not a representativeness claim.
+Review the chosen population and all exclusions before accepting a candidate
+as a calibration baseline; replay agreement alone does not establish health
+or semantic correctness.
 Exit status is zero for a passing replay and one otherwise. Invalid input or
 original-artifact provenance aborts before replay, emits an error on stderr,
 and produces no verification artifact.

@@ -190,6 +190,12 @@ impl HttpMcpClient {
         crate::mcp_client::page_catalog(|params| self.request("tools/list", params))
     }
 
+    pub(crate) fn discover_tools_catalog(
+        &mut self,
+    ) -> anyhow::Result<crate::mcp_client::CatalogDiscovery> {
+        crate::mcp_client::discover_catalog(|params| self.request("tools/list", params))
+    }
+
     pub fn call_tool(&mut self, tool: &str, arguments: &Value) -> anyhow::Result<ToolResponse> {
         let response = self.request("tools/call", json!({"name": tool, "arguments": arguments}))?;
         crate::mcp_client::classify_tool_response(&response)

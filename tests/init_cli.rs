@@ -484,7 +484,8 @@ fn the_quickstart_init_manifest_fails_each_broken_demo_with_its_reason() {
     assert_eq!(clean["gate"]["passed"], clean["gate"]["total"], "{clean}");
 
     let (code, stalled) = probe_json(&home, &path, &[], &[demo(), "--broken", "stalled-cursor"]);
-    assert_eq!(code, Some(1), "{stalled}");
+    assert_eq!(code, Some(3), "{stalled}");
+    assert_eq!(stalled["gate"]["passed"], 0, "{stalled}");
     assert_eq!(
         reason(&stalled, "catalog-pagination"),
         "pagination-stalled-cursor"

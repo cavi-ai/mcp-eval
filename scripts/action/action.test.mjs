@@ -324,12 +324,20 @@ test("run passes a clean server and writes outputs and the job summary", { skip:
   assert.match(markdown, /^## mcp-eval report — demo$/mu);
 });
 
-test("run fails a broken server with the probe's exit code", { skip: needsBuild }, async () => {
+test("run preserves incomplete-discovery errors and reports no readiness", { skip: needsBuild }, async () => {
   const workspace = await actionWorkspace();
   const result = await runAction(workspace, { server: "demo", command: "mcpeval-demo --broken stalled-cursor" });
-  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.status, 3, result.stderr);
   assert.equal(result.outputs.passed, "false");
-  assert.equal(result.outputs["exit-code"], "1");
+  assert.equal(result.outputs["exit-code"], "3");
+  const report = JSON.parse(await readFile(path.join(workspace.directory, result.outputs.report), "utf8"));
+  assert.equal(report.readiness, null);
+  assert.equal(report.readiness_error, "transport-error");
+  const blocked = report.cases.filter((entry) => entry.probe !== "pagination");
+  assert.ok(blocked.length > 0);
+  assert.ok(blocked.every(
+    (entry) => entry.reason === "transport-error" && entry.attempts === 0,
+  ));
   assert.match(result.summary, /pagination-stalled-cursor/u);
 });
 
@@ -377,7 +385,7 @@ test("run reports a probe that could not start without a summary", { skip: needs
   assert.equal(result.summary, "");
 });
 
-test("run gates on a baseline and fails with the diff when only the diff fires", { skip: needsBuild }, async () => {
+test("run preserves the probe error when the baseline diff also fails", { skip: needsBuild }, async () => {
   const workspace = await actionWorkspace();
   const baseline = await runAction(workspace, { server: "demo", command: "mcpeval-demo", "report-path": "reports/baseline.json" });
   assert.equal(baseline.status, 0, baseline.stderr);
@@ -388,7 +396,8 @@ test("run gates on a baseline and fails with the diff when only the diff fires",
     command: "mcpeval-demo --broken stalled-cursor",
     baseline: "reports/baseline.json",
   });
-  assert.equal(regressed.status, 1, regressed.stderr);
+  assert.equal(regressed.status, 3, regressed.stderr);
+  assert.equal(regressed.outputs["exit-code"], "3");
   assert.equal(regressed.outputs["diff-exit-code"], "1");
   assert.match(regressed.summary, /^## mcp-eval baseline diff$/mu);
   assert.match(regressed.summary, /\*\*regressed\*\* \(`pagination-stalled-cursor`\)/u);
@@ -408,11 +417,13 @@ test("run gates on a baseline and fails with the diff when only the diff fires",
 test("run renders SARIF located at the manifest when sarif is true", { skip: needsBuild }, async () => {
   const workspace = await actionWorkspace();
   const result = await runAction(workspace, { server: "demo", command: "mcpeval-demo --broken stalled-cursor", sarif: "true" });
-  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.status, 3, result.stderr);
   assert.equal(result.outputs.sarif, "mcpeval.sarif");
   const sarif = JSON.parse(await readFile(path.join(workspace.directory, result.outputs.sarif), "utf8"));
   assert.ok(sarif.runs[0].results.length > 0);
-  assert.equal(sarif.runs[0].results[0].locations[0].physicalLocation.artifactLocation.uri, "mcp-eval.manifest.json");
+  const pagination = sarif.runs[0].results.find((entry) => entry.ruleId === "pagination");
+  assert.ok(pagination);
+  assert.equal(pagination.locations[0].physicalLocation.artifactLocation.uri, "mcp-eval.manifest.json");
 });
 
 test("run forwards url, mutation, and fail-on-change flags", async () => {

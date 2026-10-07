@@ -29,6 +29,22 @@ def respond(request, session):
                             "inputSchema": {"type": "object"},
                             "annotations": {"readOnlyHint": not (mode == "writer" and name == "read_other")}}
                            for name in ["read_status", "read_other", "invalid_read"]]}
+        if mode.startswith("catalog-"):
+            cursor = request.get("params", {}).get("cursor")
+            emit({"method": method, "cursor": cursor})
+            if cursor is None:
+                result = {"tools": result["tools"][:1], "nextCursor": "CANARY private cursor"}
+            elif mode == "catalog-error":
+                return {"jsonrpc": "2.0", "id": request["id"], "error": {
+                    "code": -32603, "message": "CANARY private catalog error"}}
+            elif mode == "catalog-invalid-page":
+                result = {"tools": "CANARY private page"}
+            elif mode == "catalog-invalid-entry":
+                result = {"tools": [{"name": "read_other", "description": "CANARY private entry"}]}
+            elif mode == "catalog-stalled":
+                result = {"tools": [], "nextCursor": "CANARY private cursor"}
+            else:
+                result = {"tools": result["tools"][1:]}
     elif method == "tools/call":
         name = request["params"]["name"]
         emit({"method": method, "session": session, "tool": name})

@@ -144,6 +144,13 @@ impl ProbeClient {
         }
     }
 
+    fn discover_tools_catalog(&mut self) -> anyhow::Result<crate::mcp_client::CatalogDiscovery> {
+        match self {
+            Self::Stdio(client) => client.discover_tools_catalog(),
+            Self::Http(client) => client.discover_tools_catalog(),
+        }
+    }
+
     fn call_tool(
         &mut self,
         tool: &str,
@@ -877,8 +884,16 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     let timeout = manifest.timeout_ms.map(Duration::from_millis);
     let mut client = target.connect(timeout)?;
     client.initialize()?;
-    let catalog = client.list_tools_catalog()?;
+    let discovery = client.discover_tools_catalog()?;
+    let catalog = discovery.catalog;
+    let discovery_error = discovery.incomplete.as_ref().map(transport_reason);
+    if let Some(error) = discovery.incomplete.as_ref() {
+        let _ = writeln!(std::io::stderr(), "listing tools failed: {error:#}");
+    }
     for case in &cases {
+        if discovery_error.is_some() {
+            continue;
+        }
         validate_workflow_tools(case, &catalog).map_err(crate::exit::usage)?;
         if case
             .required_tools()
@@ -912,6 +927,12 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     // with the same reason.
     let mut unreachable = None;
     for case in cases {
+        if let Some(reason) = discovery_error {
+            if case.kind() != ProbeKind::Pagination {
+                reports.push(errored_case(case, reason));
+                continue;
+            }
+        }
         if let Some(reason) = unreachable {
             reports.push(errored_case(case, reason));
             continue;

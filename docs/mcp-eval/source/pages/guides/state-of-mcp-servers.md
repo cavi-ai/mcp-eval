@@ -1,6 +1,10 @@
 # State of MCP servers
 
-How healthy are the MCP servers that agents actually use? This page is produced by scoring popular public servers with mcpeval's read-only standard battery (`mcpeval score`, readiness standard `mcpeval-standard/1`) and publishing the raw distribution. No self-reported scores, no vendor claim: every number here comes from the battery and is reproducible by anyone with the CLI.
+This page retains historical observations of popular public servers scored
+with mcpeval's read-only standard battery (`mcpeval score`, readiness standard
+`mcpeval-standard/1`). The snapshot lacks original package, evaluator, and
+report-artifact provenance, so today's CLI cannot replay it as an exact
+collection.
 
 These are historical observations under `mcpeval-standard/1`. Current scoring uses `mcpeval-standard/2`, which corrects success credit and output-schema validation. These scores are retained under their original standard and are not used for current readiness comparisons.
 
@@ -67,13 +71,19 @@ These are historical observations under `mcpeval-standard/1`. Current scoring us
 
 ## Collect a current corpus
 
-Collect new observations under the current evaluator standard. The historical scores above require the earlier evaluator and corresponding server artifacts:
+Collect new observations under the current evaluator standard from a reviewed
+repository checkout. Declare pinned targets in a private file and select a new
+private output path; this does not replace or reconstruct the historical
+snapshot:
 
 ```sh
-cargo build --release
-scripts/corpus/collect.sh          # rebuilds data/readiness-corpus.json
-mcpeval score --server your-server -- your-mcp-server --flags
+cargo build --release --locked --bins
+scripts/corpus/collect.sh --targets /absolute/private/targets.json \
+  --out /absolute/private/corpus.json
 ```
+
+Follow [Corpus collection and replay](corpus-replay.md) for prerequisites,
+minimum observation counts, saved evidence, offline checks, and CI consumption.
 
 Text and markdown reports place a readiness score among these servers when it was scored under the same standard. This is a historical standard/1 placement example; standard/2 reports do not place readiness against this snapshot:
 

@@ -41,6 +41,49 @@ With `baseline: mcp-eval.baseline.json`, the action runs `mcpeval diff --fail-on
 
 `baseline` and `sarif` need `mcpeval` 0.3.0 or later (`diff` and `report --manifest`); the action's pinned release has both. A `version` input older than 0.3.0 fails fast with a usage error naming the installed version.
 
+## Saved corpus evidence
+
+The separate corpus evidence action gates on an existing replay bundle using
+the offline checker. Prepare the corpus, targets, original reports, and replay
+bundle on the runner through your private storage policy, then pin the action
+to a reviewed commit containing it:
+
+```yaml
+- name: Check corpus replay evidence
+  id: corpus
+  uses: cavi-ai/mcp-eval/actions/corpus-evidence@<reviewed-commit-sha>
+  with:
+    evidence: private/replay-evidence
+    corpus: private/corpus.json
+    targets: private/targets.json
+    reports: private/original-reports
+```
+
+Replace the commit placeholder before use. Relative input paths resolve from
+the calling workspace; all four inputs are required. With a local checkout of
+this repository, use `./actions/corpus-evidence`. The action uses GitHub's Node
+24 runtime and does not install an evaluator or launch servers, package runners,
+health checks, or state adapters.
+
+| Output | Meaning |
+| --- | --- |
+| `evidence-valid` | `true` when offline consistency checks pass. |
+| `passed` | `true` only for intact passing replay evidence. |
+| `exit-code` | `0` for intact passing evidence, `1` for intact failed evidence, `2` for invalid/incomplete evidence or reporting failure. |
+| `observations` | Original observed-target count; empty for invalid evidence. |
+| `population` | Original target-population count; empty for invalid evidence. |
+
+Failed or invalid evidence fails the step. Reporting errors also fail it and
+can leave outputs unavailable. If using `continue-on-error` to inspect outputs,
+keep an explicit downstream failure gate and treat missing outputs as failure.
+A pass means replay agreement, not server health or author authentication.
+
+The action's diagnostics and summary contain fixed messages, counts, and
+verdicts; it does not upload reports. GitHub can log supplied inputs independently,
+so use secrets for sensitive paths and private storage with appropriate access
+controls. Do not upload raw evidence to public workflow artifacts. Follow
+[Corpus collection and replay](corpus-replay.md) to prepare and retain the files.
+
 ## Committed baselines
 
 The JSON report is deterministic, so it can be committed and diffed:

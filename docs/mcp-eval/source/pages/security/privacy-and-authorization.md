@@ -1,16 +1,45 @@
 # Privacy and authorization
 
-MCP Eval is read-only by default and has no raw-payload mode. It stores structured call metadata and shaped arguments, not raw response bodies. Human error text is reduced to the constant `{message}` plus a salted template identifier; the original message is not stored.
+MCP Eval is read-only by default. Capture journals store structured call metadata
+and shaped arguments, not raw response bodies. Human error text is reduced to
+the constant `{message}` plus a salted template identifier; the original message
+is not stored in the journal.
 
 Server labels, methods, tool names, keys, enum values, numeric and boolean values, and registrable domains are retained only within their documented bounded grammars. Other hosts and string values are reduced to privacy-safe categories or length buckets. Server stderr passes through to the client and is not journaled.
 
-Probe records are tagged `synthetic` and use the same persistence boundary. Raw manifest arguments, response bodies, tool descriptions, sandbox descriptions, and raw errors are not stored or printed in summaries. Manifest files can still contain sensitive operational inputs and are outside the share-safe boundary.
+Probe records are tagged `synthetic` and use the same journal boundary. Raw
+manifest arguments, response bodies, tool descriptions, sandbox descriptions,
+and raw errors are not stored in probe records or printed in summaries.
+Manifest files can still contain sensitive operational inputs and are outside
+the share-safe boundary.
 
 Capture records under `<MCPEVAL_HOME>/store/` are content-minimized, but annotation notes are deliberate free-form user prose and are not automatically redacted. Before sharing any store records, you must manually review or remove every annotation note and inspect the remaining files. The fingerprint salt lives at `<MCPEVAL_HOME>/.salt`, outside `store/`, and must never accompany shared records. Do not share the entire capture root.
 
 Mutation requires two independent controls: the manifest case uses `"access": "mutating"` and names a declared sandbox, and the operator passes `--allow-mutation`. A missing or invalid manifest, undeclared sandbox, or missing flag never authorizes mutation. `generate --confirm-read-only` attests that an eligible tool is read-only and does not authorize mutation.
 
 HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS plus `--allow-remote-http`. Optional authorization is read from `MCPEVAL_HTTP_AUTHORIZATION`, validated, used in memory, and never persisted or printed. The HTTP proxy may relay an incoming `Authorization` value in memory, but it does not originate calls or grant mutation permission. `mcpeval serve` refuses requests without a loopback `Host`, with a non-loopback `Origin`, or without `Content-Type: application/json`, and lists its process-launching tools (`run_probe`, `scaffold`, `score`, `verify_finding`) only with `--allow-spawn`. `mcpeval shim-http` applies the same `Host` and `Origin` checks to every request and the `Content-Type` check to every POST before forwarding anything upstream.
+
+## Private corpus artifacts
+
+Corpus collection and replay retain original and replay report bytes in
+operator-selected directories, separately from the capture journal. Target
+files can contain operational arguments and private paths, and retained reports
+or extension metadata can contain sensitive content. The corpus, target file,
+original reports, and replay bundle require private storage and manual review;
+they are not part of the `mcpeval share` envelope or automatically redacted.
+
+Use a private parent with appropriate permissions or ACLs. Replay reserves a
+new evidence directory; on POSIX it creates owner-only directories and files.
+On Windows, permissions depend on the parent's ACLs. Do not commit raw evidence
+or place it in public workflow artifacts. Hashes bind bytes but do not redact
+low-entropy secrets, authenticate authors, or freeze changing files or services.
+
+Offline checking and the corpus evidence action do not launch servers or require
+their credentials. The action emits only fixed messages, counts, and verdicts
+and uploads no reports. GitHub can log workflow inputs independently; use
+secrets for sensitive paths and control runner and storage access. See
+[Corpus collection and replay](../guides/corpus-replay.md) for the workflow and
+[CI consumption](../guides/continuous-integration.md#saved-corpus-evidence).
 
 ## Evaluation resource limits
 

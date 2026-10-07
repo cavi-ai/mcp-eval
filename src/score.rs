@@ -362,6 +362,7 @@ pub struct Readiness {
     pub attested_read_only: bool,
     pub surface: Surface,
     pub areas: Vec<AreaScore>,
+    pub measurement_profile: Option<crate::measurement::MeasurementProfile>,
 }
 
 /// Fold the standard battery's observations into readiness. Every area in
@@ -389,6 +390,7 @@ pub fn fold(observations: &Observations) -> Readiness {
         attested_read_only: observations.attested_read_only,
         surface: Surface::of(&observations.tools),
         areas,
+        measurement_profile: None,
     }
 }
 
@@ -843,7 +845,7 @@ impl Readiness {
     }
 
     pub fn to_json(&self) -> Value {
-        json!({
+        let mut document = json!({
             "standard": self.standard,
             "score": self.score,
             "badge": badge_url(self.score),
@@ -868,7 +870,18 @@ impl Readiness {
                     "hint": crate::remediation::check_hint(check.reason),
                 })).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
-        })
+        });
+        if let Some(profile) = &self.measurement_profile {
+            document["measurement_profile"] = json!(profile);
+        }
+        document["assessment"] = json!({
+            "scope": "read-only-structural",
+            "semantic_correctness": "requires-reviewed-oracle",
+            "tools_exercised": self.surface.exercised,
+            "read_only_tools": self.surface.read_only,
+            "writer_tools_excluded": self.surface.writers,
+        });
+        document
     }
 
     /// Parse the `readiness` object of an `mcpeval.probe-report/v2`
@@ -950,6 +963,23 @@ impl Readiness {
                 exercised: count(surface, "exercised")?,
             },
             areas,
+            measurement_profile: value
+                .get("measurement_profile")
+                .map(|profile| -> anyhow::Result<_> {
+                    let profile: crate::measurement::MeasurementProfile =
+                        serde_json::from_value(profile.clone())?;
+                    profile.validate()?;
+                    anyhow::ensure!(
+                        profile.attested_read_only
+                            == value
+                                .get("attested_read_only")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false),
+                        "inconsistent read-only attestation"
+                    );
+                    Ok(profile)
+                })
+                .transpose()?,
         })
     }
 }
@@ -1597,6 +1627,36 @@ mod tests {
         let mut unknown = document;
         unknown["areas"][4]["checks"][0]["reason"] = "vibes".into();
         assert!(Readiness::from_json(&unknown).is_err());
+    }
+
+    #[test]
+    fn measurement_profile_round_trips_without_inventing_legacy_conditions() {
+        let mut readiness = fold(&clean_demo());
+        assert!(Readiness::from_json(&readiness.to_json())
+            .unwrap()
+            .measurement_profile
+            .is_none());
+        readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
+            readiness.attested_read_only,
+            &[],
+        ));
+        let document = readiness.to_json();
+        assert_eq!(Readiness::from_json(&document).unwrap(), readiness);
+        assert_eq!(
+            document["assessment"]["semantic_correctness"],
+            "requires-reviewed-oracle"
+        );
+        for (field, invalid) in [
+            ("evaluator_version", json!("private-path")),
+            ("schema", json!("unknown")),
+            ("attested_read_only", json!(!readiness.attested_read_only)),
+            ("skip_tools", json!(["z", "a"])),
+            ("repeats", json!(0)),
+        ] {
+            let mut malformed = document.clone();
+            malformed["measurement_profile"][field] = invalid;
+            assert!(Readiness::from_json(&malformed).is_err(), "{field}");
+        }
     }
 
     #[test]

@@ -201,7 +201,12 @@ impl Outcome {
 /// Run the standard battery against `target` and fold it into readiness.
 pub(crate) fn run(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<Readiness> {
     let observations = observe(target, options);
-    Ok(crate::score::fold(&target.budget.finish(observations)?))
+    let mut readiness = crate::score::fold(&target.budget.finish(observations)?);
+    readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
+        options.confirm_read_only,
+        &options.skip_tools,
+    ));
+    Ok(readiness)
 }
 
 /// A fresh, initialized connection. The handshake keeps the transport's

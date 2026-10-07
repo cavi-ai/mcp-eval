@@ -47,7 +47,7 @@
           "provenance": {
             "type": "object", "required": ["runtime", "package", "version", "bin", "launch_sha256", "report_sha256", "prerequisites"],
             "properties": {
-              "runtime": { "enum": ["npm", "uvx"] },
+              "runtime": { "enum": ["npm", "uvx", "native"] },
               "package": { "type": "string", "minLength": 1, "maxLength": 258 },
               "version": { "type": "string", "minLength": 1 },
               "bin": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
@@ -62,7 +62,8 @@
               },
               "prerequisites": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^(env|check|state):[A-Za-z_][A-Za-z0-9_.:-]{0,127}$" } }
             },
-            "if": { "properties": { "runtime": { "const": "npm" } } },
+            "allOf": [{ "if": { "properties": { "runtime": { "const": "native" } } }, "then": { "required": ["deployment_sha256"] } }],
+            "if": { "properties": { "runtime": { "enum": ["npm", "native"] } } },
             "then": { "properties": { "package": { "pattern": "^(?:@[a-z0-9._-]+/)?[a-z0-9][a-z0-9._-]{0,127}$" }, "version": { "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$" } } },
             "else": { "properties": { "package": { "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$" }, "version": { "pattern": "^[0-9]+(?:\\.[0-9]+){1,3}(?:(?:a|b|rc|\\.post|\\.dev)[0-9]+)?$" } } }
           }

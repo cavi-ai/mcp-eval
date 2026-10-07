@@ -106,6 +106,7 @@ fn render_probe_text(
                 "  surface: {} tools, {} read-only, {} writers, {} exercised",
                 surface.tools, surface.read_only, surface.writers, surface.exercised
             );
+            println!("  assessment: read-only structural checks; semantic correctness requires a reviewed oracle");
             // One hint per reason: a catalog-wide defect loses a check on
             // every tool.
             let mut hinted = Vec::new();

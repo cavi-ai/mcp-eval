@@ -30,6 +30,8 @@ pub struct TrendPoint {
     /// before the standard existed, when `score` was a manifest pass rate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub standard: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub measurement_profile: Option<crate::measurement::MeasurementProfile>,
 }
 
 impl TrendPoint {
@@ -47,6 +49,12 @@ impl TrendPoint {
         if let Some(previous) = previous {
             if previous.standard != self.standard {
                 out.push_str(" standard changed");
+            } else if self.standard.is_some()
+                && (self.measurement_profile.is_none() || previous.measurement_profile.is_none())
+            {
+                out.push_str(" measurement profile unavailable");
+            } else if self.measurement_profile != previous.measurement_profile {
+                out.push_str(" measurement profile changed");
             } else if self.standard.is_some() || previous.manifest_sha256 == self.manifest_sha256 {
                 let difference = self.score as i64 - previous.score as i64;
                 out.push_str(&format!(" {difference:+}"));
@@ -82,6 +90,7 @@ pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result
         score: readiness.score,
         manifest_sha256: report.manifest_sha256.clone(),
         standard: Some(readiness.standard.clone()),
+        measurement_profile: readiness.measurement_profile.clone(),
     };
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -103,72 +112,43 @@ pub fn load(root: &Path, last: usize) -> anyhow::Result<Vec<TrendPoint>> {
     if !path.is_file() {
         return Ok(Vec::new());
     }
-    let body = std::fs::read_to_string(&path).context("reading trend history")?;
-    let mut points: Vec<TrendPoint> = body
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()
-        .context("trend history is corrupt")?;
-    points.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.server.cmp(&b.server)));
-    let mut servers: Vec<String> = Vec::new();
-    for point in &points {
-        if !servers.contains(&point.server) {
-            servers.push(point.server.clone());
+    let mut groups: std::collections::BTreeMap<String, Vec<TrendPoint>> =
+        std::collections::BTreeMap::new();
+    let mut reader = std::io::BufReader::new(std::fs::File::open(&path)?);
+    crate::jsonl::visit(&mut reader, |point: TrendPoint| {
+        if let Some(profile) = &point.measurement_profile {
+            profile.validate()?;
         }
-    }
-    let mut selected = Vec::new();
-    for server in servers {
-        let runs: Vec<&TrendPoint> = points
-            .iter()
-            .filter(|point| point.server == server)
-            .collect();
-        selected.extend(
-            runs.iter()
-                .rev()
-                .take(last)
-                .rev()
-                .map(|point| (*point).clone()),
-        );
-    }
-    Ok(selected)
+        if last == 0 {
+            return Ok(());
+        }
+        let recent = groups.entry(point.server.clone()).or_default();
+        let index = recent.partition_point(|existing| existing.ts <= point.ts);
+        recent.insert(index, point);
+        if recent.len() > last {
+            recent.remove(0);
+        }
+        Ok(())
+    })
+    .context("trend history is corrupt")?;
+    Ok(groups.into_values().flatten().collect())
 }
 
-/// Grouped-by-server recent history, oldest first within each group, with a
-/// score delta against the previous run of the same server and manifest.
+/// Recent history with deltas only under compatible measurement conditions.
 pub fn render(root: &Path, last: usize) -> anyhow::Result<String> {
-    let path = history_path(root);
-    if !path.is_file() {
+    if !history_path(root).is_file() {
         return Ok("no trend history yet; run `mcpeval probe` first\n".into());
     }
-    let body = std::fs::read_to_string(&path).context("reading trend history")?;
-    let mut points: Vec<TrendPoint> = body
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()
-        .context("trend history is corrupt")?;
-    points.sort_by(|a, b| a.ts.cmp(&b.ts).then_with(|| a.server.cmp(&b.server)));
-
-    let mut servers: Vec<String> = Vec::new();
-    for point in &points {
-        if !servers.contains(&point.server) {
-            servers.push(point.server.clone());
-        }
-    }
-
+    let points = load(root, last)?;
     let mut out = String::new();
-    for server in servers {
-        let runs: Vec<&TrendPoint> = points
-            .iter()
-            .filter(|point| point.server == server)
-            .collect();
-        out.push_str(&format!("{server}\n"));
-        let mut previous = None;
-        for point in runs.iter().rev().take(last).rev() {
-            writeln!(out, "  {} {}", point.ts, point.summary(previous))?;
-            previous = Some(*point);
+    let mut previous: Option<&TrendPoint> = None;
+    for point in &points {
+        if previous.is_none_or(|p| p.server != point.server) {
+            writeln!(out, "{}", point.server)?;
+            previous = None;
         }
+        writeln!(out, "  {} {}", point.ts, point.summary(previous))?;
+        previous = Some(point);
     }
     Ok(out)
 }
@@ -187,6 +167,7 @@ mod tests {
             score,
             manifest_sha256: Some(manifest.into()),
             standard: standard.map(str::to_owned),
+            measurement_profile: Some(crate::measurement::MeasurementProfile::current(false, &[])),
         }
     }
 
@@ -199,5 +180,40 @@ mod tests {
         // A new manifest does not change what the standard score means.
         assert!(second.summary(Some(&first)).contains(" -5"));
         assert!(!second.summary(Some(&first)).contains("manifest changed"));
+    }
+
+    #[test]
+    fn recent_history_handles_out_of_order_records_and_an_active_writer_tail() {
+        let root = std::env::temp_dir().join(format!("mcpeval-trends-{}", uuid::Uuid::new_v4()));
+        let path = history_path(&root);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let mut records = String::new();
+        for (server, timestamp, score) in [
+            ("b", "03", 30),
+            ("a", "02", 20),
+            ("b", "01", 10),
+            ("a", "03", 30),
+            ("a", "01", 10),
+            ("b", "02", 20),
+        ] {
+            let mut next = point(score, Some("mcpeval-standard/2"), "aaaaaaaa");
+            next.server = server.into();
+            next.ts = timestamp.into();
+            records.push_str(&serde_json::to_string(&next).unwrap());
+            records.push('\n');
+        }
+        std::fs::write(&path, format!("{records}{{\"unfinished\":")).unwrap();
+        let recent = load(&root, 2).unwrap();
+        assert_eq!(
+            recent
+                .iter()
+                .map(|p| (p.server.as_str(), p.score))
+                .collect::<Vec<_>>(),
+            vec![("a", 20), ("a", 30), ("b", 20), ("b", 30)]
+        );
+        assert!(load(&root, 0).unwrap().is_empty());
+        std::fs::write(&path, format!("{records}{{invalid}}\n")).unwrap();
+        assert!(load(&root, 2).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

@@ -13,7 +13,8 @@ Create a private target file with schema `mcpeval.corpus-targets/v1`, a
 `standard` such as `mcpeval-standard/2`, and a `targets` array. Each target needs:
 
 - `server`: a unique server label.
-- `runtime`: `npm` or `uvx`.
+- `runtime`: `npm`, `uvx`, or `native`. Native targets require a deployment lock
+  and never fall back to a package runner.
 - `package`, `version`, and `bin`: package name, an exact version, and its
   actual executable name. Versions cannot be tags, ranges, URLs, or wildcards.
 - `args`: an explicit array, including `[]` when no arguments are needed.

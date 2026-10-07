@@ -101,6 +101,61 @@ fn changed_manifest(
 }
 
 #[test]
+fn changing_a_launch_artifact_during_verification_records_no_credit() {
+    let (home, id) = promoted_home();
+    let target = home.join("self-changing.py");
+    let source = std::fs::read_to_string(CLEAN).unwrap();
+    let mutating = source.replace("if method == \"initialize\":", "if method == \"initialize\":\n        with open(__file__, \"a\") as artifact:\n            artifact.write(\"\\n# changed during measurement\\n\")");
+    std::fs::write(&target, mutating).unwrap();
+    let output = verify(&home, &id, target.to_str().unwrap());
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("launch artifacts changed"));
+    let db = rusqlite::Connection::open(home.join("lifecycle.db")).unwrap();
+    let count: i64 = db
+        .query_row("SELECT COUNT(*) FROM probe_history", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+    std::fs::remove_dir_all(home).unwrap();
+}
+
+#[test]
+fn changing_launch_artifact_bytes_resets_credit_at_the_same_command_path() {
+    let (home, id) = promoted_home();
+    let target = home.join("target.py");
+    let source = std::fs::read_to_string(CLEAN).unwrap();
+    for revision in 1..=3 {
+        std::fs::write(
+            &target,
+            source.replace(
+                "\"version\": \"1\"",
+                &format!("\"version\": \"{revision}\""),
+            ),
+        )
+        .unwrap();
+        let output = verify(&home, &id, target.to_str().unwrap());
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("consecutive_passes=1"),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+    let db = rusqlite::Connection::open(home.join("lifecycle.db")).unwrap();
+    let definitions: i64 = db
+        .query_row(
+            "SELECT COUNT(DISTINCT definition_id) FROM probe_history",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(definitions, 3);
+}
+
+#[test]
 fn changing_a_definition_under_the_same_case_id_resets_the_pass_streak() {
     let (home, id) = promoted_home();
     for _ in 0..2 {

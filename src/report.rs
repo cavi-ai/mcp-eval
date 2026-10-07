@@ -268,6 +268,7 @@ pub fn render_probe_markdown(
                 surface.tools, surface.read_only, surface.writers, surface.exercised
             )
             .ok();
+            out.push_str("*Assessment: read-only structural checks; semantic correctness requires a reviewed oracle. Untested tools and failed calls have distinct reasons below.*\n\n");
             let lost: Vec<&crate::score::Check> = readiness
                 .areas
                 .iter()

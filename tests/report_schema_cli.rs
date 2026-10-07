@@ -124,7 +124,7 @@ fn every_bound_detail_names_its_limit_and_validates() {
             {"id": "pages", "probe": "pagination", "access": "read_only", "max_pages": 2}
         ]}),
     );
-    let (_, report) = probe_json(&dir, &manifest, &[demo(), "--broken", "stalled-cursor"]);
+    let (_, report) = probe_json(&dir, &manifest, &[demo()]);
     assert_valid(&report_schema, &report);
     let cases = report["cases"].as_array().unwrap();
 
@@ -144,7 +144,14 @@ fn every_bound_detail_names_its_limit_and_validates() {
         slow["measurements"]["latency_ms"]
     );
 
-    let pages = &cases[2];
+    let (_, stalled) = probe_json(&dir, &manifest, &[demo(), "--broken", "stalled-cursor"]);
+    assert_valid(&report_schema, &stalled);
+    for case in &stalled["cases"].as_array().unwrap()[..2] {
+        assert_eq!(case["reason"], "transport-error");
+        assert_eq!(case["attempts"], 0);
+        assert!(case["detail"].is_null());
+    }
+    let pages = &stalled["cases"][2];
     assert_eq!(pages["reason"], "pagination-stalled-cursor");
     assert_eq!(
         pages["detail"],

@@ -97,6 +97,14 @@ decision (`candidate (readOnlyHint)`, `candidate (attested)`,
 `skipped: readOnlyHint=false`, `skipped: required arguments`,
 `skipped: not in --tool`); it calls no tool and writes no file.
 
+Discovery must finish within 20 `tools/list` pages. If a later page fails
+or the twentieth page still has a continuation cursor, `init` exits 3
+before calling tools or writing a manifest, including with `--force`.
+`score` leaves readiness unmeasured. `probe` marks ordinary cases as
+transport errors with zero attempts, so `verify` cannot grant passing
+credit. Pagination cases still run to diagnose the broken listing;
+`--probe pagination` selects that diagnostic alone.
+
 Not scaffolded: `workflow`, `error-honesty`, `state-recovery`, and
 `instruction-fidelity` need expected inputs; `cancellation` needs a
 deliberately slow tool; `sampling`, `elicitation`, `resource-subscription`,

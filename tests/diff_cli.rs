@@ -22,8 +22,8 @@ fn run(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
         .unwrap()
 }
 
-/// A small manifest with a pagination case, so a `--broken stalled-cursor`
-/// run regresses exactly one case against the clean baseline.
+/// A small mixed manifest: incomplete discovery regresses ordinary cases
+/// as well as the pagination diagnostic against the clean baseline.
 fn write_manifest(dir: &std::path::Path) -> String {
     let path = dir.join("diff.manifest.json");
     std::fs::write(
@@ -43,6 +43,15 @@ fn write_manifest(dir: &std::path::Path) -> String {
 }
 
 fn probe_json(dir: &std::path::Path, manifest: &str, broken: Option<&str>) -> Vec<u8> {
+    probe_json_selected(dir, manifest, broken, None)
+}
+
+fn probe_json_selected(
+    dir: &std::path::Path,
+    manifest: &str,
+    broken: Option<&str>,
+    probe: Option<&str>,
+) -> Vec<u8> {
     let mut args: Vec<String> = vec![
         "probe".to_owned(),
         "--server".to_owned(),
@@ -52,6 +61,9 @@ fn probe_json(dir: &std::path::Path, manifest: &str, broken: Option<&str>) -> Ve
         "--format".to_owned(),
         "json".to_owned(),
     ];
+    if let Some(probe) = probe {
+        args.extend(["--probe".to_owned(), probe.to_owned()]);
+    }
     args.push("--".to_owned());
     args.push(demo().to_owned());
     if let Some(aspect) = broken {
@@ -102,7 +114,8 @@ fn diff_classifies_regression_fix_and_gate() {
     );
     assert!(stdout.contains("unchanged"), "{stdout}");
     assert!(stdout.contains("\nreadiness  "), "{stdout}");
-    assert!(!stdout.contains("not comparable"), "{stdout}");
+    assert!(stdout.contains("not comparable"), "{stdout}");
+    assert!(stdout.contains("4 regressed"), "{stdout}");
     assert!(!stdout.contains("CANARY"), "{stdout}");
 
     // The gate flag makes the same diff exit non-zero.
@@ -185,15 +198,15 @@ fn diff_json_document_is_versioned_and_deterministic() {
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
         report["readiness"]["score"].clone()
     };
-    assert_eq!(document["readiness"]["comparable"], true);
+    assert_eq!(document["readiness"]["comparable"], false);
     assert_eq!(document["readiness"]["baseline"], score(&baseline_path));
     assert_eq!(document["readiness"]["current"], score(&regressed_path));
-    assert_eq!(document["summary"]["regressed"], 1);
+    assert_eq!(document["summary"]["regressed"], 4);
     let regressed_case = document["cases"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|case| case["verdict"] == "regressed")
+        .find(|case| case["id"] == "catalog-pagination")
         .unwrap();
     assert_eq!(
         regressed_case["current_reason"],
@@ -285,13 +298,13 @@ fn diff_reports_a_changed_failure_mode_and_gates_it_on_request() {
     let baseline_path = dir.join("duplicate.json");
     std::fs::write(
         &baseline_path,
-        probe_json(&dir, &manifest, Some("duplicate-page")),
+        probe_json_selected(&dir, &manifest, Some("duplicate-page"), Some("pagination")),
     )
     .unwrap();
     let current_path = dir.join("stalled.json");
     std::fs::write(
         &current_path,
-        probe_json(&dir, &manifest, Some("stalled-cursor")),
+        probe_json_selected(&dir, &manifest, Some("stalled-cursor"), Some("pagination")),
     )
     .unwrap();
     let baseline = baseline_path.to_str().unwrap();

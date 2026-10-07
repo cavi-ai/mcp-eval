@@ -232,16 +232,19 @@ fn undescribed_lowers_only_the_catalog() {
 }
 
 #[test]
-fn paged_repeated_or_endless_catalogs_count_each_tool_once() {
-    for aspect in ["duplicate-page", "stalled-cursor"] {
-        let (output, document) = score(&home(), &[demo(), "--broken", aspect]);
-        assert!(
-            output.status.success(),
-            "{aspect}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert_eq!(document["readiness"]["surface"]["tools"], 12, "{aspect}");
-    }
+fn repeated_catalogs_count_each_tool_once_and_endless_catalogs_are_unavailable() {
+    let (output, document) = score(&home(), &[demo(), "--broken", "duplicate-page"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(document["readiness"]["surface"]["tools"], 12);
+
+    let (output, document) = score(&home(), &[demo(), "--broken", "stalled-cursor"]);
+    assert_eq!(output.status.code(), Some(3));
+    assert!(document["readiness"].is_null());
+    assert_eq!(document["readiness_error"], "transport-error");
 }
 
 #[test]
@@ -550,7 +553,7 @@ fn report_rerenders_a_v2_document_with_its_lost_points() {
 }
 
 #[test]
-fn a_failed_later_tools_page_ends_the_listing_not_the_battery() {
+fn a_failed_later_tools_page_leaves_readiness_unmeasured() {
     for mode in ["page-error", "invalid"] {
         let (output, document) = run(
             &home(),
@@ -566,21 +569,14 @@ fn a_failed_later_tools_page_ends_the_listing_not_the_battery() {
                 mode,
             ],
         );
-        assert!(
-            output.status.success(),
+        assert_eq!(
+            output.status.code(),
+            Some(3),
             "{mode}: {}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(
-            document["readiness"]["surface"]["tools"], 3,
-            "{mode}: the first page's tools are kept"
-        );
-        assert!(
-            lost_in(&document, "protocol").contains(
-                &owned(&[("protocol.pagination", None, "protocol-pagination-invalid")])[0]
-            ),
-            "{mode}: {document:#}"
-        );
+        assert!(document["readiness"].is_null(), "{mode}: {document:#}");
+        assert_eq!(document["readiness_error"], "transport-error");
     }
 }
 

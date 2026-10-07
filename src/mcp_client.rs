@@ -129,22 +129,36 @@ pub(crate) fn tool_definition(tool: &Value) -> anyhow::Result<ToolDefinition> {
     })
 }
 
-/// `tools/list` pages followed before the catalog is taken as complete.
+/// Maximum `tools/list` pages followed during catalog discovery.
 pub const MAX_TOOL_PAGES: usize = 20;
 
-/// Every distinct tool over at most [`MAX_TOOL_PAGES`] `tools/list` pages,
-/// each name once (the first listing wins). `request` sends one
-/// `tools/list` with the given params and returns the response envelope. A
-/// first page that fails is an error; a later page that fails (an error, a
-/// malformed envelope, or an invalid entry) ends the catalog with what was
-/// listed, for the pagination probe to report. `encoded_bytes` sizes the
-/// catalog as one compact tools array.
+/// Every distinct tool in a complete catalog, each name once (the first
+/// listing wins). Failed pages and a continuation beyond [`MAX_TOOL_PAGES`]
+/// are errors. `encoded_bytes` sizes the catalog as one compact tools array.
 pub(crate) fn page_catalog(
-    mut request: impl FnMut(Value) -> anyhow::Result<Value>,
+    request: impl FnMut(Value) -> anyhow::Result<Value>,
 ) -> anyhow::Result<ToolCatalog> {
+    let discovery = discover_catalog(request)?;
+    match discovery.incomplete {
+        Some(error) => Err(error),
+        None => Ok(discovery.catalog),
+    }
+}
+
+/// Retain a partial catalog only so the pagination probe can diagnose a
+/// broken later page. Consumers must not evaluate this prefix as complete.
+pub(crate) struct CatalogDiscovery {
+    pub catalog: ToolCatalog,
+    pub incomplete: Option<anyhow::Error>,
+}
+
+pub(crate) fn discover_catalog(
+    mut request: impl FnMut(Value) -> anyhow::Result<Value>,
+) -> anyhow::Result<CatalogDiscovery> {
     let mut entries: Vec<Value> = Vec::new();
     let mut tools: Vec<ToolDefinition> = Vec::new();
     let mut cursor: Option<String> = None;
+    let mut incomplete = None;
     for page in 0..MAX_TOOL_PAGES {
         let params = match &cursor {
             Some(cursor) => json!({"cursor": cursor}),
@@ -160,7 +174,10 @@ pub(crate) fn page_catalog(
             {
                 return Err(error)
             }
-            Err(_) => break,
+            Err(error) => {
+                incomplete = Some(error);
+                break;
+            }
         };
         for (entry, tool) in listed {
             if !tools.iter().any(|seen| seen.name == tool.name) {
@@ -173,9 +190,15 @@ pub(crate) fn page_catalog(
             break;
         }
     }
-    Ok(ToolCatalog {
-        encoded_bytes: serde_json::to_vec(&entries)?.len(),
-        tools,
+    if incomplete.is_none() && cursor.is_some() {
+        incomplete = Some(anyhow::anyhow!("tools/list exceeded catalog page limit"));
+    }
+    Ok(CatalogDiscovery {
+        catalog: ToolCatalog {
+            encoded_bytes: serde_json::to_vec(&entries)?.len(),
+            tools,
+        },
+        incomplete,
     })
 }
 
@@ -491,6 +514,10 @@ impl McpClient {
     /// The whole catalog, every page; see [`page_catalog`].
     pub fn list_tools_catalog(&mut self) -> anyhow::Result<ToolCatalog> {
         page_catalog(|params| self.request("tools/list", params))
+    }
+
+    pub(crate) fn discover_tools_catalog(&mut self) -> anyhow::Result<CatalogDiscovery> {
+        discover_catalog(|params| self.request("tools/list", params))
     }
 
     pub fn call_tool(&mut self, tool: &str, arguments: &Value) -> anyhow::Result<ToolResponse> {
@@ -965,7 +992,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_later_page_ends_the_catalog_and_a_failed_first_page_fails() {
+    fn a_failed_catalog_page_never_returns_a_complete_prefix() {
         let (request, _) = pages(vec![
             (
                 None,
@@ -976,7 +1003,7 @@ mod tests {
                 json!({"error": {"code": -32603, "message": "boom"}}),
             ),
         ]);
-        assert_eq!(page_catalog(request).unwrap().tools.len(), 1);
+        assert!(page_catalog(request).is_err());
         let (request, _) = pages(vec![
             (
                 None,
@@ -987,7 +1014,7 @@ mod tests {
                 json!({"result": {"tools": [{"name": "no schema"}]}}),
             ),
         ]);
-        assert_eq!(page_catalog(request).unwrap().tools.len(), 1);
+        assert!(page_catalog(request).is_err());
         let (request, _) = pages(vec![(
             None,
             json!({"error": {"code": -32603, "message": "boom"}}),
@@ -1007,8 +1034,45 @@ mod tests {
                 json!({"result": {"tools": [], "nextCursor": "x"}}),
             ),
         ]);
-        assert_eq!(page_catalog(request).unwrap().tools.len(), 1);
+        assert!(page_catalog(request).is_err());
         assert_eq!(requests.get(), MAX_TOOL_PAGES);
+    }
+
+    #[test]
+    fn diagnostic_discovery_retains_the_prefix_and_failure() {
+        let (request, requests) = pages(vec![
+            (
+                None,
+                json!({"result": {"tools": [entry("a")], "nextCursor": "2"}}),
+            ),
+            (
+                Some("2"),
+                json!({"error": {"code": -32603, "message": "private"}}),
+            ),
+        ]);
+        let discovery = discover_catalog(request).unwrap();
+        assert_eq!(requests.get(), 2);
+        assert_eq!(discovery.catalog.tools[0].name, "a");
+        assert_eq!(
+            discovery.incomplete.unwrap().to_string(),
+            "tools/list returned an error"
+        );
+    }
+
+    #[test]
+    fn a_terminal_twentieth_page_is_complete() {
+        let mut count = 0;
+        let catalog = page_catalog(|_| {
+            count += 1;
+            Ok(if count == MAX_TOOL_PAGES {
+                json!({"result": {"tools": [entry("last")]}})
+            } else {
+                json!({"result": {"tools": [], "nextCursor": "continue"}})
+            })
+        })
+        .unwrap();
+        assert_eq!(count, MAX_TOOL_PAGES);
+        assert_eq!(catalog.tools[0].name, "last");
     }
 
     #[test]

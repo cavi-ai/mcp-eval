@@ -60,6 +60,8 @@ CREATE UNIQUE INDEX calls_capture_sequence ON calls (capture_id, seq) WHERE capt
 
 /// Stream records into an atomic disk-backed rebuild. Identity checks and
 /// correlation ordering use SQLite rather than retaining the whole journal.
+/// Cached statements avoid compiling the same SQL for each record; the cache
+/// lasts only for this rebuild and never substitutes for reading journal bytes.
 pub fn build(root: &Path) -> anyhow::Result<Stats> {
     let mut db = Connection::open(root.join("index.db")).context("opening index.db")?;
     db.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -70,7 +72,6 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
     transaction.execute_batch(SCHEMA)?;
     transaction.execute_batch(
         "CREATE TEMP TABLE seen_events(event TEXT PRIMARY KEY, record TEXT NOT NULL);
-        CREATE TEMP TABLE seen_positions(capture TEXT, seq INTEGER, PRIMARY KEY(capture,seq));
         CREATE TEMP TABLE seen_captures(capture TEXT PRIMARY KEY, session TEXT, server TEXT);",
     )?;
     let mut stats = Stats {
@@ -85,11 +86,8 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
             identity.validate()?;
             let canonical = serde_json::to_string(&record)?;
             let previous: Option<String> = transaction
-                .query_row(
-                    "SELECT record FROM seen_events WHERE event=?1",
-                    [identity.event_id.to_string()],
-                    |row| row.get(0),
-                )
+                .prepare_cached("SELECT record FROM seen_events WHERE event=?1")?
+                .query_row([identity.event_id.to_string()], |row| row.get(0))
                 .optional()?;
             if let Some(previous) = previous {
                 anyhow::ensure!(
@@ -101,11 +99,8 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
             }
             let capture = identity.capture_id.to_string();
             let prior: Option<(String, String)> = transaction
-                .query_row(
-                    "SELECT session,server FROM seen_captures WHERE capture=?1",
-                    [&capture],
-                    |row| Ok((row.get(0)?, row.get(1)?)),
-                )
+                .prepare_cached("SELECT session,server FROM seen_captures WHERE capture=?1")?
+                .query_row([&capture], |row| Ok((row.get(0)?, row.get(1)?)))
                 .optional()?;
             if let Some((session, server)) = prior {
                 anyhow::ensure!(
@@ -113,26 +108,18 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
                     "capture ID crosses session or server boundaries"
                 );
             } else {
-                transaction.execute(
-                    "INSERT INTO seen_captures VALUES (?1,?2,?3)",
-                    params![capture, record.session, record.server],
-                )?;
+                transaction
+                    .prepare_cached("INSERT INTO seen_captures VALUES (?1,?2,?3)")?
+                    .execute(params![capture, record.session, record.server])?;
             }
             transaction
-                .execute(
-                    "INSERT INTO seen_positions VALUES (?1,?2)",
-                    params![capture, record.seq as i64],
-                )
-                .context("multiple event IDs claim one capture sequence")?;
-            transaction.execute(
-                "INSERT INTO seen_events VALUES (?1,?2)",
-                params![identity.event_id.to_string(), canonical],
-            )?;
+                .prepare_cached("INSERT INTO seen_events VALUES (?1,?2)")?
+                .execute(params![identity.event_id.to_string(), canonical])?;
         }
         let error = record.error.as_ref();
-        transaction.execute("INSERT INTO calls
+        transaction.prepare_cached("INSERT INTO calls
             (ts,session,seq,server,method,tool,latency_ms,outcome,err_code,err_template,err_template_id,err_retryable,args,kind,capture_id,event_id)
-            VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)", params![
+            VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16)")?.execute(params![
             record.ts, record.session, record.seq as i64, record.server, record.method, record.tool,
             record.latency_ms.map(|value|value as i64), record.outcome,
             error.and_then(|value|value.code.as_ref()).map(serde_json::to_string).transpose()?,
@@ -143,8 +130,9 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
         stats.failures += usize::from(record.outcome == "error");
         Ok(())
     })?;
-    transaction.execute_batch("CREATE INDEX calls_event ON calls(event_id);
-        CREATE INDEX calls_coordinates ON calls(session,seq);
+    // The unique event_id and capture-sequence indexes already enforce modern
+    // identities and support event lookups; no second identity index is needed.
+    transaction.execute_batch("CREATE INDEX calls_coordinates ON calls(session,seq);
         CREATE TEMP TABLE ranked AS SELECT id,outcome,capture_id,session,server,
             ROW_NUMBER() OVER (PARTITION BY capture_id,CASE WHEN capture_id IS NULL THEN session END,CASE WHEN capture_id IS NULL THEN server END ORDER BY seq,id) AS position FROM calls;
         CREATE INDEX ranked_context ON ranked(capture_id,session,server,position);
@@ -166,16 +154,13 @@ pub fn build(root: &Path) -> anyhow::Result<Stats> {
         annotation.validate_target()?;
         let target: Option<i64> = if let Some(event) = annotation.event_id {
             transaction
-                .query_row(
-                    "SELECT id FROM calls WHERE event_id=?1",
-                    [event.to_string()],
-                    |row| row.get(0),
-                )
+                .prepare_cached("SELECT id FROM calls WHERE event_id=?1")?
+                .query_row([event.to_string()], |row| row.get(0))
                 .optional()?
         } else {
-            transaction.query_row("SELECT CASE WHEN COUNT(*)=1 THEN MIN(id) END FROM calls WHERE session=?1 AND seq=?2", params![annotation.session,annotation.seq.map(|seq|seq as i64)], |row|row.get(0))?
+            transaction.prepare_cached("SELECT CASE WHEN COUNT(*)=1 THEN MIN(id) END FROM calls WHERE session=?1 AND seq=?2")?.query_row(params![annotation.session,annotation.seq.map(|seq|seq as i64)], |row|row.get(0))?
         };
-        transaction.execute("INSERT INTO annotations(session,seq,ts,kind,note,event_id,call_id) VALUES (?1,?2,?3,?4,?5,?6,?7)", params![annotation.session,annotation.seq.map(|seq|seq as i64),annotation.ts,annotation.kind,annotation.note,annotation.event_id.map(|id|id.to_string()),target])?;
+        transaction.prepare_cached("INSERT INTO annotations(session,seq,ts,kind,note,event_id,call_id) VALUES (?1,?2,?3,?4,?5,?6,?7)")?.execute(params![annotation.session,annotation.seq.map(|seq|seq as i64),annotation.ts,annotation.kind,annotation.note,annotation.event_id.map(|id|id.to_string()),target])?;
         stats.annotations += 1;
         Ok(())
     })?;

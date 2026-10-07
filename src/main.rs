@@ -146,19 +146,21 @@ fn render_probe_text(
         (None, None, None) => println!("{server} readiness not measured"),
     }
     if let Some(corpus) = corpus {
-        if let Some(readiness) = report
+        if let Some(placement) = report
             .readiness
             .as_ref()
             .filter(|readiness| readiness.standard == corpus.standard)
+            .and_then(|readiness| {
+                corpus.placement_for(readiness.score, readiness.measurement_profile.as_ref())
+            })
         {
-            let placement = corpus.placement(readiness.score);
             println!(
                 "  standard corpus ({}): above {}, tied {}, below {} of {} observed servers",
                 corpus.standard,
                 placement.above,
                 placement.tied,
                 placement.below,
-                corpus.observations.len()
+                placement.above + placement.tied + placement.below
             );
         }
         if let (Some(tokens), Some(tools)) = (

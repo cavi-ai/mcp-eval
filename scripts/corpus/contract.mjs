@@ -11,13 +11,34 @@ export const COUNTS = ["successful_calls", "tool_errors", "rpc_errors", "rejecte
 export const ISOLATION = { KUBECONFIG: path.join(ROOT, "scripts/corpus/empty-kubeconfig.yaml"), DOCKER_HOST: "unix:///nonexistent/docker.sock" };
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 export const digestFile = async (file) => sha256(await readFile(file));
-export const scoreArguments = (server) => ["score", "--server", server, "--format", "json"];
+export const scoreArguments = (server, assessment) => ["score", "--server", server, "--format", "json",
+  ...(assessment?.attest_read_only ? ["--confirm-read-only"] : []),
+  ...[...(assessment?.skip_tools ?? [])].sort().flatMap(tool => ["--skip-tool", tool])];
 const label = (value) => typeof value === "string" && /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/u.test(value);
 const digest = (value) => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
 const count = (value) => Number.isSafeInteger(value) && value >= 0;
 const score = (value) => count(value) && value <= 100;
 const explicitCommand = (value) => Array.isArray(value) && value.length > 0 && value.every((arg) => typeof arg === "string" && arg.length > 0 && arg.length <= 8192 && !arg.includes("\0"));
 function require(condition, message) { if (!condition) throw new Error(message); }
+const toolName = value => typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/u.test(value);
+export function requireDeployments(targets) {
+  require(targets.targets.every(target => target.deployment !== undefined), "release calibration requires a prepared deployment for every target");
+}
+function validateAssessment(assessment) {
+  require(assessment && Object.keys(assessment).sort().join(",") === "attest_read_only,skip_tools"
+    && typeof assessment.attest_read_only === "boolean" && Array.isArray(assessment.skip_tools)
+    && assessment.skip_tools.every(toolName) && new Set(assessment.skip_tools).size === assessment.skip_tools.length, "invalid assessment policy");
+}
+function validateProfile(profile, version) {
+  const keys = ["architecture", "attested_read_only", "call_timeout_ms", "client_capabilities", "evaluator_version", "platform", "repeats", "schema", "skip_tools"];
+  require(profile && Object.keys(profile).sort().join(",") === keys.join(",")
+    && profile.schema === "mcpeval.measurement-profile/v1" && profile.evaluator_version === version
+    && typeof profile.platform === "string" && /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/u.test(profile.platform)
+    && typeof profile.architecture === "string" && /^[A-Za-z][A-Za-z0-9_.:-]{0,63}$/u.test(profile.architecture)
+    && profile.client_capabilities === "none" && profile.call_timeout_ms === 15000 && profile.repeats === 3
+    && typeof profile.attested_read_only === "boolean" && Array.isArray(profile.skip_tools)
+    && profile.skip_tools.every(toolName) && profile.skip_tools.every((tool, index) => index === 0 || profile.skip_tools[index - 1] < tool), "invalid measurement profile");
+}
 
 function validateTargetIdentity(target) {
   require(target && label(target.server), "target requires a server label");
@@ -49,6 +70,7 @@ export function validateTargets(document) {
   const seen = new Set();
   for (const target of document.targets) {
     commandFor(target);
+    if (target.assessment !== undefined) validateAssessment(target.assessment);
     require(!seen.has(target.server), "duplicate target label"); seen.add(target.server);
     const prerequisites = target.prerequisites;
     require(prerequisites && Array.isArray(prerequisites.environment) && Array.isArray(prerequisites.checks), "declare prerequisite environment and checks, including empty arrays");
@@ -77,6 +99,14 @@ export function observationFrom(raw, target, evaluator, standard) {
   if (document.readiness === null) return { status: "errored", reason: "readiness-unmeasured" };
   const readiness = document.readiness;
   require(readiness?.standard === standard && readinessScore(document) !== null, "report-standard-or-score-mismatch");
+  const profile = readiness.measurement_profile;
+  const assessment = target.assessment ?? { attest_read_only: false, skip_tools: [] };
+  if (profile !== undefined) {
+    validateProfile(profile, evaluator.version);
+    require(profile.attested_read_only === assessment.attest_read_only
+      && JSON.stringify(profile.skip_tools) === JSON.stringify([...assessment.skip_tools].sort()), "report-assessment-mismatch");
+  } else require(target.assessment === undefined, "report lacks declared assessment profile");
+  if (readiness.attested_read_only !== undefined) require(readiness.attested_read_only === assessment.attest_read_only, "report-assessment-mismatch");
   require(Array.isArray(readiness.areas) && readiness.areas.length === AREAS.length, "invalid-report-areas");
   const areas = {};
   for (const area of readiness.areas) {
@@ -92,6 +122,7 @@ export function observationFrom(raw, target, evaluator, standard) {
   if (surface.tools === 0) return { status: "untested", reason: "no-tools" };
   if (COUNTS.slice(0, -1).every((key) => calls[key] === 0)) return { status: "untested", reason: "no-tool-calls" };
   return { status: "observed", observation: { server: target.server, score: readiness.score, areas, tool_count: surface.tools, catalog_tokens: tokens,
+    ...(profile === undefined ? {} : { measurement_profile: profile }),
     calls: Object.fromEntries(COUNTS.map((key) => [key, calls[key]])), provenance: {
       runtime: target.runtime, package: target.package, version: target.version, bin: target.bin,
       ...(target.deployment === undefined ? {} : { deployment_sha256: target.deployment.sha256 }),
@@ -115,6 +146,7 @@ export function validateCorpus(corpus) {
   }
   const rows = new Set();
   for (const observation of corpus.observations) {
+    if (observation.measurement_profile !== undefined) validateProfile(observation.measurement_profile, corpus.evaluator.version);
     require(observed.has(observation.server) && !rows.has(observation.server) && score(observation.score), "observation does not match population"); rows.add(observation.server);
     require(AREAS.every((key) => score(observation.areas?.[key])) && Object.keys(observation.areas).length === AREAS.length, "invalid corpus areas");
     require(count(observation.tool_count) && observation.tool_count > 0 && count(observation.catalog_tokens) && COUNTS.every((key) => count(observation.calls?.[key])) && COUNTS.slice(0, -1).some((key) => observation.calls[key] > 0), "invalid corpus measurements");
@@ -196,7 +228,7 @@ export async function evaluateTarget(target, context) {
   const before = await stateCheckFailure(target, context, env);
   if (target.prerequisites.state_checks?.length && !await deploymentMatches(target.deployment)) return mismatch;
   if (before) return { status: before === "state-mismatch" ? "errored" : "untested", reason: before };
-  const result = await context.execute([context.binary, ...scoreArguments(target.server), "--", ...commandFor(target)], { env, cwd: context.home });
+  const result = await context.execute([context.binary, ...scoreArguments(target.server, target.assessment), "--", ...commandFor(target)], { env, cwd: context.home });
   const after = await stateCheckFailure(target, context, env);
   if (!await deploymentMatches(target.deployment)) return mismatch;
   if (after) return { status: "errored", reason: after };

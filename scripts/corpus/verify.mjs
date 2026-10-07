@@ -3,7 +3,7 @@ import { link, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs, isDeepStrictEqual } from "node:util";
-import { ROOT, digestFile, evaluatorIdentity, evaluateTarget, runCommand } from "./contract.mjs";
+import { ROOT, digestFile, evaluatorIdentity, evaluateTarget, runCommand, requireDeployments } from "./contract.mjs";
 import { readCollection, replayResult, verificationFor } from "./replay-contract.mjs";
 export { commandFor, ISOLATION, readinessScore, scoreArguments } from "./contract.mjs";
 export { RELIABILITY_TOLERANCE, VERIFICATION_SCHEMA, driftOf, driftedResults } from "./replay-contract.mjs";
@@ -16,6 +16,7 @@ export async function verifyCorpus(options = {}) {
   // Validate provenance before touching a binary, package runner, or service.
   const collection = await readCollection(options);
   const { corpus, targets } = collection;
+  if (options.requireDeployments) requireDeployments(targets);
   const mismatch = platformMismatch(corpus, process.platform); if (mismatch) throw new Error(mismatch);
   const binary = path.resolve(options.binary ?? path.join(ROOT, "target/release/mcpeval"));
   if (await digestFile(binary) !== corpus.evaluator.sha256) throw new Error("evaluator provenance mismatch");
@@ -63,8 +64,8 @@ export async function verifyCorpus(options = {}) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
   try {
-    const { values } = parseArgs({ options: { corpus: { type: "string" }, targets: { type: "string" }, reports: { type: "string" }, binary: { type: "string" }, out: { type: "string" }, json: { type: "boolean", default: false } } });
-    const result = await verifyCorpus({ corpusPath: values.corpus, targetsPath: values.targets, reportsPath: values.reports, binary: values.binary, evidencePath: values.out });
+    const { values } = parseArgs({ options: { corpus: { type: "string" }, targets: { type: "string" }, reports: { type: "string" }, binary: { type: "string" }, out: { type: "string" }, json: { type: "boolean", default: false }, "require-deployments": { type: "boolean", default: false } } });
+    const result = await verifyCorpus({ corpusPath: values.corpus, targetsPath: values.targets, reportsPath: values.reports, binary: values.binary, evidencePath: values.out, requireDeployments: values["require-deployments"] });
     if (values.json) console.log(JSON.stringify(result, null, 2));
     else for (const entry of result.results) console.log(`${entry.drifted ? "DRIFT" : entry.status} ${entry.server} expected=${entry.expected ?? "-"} observed=${entry.observed ?? "-"}`);
     process.exitCode = result.passed ? 0 : 1;

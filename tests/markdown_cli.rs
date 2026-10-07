@@ -74,7 +74,8 @@ fn markdown_report_places_the_catalog_against_the_corpus() {
     let tokens = token_case["measurements"]["total_tokens"].as_u64().unwrap();
     let tools = token_case["measurements"]["tool_count"].as_u64().unwrap();
 
-    // One observation below the fixture's score, one tied, one above.
+    // Historical observations remain useful for catalog size, but cannot
+    // establish readiness placement without a known measurement profile.
     std::fs::write(
         dir.join("corpus.json"),
         format!(
@@ -92,12 +93,7 @@ fn markdown_report_places_the_catalog_against_the_corpus() {
     let output = probe_in(&dir, CLEAN, "markdown");
     assert!(output.status.success());
     let body = String::from_utf8(output.stdout).unwrap();
-    assert!(
-        body.contains(&format!(
-            "\n*Standard corpus ({standard}): above 1, tied 1, below 1 of 3 observed servers.*\n"
-        )),
-        "{body}"
-    );
+    assert!(!body.contains("Standard corpus"), "{body}");
     assert!(
         body.contains(&format!(
             "\n*Catalog: {tokens} tokens over {tools} tools — lighter than 2 of 3 observed servers (median 1000000 tokens).*\n"

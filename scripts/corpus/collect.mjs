@@ -4,12 +4,13 @@ import { randomUUID } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { ROOT, SCHEMA, digestFile, sha256, validateTargets, validateCorpus, evaluatorIdentity, evaluateTarget, runCommand } from "./contract.mjs";
+import { ROOT, SCHEMA, digestFile, sha256, validateTargets, validateCorpus, evaluatorIdentity, evaluateTarget, runCommand, requireDeployments } from "./contract.mjs";
 
 export async function collectCorpus(options) {
   if (!options?.targetsPath || !options.output) throw new Error("collection requires --targets and --out");
   const bytes = await readFile(options.targetsPath);
   const targets = validateTargets(JSON.parse(bytes));
+  if (options.requireDeployments) requireDeployments(targets);
   const output = path.resolve(options.output);
   const existing = await lstat(output).catch((error) => { if (error.code === "ENOENT") return null; throw error; });
   if (!options.force && existing) throw new Error("output exists; pass --force to replace it");
@@ -49,8 +50,8 @@ export async function collectCorpus(options) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
   try {
-    const { values } = parseArgs({ options: { targets: { type: "string" }, out: { type: "string" }, binary: { type: "string" }, "min-observations": { type: "string", default: "10" }, force: { type: "boolean", default: false } } });
-    const result = await collectCorpus({ targetsPath: values.targets, output: values.out, binary: values.binary, minimum: Number(values["min-observations"]), force: values.force });
+    const { values } = parseArgs({ options: { targets: { type: "string" }, out: { type: "string" }, binary: { type: "string" }, "min-observations": { type: "string", default: "10" }, force: { type: "boolean", default: false }, "require-deployments": { type: "boolean", default: false } } });
+    const result = await collectCorpus({ targetsPath: values.targets, output: values.out, binary: values.binary, minimum: Number(values["min-observations"]), force: values.force, requireDeployments: values["require-deployments"] });
     console.log(`collected ${result.corpus.observations.length} observed of ${result.corpus.population.length} targets; reports: ${result.reports}`);
     if (!result.sufficient) { console.error("insufficient observed targets; retained candidate is not a calibration baseline"); process.exitCode = 1; }
   } catch (error) { console.error(error.message); process.exitCode = 1; }

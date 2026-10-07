@@ -30,6 +30,9 @@ export async function readCollection(options, read = readFile) {
     if (sha256(raw) !== expected.provenance.report_sha256) throw new Error("original report digest mismatch");
     const target = targets.targets.find((item) => item.server === expected.server);
     const result = observationFrom(raw, target, corpus.evaluator, corpus.standard);
+    // Existing v3 artifacts did not retain this optional field. Preserve their
+    // projection without inventing a historical measurement profile.
+    if (expected.measurement_profile === undefined && result.observation) delete result.observation.measurement_profile;
     if (result.status !== "observed" || !isDeepStrictEqual(result.observation, expected)) throw new Error("original report projection mismatch");
   }
   return { corpus, corpusBytes, targets, targetBytes };
@@ -38,6 +41,8 @@ export async function readCollection(options, read = readFile) {
 export function replayResult(entry, expected, replay) {
   if (entry.status !== "observed") return { server: entry.server, status: entry.status, reason: entry.reason, expected: null, observed: null, moved: [], drifted: false, expected_report_sha256: null, replay_report_sha256: null };
   const moved = replay.observation ? driftOf(expected, replay.observation) : [];
+  if (expected.measurement_profile !== undefined && replay.observation
+    && !isDeepStrictEqual(expected.measurement_profile, replay.observation.measurement_profile)) moved.push("measurement-profile");
   return { server: entry.server, status: replay.status, ...(replay.reason ? { reason: replay.reason } : {}), expected: expected.score, observed: replay.observation?.score ?? null, moved, drifted: moved.length > 0,
     expected_report_sha256: expected.provenance.report_sha256, replay_report_sha256: replay.raw === undefined ? null : sha256(replay.raw) };
 }

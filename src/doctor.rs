@@ -1,7 +1,9 @@
+use std::fs::OpenOptions;
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use anyhow::Context;
+use anyhow::{ensure, Context};
 use regex::Regex;
 use serde_json::Value;
 
@@ -45,24 +47,18 @@ const SHAPE_TOKEN_EXACT: [&str; 8] = [
     "null", "uuid", "str<8", "str<32", "str<128", "str<512", "str<4096", "str>4096",
 ];
 
-/// Scans every `*.jsonl` file directly under `<root>/store` for text that
+/// Scans every `*.jsonl` file recursively under `<root>/store` for text that
 /// looks unredacted: an `@` between word characters, a home-directory path,
 /// `token=`, `password`, or a string value longer than 128 bytes that isn't
 /// one of the known shape tokens. In `annotations-*.jsonl` files, the
 /// intentionally free-form `note` field is exempt from every detector; all
 /// other fields there, and every field in every other file, are in scope.
 /// This is a minimum smoke scan, not proof that arbitrary stored metadata is
-/// non-sensitive.
+/// non-sensitive. Journals are streamed under a shared lock, with physical
+/// lines limited to 4 MiB including a newline. Symlinks are refused.
 pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
     let store_dir = root.join("store");
-    let mut paths: Vec<_> = std::fs::read_dir(&store_dir)
-        .with_context(|| format!("reading {}", store_dir.display()))?
-        .filter_map(|entry| entry.ok())
-        .map(|entry| entry.path())
-        .filter(|path| path.is_file())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("jsonl"))
-        .collect();
-    paths.sort();
+    let paths = journal_paths(&store_dir)?;
 
     let mut findings = Vec::new();
     let mut notes_requiring_review = 0usize;
@@ -73,15 +69,41 @@ pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
             .file_name()
             .and_then(|name| name.to_str())
             .is_some_and(|name| name.starts_with("annotations-"));
-        let body =
-            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        let (lines, notes) = scan_body(&body, is_annotations);
-        notes_requiring_review += notes;
-        findings.extend(
-            lines
-                .into_iter()
-                .map(|line| format!("{}:{line}", path.display())),
-        );
+        let mut open = OpenOptions::new();
+        open.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            open.custom_flags(nix::libc::O_NOFOLLOW);
+        }
+        let file = open
+            .open(path)
+            .with_context(|| format!("opening {}", path.display()))?;
+        file.lock_shared()
+            .with_context(|| format!("locking {}", path.display()))?;
+        let mut reader = BufReader::new(file);
+        let mut buffer = Vec::new();
+        let mut line_number = 0;
+        loop {
+            let count = crate::jsonl::read_line(&mut reader, &mut buffer)
+                .with_context(|| format!("reading {} line {}", path.display(), line_number + 1))?;
+            if count == 0 {
+                break;
+            }
+            line_number += 1;
+            let line = std::str::from_utf8(&buffer).with_context(|| {
+                format!("invalid UTF-8 in {} line {line_number}", path.display())
+            })?;
+            let (lines, notes) = scan_body(line, is_annotations);
+            notes_requiring_review += notes;
+            if !lines.is_empty() {
+                findings.push(format!("{}:{line_number}", path.display()));
+            }
+        }
+        reader
+            .into_inner()
+            .unlock()
+            .with_context(|| format!("unlocking {}", path.display()))?;
     }
 
     Ok(Report {
@@ -90,6 +112,35 @@ pub fn check_redaction(root: &Path) -> anyhow::Result<Report> {
         notes_requiring_review,
         salt_path: root.join(SALT_FILENAME),
     })
+}
+
+fn journal_paths(store: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let kind = std::fs::symlink_metadata(store)
+        .with_context(|| format!("reading {}", store.display()))?
+        .file_type();
+    ensure!(!kind.is_symlink(), "doctor refuses a symlinked store");
+    let mut directories = vec![store.to_path_buf()];
+    let mut paths = Vec::new();
+    while let Some(directory) = directories.pop() {
+        let mut entries = std::fs::read_dir(&directory)
+            .and_then(|entries| entries.collect::<Result<Vec<_>, _>>())
+            .with_context(|| format!("reading {}", directory.display()))?;
+        entries.sort_by_key(|entry| entry.file_name());
+        for entry in entries {
+            let path = entry.path();
+            let kind = entry
+                .file_type()
+                .with_context(|| format!("reading {}", path.display()))?;
+            ensure!(!kind.is_symlink(), "doctor refuses symlinks in the store");
+            if kind.is_dir() {
+                directories.push(path);
+            } else if kind.is_file() && path.extension().is_some_and(|ext| ext == "jsonl") {
+                paths.push(path);
+            }
+        }
+    }
+    paths.sort();
+    Ok(paths)
 }
 
 /// Scan an immutable snapshot; callers must export these same bytes.

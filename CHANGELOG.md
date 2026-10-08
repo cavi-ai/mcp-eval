@@ -13,6 +13,9 @@
 - Share export streams checked records into disk staging instead of retaining
   whole journals in memory. Source and normalized records are limited to 4 MiB;
   staging directories are owner-only on Unix.
+- Doctor streams every nested JSONL journal under a shared lock, limits physical
+  lines to 4 MiB, and refuses symlinks and unreadable entries instead of skipping
+  parts of the redaction sweep.
 
 ## 0.5.0
 

@@ -180,3 +180,151 @@ fn a_long_string_beginning_with_a_shape_token_prefix_is_still_flagged() {
         report.findings
     );
 }
+
+#[test]
+fn nested_journals_report_sorted_paths_and_physical_lines_without_content() {
+    let home = tempdir();
+    let nested = home.join("store/probes/server");
+    std::fs::create_dir_all(&nested).unwrap();
+    let annotation = nested.join("annotations-day.jsonl");
+    std::fs::write(
+        &annotation,
+        concat!(
+            "{\"note\":\"someone@example.com\"}\r\n",
+            "{\"note\":\"review me\",\"session\":\"someone@example.com\"}\r\n",
+        ),
+    )
+    .unwrap();
+    let calls = nested.join("calls-day.jsonl");
+    // A malformed, unterminated tail is still in scope for the text scan.
+    std::fs::write(&calls, "\r\n{}\r\nsomeone@example.com").unwrap();
+    let report = mcpeval::doctor::check_redaction(&home).unwrap();
+    assert_eq!(report.files, 2);
+    assert_eq!(report.notes_requiring_review, 2);
+    assert_eq!(
+        report.findings,
+        vec![
+            format!("{}:2", annotation.display()),
+            format!("{}:3", calls.display())
+        ]
+    );
+    let out = Command::new(bin())
+        .arg("doctor")
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(output.contains("calls-day.jsonl:3"));
+    assert!(!output.contains("someone@example.com"));
+    assert!(!output.contains("review me"));
+}
+
+#[test]
+fn physical_lines_are_limited_including_the_newline() {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let home = tempdir();
+    let path = home.join("store/calls-day.jsonl");
+    let mut line = vec![b' '; LIMIT - 1];
+    line.push(b'\n');
+    std::fs::write(&path, &line).unwrap();
+    assert!(mcpeval::doctor::check_redaction(&home)
+        .unwrap()
+        .findings
+        .is_empty());
+    line.insert(0, b' ');
+    std::fs::write(&path, &line).unwrap();
+    let error = mcpeval::doctor::check_redaction(&home)
+        .err()
+        .expect("oversized record must fail");
+    let message = format!("{error:#}");
+    assert!(message.contains("exceeds 4 MiB"), "{message}");
+    assert!(
+        message.contains("calls-day.jsonl") && message.contains("line 1"),
+        "{message}"
+    );
+}
+
+#[test]
+fn invalid_utf8_fails_with_a_location_without_disclosing_content() {
+    let home = tempdir();
+    std::fs::write(
+        home.join("store/calls-day.jsonl"),
+        b"{}\nprivate-canary\xff\n",
+    )
+    .unwrap();
+    let error = mcpeval::doctor::check_redaction(&home)
+        .err()
+        .expect("invalid UTF-8 must fail");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("calls-day.jsonl") && message.contains("line 2"),
+        "{message}"
+    );
+    assert!(!message.contains("private-canary"));
+}
+
+#[test]
+fn doctor_waits_for_the_journal_writer_lock() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+    let home = tempdir();
+    let path = home.join("store/calls-day.jsonl");
+    std::fs::write(&path, "{}\n").unwrap();
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
+    file.lock().unwrap();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (done_tx, done_rx) = mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        started_tx.send(()).unwrap();
+        done_tx
+            .send(mcpeval::doctor::check_redaction(&home).unwrap().files)
+            .unwrap();
+    });
+    started_rx.recv().unwrap();
+    let blocked = matches!(
+        done_rx.recv_timeout(Duration::from_millis(150)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    );
+    file.unlock().unwrap();
+    if blocked {
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)).unwrap(), 1);
+    }
+    worker.join().unwrap();
+    assert!(blocked, "doctor ignored the journal writer lock");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_store_files_directories_and_store_root_are_refused() {
+    for kind in ["file", "directory", "root"] {
+        let home = tempdir();
+        let outside = home.join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        let file = outside.join("calls-day.jsonl");
+        std::fs::write(&file, "{}\n").unwrap();
+        match kind {
+            "file" => {
+                std::os::unix::fs::symlink(&file, home.join("store/calls-day.jsonl")).unwrap()
+            }
+            "directory" => std::os::unix::fs::symlink(&outside, home.join("store/nested")).unwrap(),
+            "root" => {
+                std::fs::remove_dir(home.join("store")).unwrap();
+                std::os::unix::fs::symlink(&outside, home.join("store")).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        let error = mcpeval::doctor::check_redaction(&home)
+            .err()
+            .expect("symlinks must fail");
+        assert!(format!("{error:#}").contains("symlink"), "{error:#}");
+    }
+}

@@ -62,6 +62,26 @@ traversal. Values supplied by defaults,
 examples, enums, and constants also consume these budgets before cloning.
 Schemas exceeding a budget are reported as unsynthesizable rather than called.
 
+## Checking a capture store
+
+`mcpeval doctor` (also `doctor --check-redaction`) checks every JSONL file under
+`<MCPEVAL_HOME>/store/`, including nested probe history. It streams physical
+lines under a shared journal lock, with a 4 MiB limit including the newline.
+Symlinks, unreadable entries, invalid UTF-8, and oversized lines stop the scan;
+they cannot produce a successful check. Findings report file paths and physical
+line numbers without printing matched content.
+
+The scan preserves its text heuristics, including checking an unterminated final
+line; it does not validate JSON syntax. Annotation `note` fields remain exempt
+from automated detection, with non-empty notes counted for manual review. A
+passing scan is not proof that arbitrary metadata is safe to share.
+
+Journal payload memory is bounded by the line limit. Traversal metadata and
+reported findings grow with the number of paths and flagged lines. Locks
+coordinate cooperating journal writers per file, rather than freezing the
+entire directory tree; use a private, quiescent copy when inspecting a store
+that could otherwise change during the sweep.
+
 ## Producing the share envelope
 
 `mcpeval share --dir <directory>` snapshots every selected JSONL file under a shared journal lock, scans the exact exported bytes, and publishes the envelope only after the scan succeeds. Nested JSONL files are checked too; symlinks and output paths overlapping the capture store are refused. A flagged sweep exits `1` and publishes nothing. Invalid JSON records also stop export.

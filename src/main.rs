@@ -680,9 +680,13 @@ fn run() -> anyhow::Result<()> {
             );
             std::process::exit(mcpeval::exit::VERDICT);
         }
-        cli::Command::Index => {
+        cli::Command::Index { rebuild } => {
             let store = mcpeval::store::Store::open(None)?;
-            let stats = mcpeval::index::build(store.root())?;
+            let stats = if rebuild {
+                mcpeval::index::rebuild(store.root())?
+            } else {
+                mcpeval::index::build(store.root())?
+            };
             println!(
                 "indexed {} calls, {} failures, {} annotations",
                 stats.calls, stats.failures, stats.annotations

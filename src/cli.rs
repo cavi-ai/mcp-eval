@@ -414,9 +414,13 @@ pub enum Command {
         #[arg(last = true)]
         cmd: Vec<String>,
     },
-    /// Load JSONL records into the SQLite index and derive failure windows.
+    /// Refresh the SQLite index from JSONL records and derive failure windows.
     #[command(display_order = 12)]
-    Index,
+    Index {
+        /// Ignore cached checkpoints and reconstruct every derived row.
+        #[arg(long)]
+        rebuild: bool,
+    },
     /// Aggregate indexed failures into issues and promote supported findings.
     #[command(display_order = 13)]
     Promote {

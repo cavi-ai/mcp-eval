@@ -840,3 +840,303 @@ fn oversized_complete_journal_records_refuse_rebuild_without_replacing_index() {
         .unwrap();
     assert_eq!(calls, 0);
 }
+
+fn index_contents(root: &std::path::Path) -> Vec<Vec<Vec<String>>> {
+    let db = rusqlite::Connection::open(root.join("index.db")).unwrap();
+    ["calls", "windows", "annotations"]
+        .iter()
+        .map(|table| {
+            let mut query = db
+                .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+                .unwrap();
+            let columns = query.column_count();
+            query
+                .query_map([], |row| {
+                    Ok((0..columns)
+                        .map(|i| format!("{:?}", row.get_ref(i).unwrap()))
+                        .collect::<Vec<_>>())
+                })
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        })
+        .collect()
+}
+
+fn assert_matches_fresh_index(root: &std::path::Path) {
+    let fresh = tempdir();
+    std::fs::create_dir_all(fresh.join("store")).unwrap();
+    for entry in std::fs::read_dir(root.join("store")).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::copy(entry.path(), fresh.join("store").join(entry.file_name())).unwrap();
+    }
+    assert_eq!(index::build(root).unwrap(), index::build(&fresh).unwrap());
+    assert_eq!(index_contents(root), index_contents(&fresh));
+    std::fs::remove_dir_all(fresh).unwrap();
+}
+
+#[test]
+fn append_refresh_reuses_cached_rows_and_matches_clean_reconstruction() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let capture = uuid::Uuid::new_v4();
+    let first = identified(capture, 2, "error");
+    store.append(&first).unwrap();
+    index::build(&dir).unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    db.execute_batch("CREATE TRIGGER retained_calls BEFORE INSERT ON calls WHEN NEW.seq=2 BEGIN SELECT RAISE(ABORT,'historical row reinserted'); END;").unwrap();
+    for seq in [1, 3, 4] {
+        store.append(&identified(capture, seq, "ok")).unwrap();
+    }
+    assert_matches_fresh_index(&dir);
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='retained_calls'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    store.append(&first).unwrap();
+    assert_eq!(index::build(&dir).unwrap().replayed_events, 1);
+    assert_matches_fresh_index(&dir);
+}
+
+#[test]
+fn refreshed_calls_relink_annotations_and_remove_ambiguous_legacy_windows() {
+    use mcpeval::record::AnnotationRecord;
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store.append(&rec(1, "error")).unwrap();
+    store
+        .append_annotation(&AnnotationRecord {
+            ts: "2026-08-04T12:00:01Z".into(),
+            event_id: None,
+            session: Some("s1".into()),
+            seq: Some(1),
+            kind: "false-success".into(),
+            note: "legacy".into(),
+        })
+        .unwrap();
+    index::build(&dir).unwrap();
+    store.append(&rec(2, "ok")).unwrap();
+    assert_matches_fresh_index(&dir);
+    store.append(&rec(1, "ok")).unwrap();
+    assert_matches_fresh_index(&dir);
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE call_id IS NULL",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    assert_eq!(
+        db.query_row("SELECT COUNT(*) FROM windows", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn edited_removed_replaced_and_older_journals_match_clean_reconstruction() {
+    for mutation in [
+        "edit",
+        "truncate",
+        "remove",
+        "replace",
+        "older",
+        "append-older",
+    ] {
+        let dir = tempdir();
+        let mut store = Store::open(Some(dir.clone())).unwrap();
+        store.append(&rec(1, "error")).unwrap();
+        let path = dir.join("store/calls-2026-08-04.jsonl");
+        index::build(&dir).unwrap();
+        match mutation {
+            "edit" => {
+                let bytes = std::fs::read_to_string(&path).unwrap();
+                std::fs::write(&path, bytes.replace("error", "other")).unwrap();
+            }
+            "truncate" => {
+                std::fs::write(&path, b"").unwrap();
+            }
+            "remove" => {
+                std::fs::remove_file(&path).unwrap();
+            }
+            "replace" => {
+                std::fs::remove_file(&path).unwrap();
+                store.append(&rec(2, "ok")).unwrap();
+            }
+            "older" => {
+                store
+                    .append(&rec_for("s1", "demo", 2, "ok", "2026-08-03T12:00:00Z"))
+                    .unwrap();
+            }
+            "append-older" => {
+                store
+                    .append(&rec_for("s1", "demo", 3, "ok", "2026-08-05T12:00:00Z"))
+                    .unwrap();
+                index::build(&dir).unwrap();
+                store.append(&rec(2, "ok")).unwrap();
+            }
+            _ => unreachable!(),
+        }
+        assert_matches_fresh_index(&dir);
+    }
+}
+
+#[test]
+fn interrupted_appends_and_failed_refreshes_preserve_checkpoint_evidence() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let first = identified(uuid::Uuid::new_v4(), 1, "error");
+    store.append(&first).unwrap();
+    index::build(&dir).unwrap();
+    let path = dir.join("store/calls-2026-08-04.jsonl");
+    let before = std::fs::read(&path).unwrap();
+    let next = serde_json::to_vec(&identified(
+        first.identity.as_ref().unwrap().capture_id,
+        2,
+        "ok",
+    ))
+    .unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
+    file.write_all(&next[..next.len() / 2]).unwrap();
+    assert_matches_fresh_index(&dir);
+    file.write_all(&next[next.len() / 2..]).unwrap();
+    file.write_all(b"\n").unwrap();
+    assert_matches_fresh_index(&dir);
+    let valid = std::fs::read(&path).unwrap();
+    let snapshot = index_contents(&dir);
+    file.write_all(b"{bad}\n").unwrap();
+    assert!(index::build(&dir).is_err());
+    assert_eq!(index_contents(&dir), snapshot);
+    drop(file);
+    std::fs::write(&path, valid).unwrap();
+    assert_matches_fresh_index(&dir);
+    let mut conflicting = first;
+    conflicting.outcome = "ok".into();
+    store.append(&conflicting).unwrap();
+    assert!(index::build(&dir).is_err());
+    assert_eq!(index_contents(&dir), snapshot);
+    std::fs::write(&path, before).unwrap();
+    assert_matches_fresh_index(&dir);
+}
+
+#[test]
+fn index_rebuild_command_discards_the_cache_without_touching_journals() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store.append(&rec(1, "error")).unwrap();
+    index::build(&dir).unwrap();
+    let path = dir.join("store/calls-2026-08-04.jsonl");
+    let original = std::fs::read(&path).unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    db.execute("UPDATE calls SET outcome='ok'", []).unwrap();
+    let result = Command::new(env!("CARGO_BIN_EXE_mcpeval"))
+        .env("MCPEVAL_HOME", &dir)
+        .args(["index", "--rebuild"])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        db.query_row("SELECT outcome FROM calls", [], |row| row
+            .get::<_, String>(0))
+            .unwrap(),
+        "error"
+    );
+    assert_eq!(std::fs::read(path).unwrap(), original);
+}
+
+#[test]
+fn trailing_journals_and_late_events_refresh_retained_annotations() {
+    use mcpeval::record::AnnotationRecord;
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let event = identified(uuid::Uuid::new_v4(), 1, "error");
+    store
+        .append_annotation(&AnnotationRecord {
+            ts: "2026-08-04T12:00:01Z".into(),
+            event_id: Some(event.identity.as_ref().unwrap().event_id),
+            session: None,
+            seq: None,
+            kind: "false-success".into(),
+            note: "late".into(),
+        })
+        .unwrap();
+    index::build(&dir).unwrap();
+    store.append(&event).unwrap();
+    assert_matches_fresh_index(&dir);
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM annotations WHERE call_id IS NOT NULL",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    store
+        .append(&rec_for("s1", "demo", 2, "ok", "2026-08-05T12:00:00Z"))
+        .unwrap();
+    assert_matches_fresh_index(&dir);
+    store
+        .append_annotation(&AnnotationRecord {
+            ts: "2026-08-03T12:00:01Z".into(),
+            event_id: Some(event.identity.as_ref().unwrap().event_id),
+            session: None,
+            seq: None,
+            kind: "false-success".into(),
+            note: "older".into(),
+        })
+        .unwrap();
+    assert_matches_fresh_index(&dir);
+}
+
+#[test]
+fn changed_cached_schema_is_reconstructed_and_concurrent_refreshes_do_not_duplicate_calls() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    store.append(&rec(1, "error")).unwrap();
+    index::build(&dir).unwrap();
+    let db = rusqlite::Connection::open(dir.join("index.db")).unwrap();
+    db.execute_batch("DROP INDEX calls_issue").unwrap();
+    assert_matches_fresh_index(&dir);
+    assert_eq!(
+        db.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='calls_issue'",
+            [],
+            |r| r.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
+    store.append(&rec(2, "ok")).unwrap();
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let barrier = barrier.clone();
+            let dir = dir.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                index::build(&dir).unwrap()
+            })
+        })
+        .collect();
+    for worker in workers {
+        assert_eq!(worker.join().unwrap().calls, 2);
+    }
+    assert_matches_fresh_index(&dir);
+}

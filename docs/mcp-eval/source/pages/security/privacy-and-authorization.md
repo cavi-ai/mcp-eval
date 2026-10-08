@@ -71,6 +71,11 @@ oversized record is rejected before its journal file is opened, preserving
 existing journal bytes and avoiding an unreadable oversized append. Records
 are never truncated to meet the size limit.
 
+Readiness-history writers validate any supplied measurement profile using the
+same rules as history readers before creating directories or opening a journal.
+Invalid profiles are rejected without echoing their values or changing existing
+history. Older readiness records without a measurement profile remain supported.
+
 Encoding retains only a bounded record buffer. This does not bound caller-owned
 inputs or the in-memory sanitization of records constructed through the Rust
 API. The same per-record limit applies to indexing, trend loading, `doctor`,

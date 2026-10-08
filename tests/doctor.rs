@@ -184,7 +184,7 @@ fn a_long_string_beginning_with_a_shape_token_prefix_is_still_flagged() {
 #[test]
 fn nested_journals_report_sorted_paths_and_physical_lines_without_content() {
     let home = tempdir();
-    let nested = home.join("store/probes/server");
+    let nested = home.join("store").join("probes").join("server");
     std::fs::create_dir_all(&nested).unwrap();
     let annotation = nested.join("annotations-day.jsonl");
     std::fs::write(

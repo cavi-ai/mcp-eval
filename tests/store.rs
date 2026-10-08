@@ -45,6 +45,92 @@ fn appends_one_json_line_per_record() {
 }
 
 #[test]
+fn oversized_calls_leave_new_and_existing_journals_unchanged() {
+    for existing in [false, true] {
+        let dir = tempdir();
+        let mut store = Store::open(Some(dir.clone())).unwrap();
+        let path = dir.join("store").join("calls-2026-08-04.jsonl");
+        if existing {
+            store.append(&sample(1)).unwrap();
+        }
+        let before = std::fs::read(&path).ok();
+        let mut rec = sample(2);
+        let key = format!("synthetic-size-canary{}", "x".repeat(4 * 1024 * 1024));
+        rec.args = Some(json!({key: "str<8"}));
+        let error = store
+            .append(&rec)
+            .expect_err("oversized call must be rejected");
+        let message = format!("{error:#}");
+        assert!(message.contains("exceeds 4 MiB"), "{message}");
+        assert!(!message.contains("synthetic-size-canary"));
+        assert_eq!(std::fs::read(&path).ok(), before);
+        store.append(&sample(3)).unwrap();
+        assert!(mcpeval::doctor::check_redaction(&dir)
+            .unwrap()
+            .findings
+            .is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn call_write_limit_counts_encoded_utf8_escaping_and_newline() {
+    const LIMIT: usize = 4 * 1024 * 1024;
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let mut rec = sample(1);
+    rec.args = Some(json!({"": "str<8"}));
+    let overhead = serde_json::to_vec(&rec.sanitized()).unwrap().len() + 1;
+    // Each pair occupies three UTF-8 bytes but four encoded JSON bytes.
+    let available = LIMIT - overhead;
+    let mut key = "\"é".repeat(available / 4);
+    key.push_str(&"x".repeat(available % 4));
+    rec.args = Some(json!({key.clone(): "str<8"}));
+    store.append(&rec).unwrap();
+    let path = dir.join("store").join("calls-2026-08-04.jsonl");
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(bytes.len(), LIMIT);
+    assert_eq!(bytes.last(), Some(&b'\n'));
+    let persisted: CallRecord = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(persisted, rec.sanitized());
+    key.push('x');
+    rec.args = Some(json!({key: "str<8"}));
+    let error = store
+        .append(&rec)
+        .expect_err("newline-inclusive limit must hold");
+    assert!(format!("{error:#}").contains("exceeds 4 MiB"));
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn oversized_annotations_preserve_the_journal_and_bound_after_sanitizing() {
+    let dir = tempdir();
+    let mut store = Store::open(Some(dir.clone())).unwrap();
+    let mut rec = mcpeval::record::AnnotationRecord {
+        ts: "2026-08-04T12:00:00Z".into(),
+        event_id: Some(uuid::Uuid::new_v4()),
+        session: None,
+        seq: None,
+        kind: "workaround".into(),
+        note: "x".repeat(4 * 1024 * 1024),
+    };
+    // The existing note projection is applied before the encoded-size bound.
+    store.append_annotation(&rec).unwrap();
+    let path = dir.join("store").join("annotations-2026-08-04.jsonl");
+    let before = std::fs::read(&path).unwrap();
+    let stored: serde_json::Value = serde_json::from_slice(&before).unwrap();
+    assert_eq!(stored["note"].as_str().unwrap().len(), 240);
+    rec.ts.push_str(&"x".repeat(4 * 1024 * 1024));
+    let error = store
+        .append_annotation(&rec)
+        .expect_err("oversized annotation must be rejected");
+    assert!(format!("{error:#}").contains("exceeds 4 MiB"));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn concurrent_store_writers_produce_complete_json_lines() {
     const WRITERS: usize = 16;
     const RECORDS_PER_WRITER: usize = 1_000;

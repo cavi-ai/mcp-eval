@@ -50,6 +50,33 @@ fn fresh(root: &Path, last: usize) -> Vec<(String, String, u64)> {
 }
 
 #[test]
+fn oversized_trend_points_do_not_create_or_extend_history() {
+    let report = mcpeval::probe::ProbeReport {
+        readiness: Some(mcpeval::score::fold(&Default::default())),
+        ..Default::default()
+    };
+    let server = format!("synthetic-size-canary{}", "x".repeat(4 * 1024 * 1024));
+    for existing in [false, true] {
+        let home = Home::new();
+        if existing {
+            trends::record(&home.0, "demo", &report).unwrap();
+        }
+        let before = std::fs::read(home.journal()).ok();
+        let error = trends::record(&home.0, &server, &report)
+            .expect_err("oversized point must be rejected");
+        let message = format!("{error:#}");
+        assert!(message.contains("exceeds 4 MiB"), "{message}");
+        assert!(!message.contains("synthetic-size-canary"));
+        assert_eq!(std::fs::read(home.journal()).ok(), before);
+        trends::record(&home.0, "demo", &report).unwrap();
+        assert_eq!(
+            trends::load(&home.0, 10).unwrap().len(),
+            if existing { 2 } else { 1 }
+        );
+    }
+}
+
+#[test]
 fn append_refresh_reuses_history_and_preserves_ties_and_changing_limits() {
     let home = Home::new();
     home.append("b", "03", 30);

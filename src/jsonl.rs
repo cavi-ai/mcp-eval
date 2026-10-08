@@ -1,8 +1,33 @@
 //! Bounded journal records with strict complete-line parsing and tolerant tails.
 use anyhow::Context;
-use std::io::{BufRead, Read};
+use std::io::{BufRead, Read, Write};
 
 pub(crate) const MAX_RECORD_BYTES: usize = 4 * 1024 * 1024;
+
+/// Encode a complete bounded record before touching its journal. Count encoded
+/// UTF-8 bytes, escaping, and the newline; never truncate an oversized record.
+pub(crate) fn encode_record(record: &impl serde::Serialize) -> anyhow::Result<Vec<u8>> {
+    let mut buffer = RecordBuffer(Vec::new());
+    serde_json::to_writer(&mut buffer, record).context("encoding journal record")?;
+    buffer.write_all(b"\n")?;
+    Ok(buffer.0)
+}
+
+struct RecordBuffer(Vec<u8>);
+
+impl Write for RecordBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > MAX_RECORD_BYTES - self.0.len() {
+            return Err(std::io::Error::other("journal record exceeds 4 MiB"));
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
 /// Read one bounded physical line. Consumers choose their own EOF-tail policy.
 pub(crate) fn read_line(reader: &mut impl BufRead, line: &mut Vec<u8>) -> anyhow::Result<usize> {

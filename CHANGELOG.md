@@ -4,6 +4,9 @@
 
 ### Changed
 
+- Call, annotation, and readiness-history writes enforce the same 4 MiB encoded
+  record limit as journal readers, including JSON escaping and the newline.
+  Oversized records are rejected before creating or extending a journal.
 - History indexing reuses content-validated call and annotation checkpoints for
   append-safe journals, with atomic full reconstruction when cached inputs or
   ordering change. `index --rebuild` explicitly reconstructs derived rows.

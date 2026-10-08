@@ -62,6 +62,20 @@ traversal. Values supplied by defaults,
 examples, enums, and constants also consume these budgets before cloning.
 Schemas exceeding a budget are reported as unsynthesizable rather than called.
 
+## Journal record limits
+
+Call, annotation, and readiness-history writers limit each encoded JSONL record
+to 4 MiB, including UTF-8 bytes, JSON escaping, and the terminating newline.
+Sanitization and the existing annotation-note projection happen first. An
+oversized record is rejected before its journal file is opened, preserving
+existing journal bytes and avoiding an unreadable oversized append. Records
+are never truncated to meet the size limit.
+
+Encoding retains only a bounded record buffer. This does not bound caller-owned
+inputs or the in-memory sanitization of records constructed through the Rust
+API. The same per-record limit applies to indexing, trend loading, `doctor`,
+and share export.
+
 ## Checking a capture store
 
 `mcpeval doctor` (also `doctor --check-redaction`) checks every JSONL file under

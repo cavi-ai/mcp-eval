@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Readiness-history writes reject invalid measurement profiles before creating
+  or extending a journal. Older profile-less readiness records remain supported.
 - Call, annotation, and readiness-history writes enforce the same 4 MiB encoded
   record limit as journal readers, including JSON escaping and the newline.
   Oversized records are rejected before creating or extending a journal.

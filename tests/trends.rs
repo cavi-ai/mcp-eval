@@ -50,6 +50,101 @@ fn fresh(root: &Path, last: usize) -> Vec<(String, String, u64)> {
 }
 
 #[test]
+fn invalid_measurement_profiles_do_not_create_or_extend_history() {
+    let valid = mcpeval::measurement::MeasurementProfile::current(false, &[]);
+    let mut invalid = Vec::new();
+    let mut profile = valid.clone();
+    profile.schema = "synthetic-profile-canary".into();
+    invalid.push(profile);
+    let mut profile = valid.clone();
+    profile.evaluator_version = "synthetic-profile-canary".into();
+    invalid.push(profile);
+    let mut profile = valid.clone();
+    profile.client_capabilities = "synthetic-profile-canary".into();
+    invalid.push(profile);
+    let mut profile = valid.clone();
+    profile.skip_tools = vec!["synthetic-profile-canary".into(); 2];
+    invalid.push(profile);
+
+    for existing in [false, true] {
+        let home = Home::new();
+        let mut report = mcpeval::probe::ProbeReport {
+            readiness: Some(mcpeval::score::fold(&Default::default())),
+            ..Default::default()
+        };
+        if existing {
+            trends::record(&home.0, "demo", &report).unwrap();
+            trends::load(&home.0, 10).unwrap();
+        } else {
+            std::fs::remove_dir_all(&home.0).unwrap();
+        }
+        let before = std::fs::read(home.journal()).ok();
+        let cached = if existing {
+            let db = rusqlite::Connection::open(home.0.join("trends.db")).unwrap();
+            Some(
+                db.query_row(
+                    "SELECT (SELECT COUNT(*) FROM trend_points), offset FROM trend_checkpoint",
+                    [],
+                    |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                )
+                .unwrap(),
+            )
+        } else {
+            None
+        };
+        for profile in &invalid {
+            report.readiness.as_mut().unwrap().measurement_profile = Some(profile.clone());
+            let expected = profile.validate().unwrap_err().to_string();
+            let error = trends::record(&home.0, "demo", &report)
+                .expect_err("invalid measurement profile must be rejected");
+            let message = format!("{error:#}");
+            assert!(message.contains(&expected), "{message}");
+            assert!(!message.contains("synthetic-profile-canary"));
+            assert_eq!(std::fs::read(home.journal()).ok(), before);
+            if let Some(cached) = cached {
+                let db = rusqlite::Connection::open(home.0.join("trends.db")).unwrap();
+                assert_eq!(
+                    db.query_row(
+                        "SELECT (SELECT COUNT(*) FROM trend_points), offset FROM trend_checkpoint",
+                        [],
+                        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+                    )
+                    .unwrap(),
+                    cached
+                );
+                assert_eq!(trends::load(&home.0, 10).unwrap().len(), 1);
+            } else {
+                assert!(!home.0.exists());
+            }
+        }
+        report.readiness.as_mut().unwrap().measurement_profile = Some(valid.clone());
+        trends::record(&home.0, "demo", &report).unwrap();
+        let points = trends::load(&home.0, 10).unwrap();
+        assert_eq!(points.len(), if existing { 2 } else { 1 });
+        assert_eq!(
+            points.last().unwrap().measurement_profile.as_ref(),
+            Some(&valid)
+        );
+    }
+}
+
+#[test]
+fn profile_less_readiness_is_preserved_and_gate_only_runs_write_nothing() {
+    let home = Home::new();
+    let report = mcpeval::probe::ProbeReport {
+        readiness: Some(mcpeval::score::fold(&Default::default())),
+        ..Default::default()
+    };
+    trends::record(&home.0, "demo", &report).unwrap();
+    let before = std::fs::read(home.journal()).unwrap();
+    trends::record(&home.0, "demo", &Default::default()).unwrap();
+    assert_eq!(std::fs::read(home.journal()).unwrap(), before);
+    let points = trends::load(&home.0, 10).unwrap();
+    assert_eq!(points.len(), 1);
+    assert!(points[0].measurement_profile.is_none());
+}
+
+#[test]
 fn oversized_trend_points_do_not_create_or_extend_history() {
     let report = mcpeval::probe::ProbeReport {
         readiness: Some(mcpeval::score::fold(&Default::default())),

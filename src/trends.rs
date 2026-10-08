@@ -77,6 +77,11 @@ pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result
     let Some(readiness) = &report.readiness else {
         return Ok(());
     };
+    if let Some(profile) = &readiness.measurement_profile {
+        profile
+            .validate()
+            .context("invalid trend measurement profile")?;
+    }
     let point = TrendPoint {
         ts: chrono::Utc::now()
             .format("%Y-%m-%dT%H:%M:%S%.3fZ")

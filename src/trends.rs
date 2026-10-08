@@ -73,10 +73,6 @@ impl TrendPoint {
 }
 
 pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result<()> {
-    let path = history_path(root);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).context("creating trend directory")?;
-    }
     // A point is a readiness measurement: gate-only runs record none.
     let Some(readiness) = &report.readiness else {
         return Ok(());
@@ -94,17 +90,19 @@ pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result
         standard: Some(readiness.standard.clone()),
         measurement_profile: readiness.measurement_profile.clone(),
     };
+    let line = crate::jsonl::encode_record(&point)?;
+    let path = history_path(root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).context("creating trend directory")?;
+    }
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .read(true)
         .append(true)
         .open(&path)
         .context("opening trend history")?;
-    let mut line = serde_json::to_string(&point)?;
-    line.push('\n');
     file.lock().context("locking trend history")?;
-    file.write_all(line.as_bytes())
-        .context("appending trend point")?;
+    file.write_all(&line).context("appending trend point")?;
     file.unlock().context("unlocking trend history")?;
     Ok(())
 }

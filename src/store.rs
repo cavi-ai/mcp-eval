@@ -36,6 +36,7 @@ impl Store {
             identity.validate()?;
         }
         let safe = rec.sanitized();
+        let line = crate::jsonl::encode_record(&safe)?;
         let day = safe.ts.get(..10).unwrap_or("unknown");
         let path = self.root.join("store").join(format!("calls-{day}.jsonl"));
         let mut file = OpenOptions::new()
@@ -46,9 +47,7 @@ impl Store {
             .with_context(|| format!("opening {}", path.display()))?;
         file.lock()
             .with_context(|| format!("locking {}", path.display()))?;
-        let mut line = serde_json::to_string(&safe)?;
-        line.push('\n');
-        file.write_all(line.as_bytes())?;
+        file.write_all(&line)?;
         file.unlock()
             .with_context(|| format!("unlocking {}", path.display()))?;
         Ok(())
@@ -62,6 +61,8 @@ impl Store {
     /// directly without validating first.
     pub fn append_annotation(&mut self, rec: &AnnotationRecord) -> anyhow::Result<()> {
         rec.validate_target()?;
+        let safe = rec.sanitized();
+        let line = crate::jsonl::encode_record(&safe)?;
         let day = rec.ts.get(..10).unwrap_or("unknown");
         let path = self
             .root
@@ -75,10 +76,7 @@ impl Store {
             .with_context(|| format!("opening {}", path.display()))?;
         file.lock()
             .with_context(|| format!("locking {}", path.display()))?;
-        let safe = rec.sanitized();
-        let mut line = serde_json::to_string(&safe)?;
-        line.push('\n');
-        file.write_all(line.as_bytes())?;
+        file.write_all(&line)?;
         file.unlock()
             .with_context(|| format!("unlocking {}", path.display()))?;
         Ok(())

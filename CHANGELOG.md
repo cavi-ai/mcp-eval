@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- History indexing reuses content-validated call and annotation checkpoints for
+  append-safe journals, with atomic full reconstruction when cached inputs or
+  ordering change. `index --rebuild` explicitly reconstructs derived rows.
+
 ## 0.5.0
 
 ### Added

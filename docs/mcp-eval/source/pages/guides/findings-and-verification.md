@@ -8,6 +8,35 @@ mcpeval promote
 mcpeval findings --format md
 ```
 
+`index` retains content-validated checkpoints in the private derived database.
+It reuses indexed calls and annotations when journals extend the existing
+sorted file order. Changes to indexed bytes, truncation, removed files, older
+files or earlier-file appends trigger full reconstruction. Identical replacement
+bytes can reuse the cache; file timestamps alone never establish identity.
+Incomplete trailing records are retried when completed. Complete malformed or
+oversized records and conflicting event identities reject the refresh, retaining
+the previous index and checkpoints.
+
+Historical bytes are still read and hashed, so validation remains proportional
+to retained journal size. When calls change, correlation windows and annotation
+links are recomputed over indexed data. This avoids reparsing and reinserting
+unchanged records; it does not provide constant-time history processing. Recent
+readiness trends continue to scan their separate history journal.
+
+Force reconstruction after repairing or replacing a derived cache:
+
+```sh
+mcpeval index --rebuild
+mcpeval promote
+```
+
+Both modes replace derived findings; rerun promotion afterward. They leave
+journals and durable lifecycle evidence intact. Indexing uses shared journal
+locks compatible with capture writers and checks observed bytes again before
+committing. External editors that ignore locks can still change and restore
+bytes between checks; use controlled, immutable journal copies when that race
+matters.
+
 A finding keeps every distinct error code of its group in `err_codes` and the most frequent in `err_code`. Each finding carries a defect class and a one-line server-side fix hint; when several classes apply, the first in this order wins:
 
 | Class | Evidence |

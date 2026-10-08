@@ -10,6 +10,9 @@
 - Readiness history coordinates readers and writers with journal locks and
   reuses a private, content-validated cache for complete append records. Changed
   inputs rebuild atomically; unavailable caches fall back to a locked scan.
+- Share export streams checked records into disk staging instead of retaining
+  whole journals in memory. Source and normalized records are limited to 4 MiB;
+  staging directories are owner-only on Unix.
 
 ## 0.5.0
 

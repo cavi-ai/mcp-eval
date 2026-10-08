@@ -279,6 +279,166 @@ fn share_rejects_an_output_inside_the_capture_store() {
     assert!(!out.exists());
 }
 
+#[test]
+fn oversized_share_records_preserve_prior_envelope_and_leave_no_staging() {
+    for newline in [true, false] {
+        let dir = home();
+        std::fs::create_dir_all(dir.join("store")).unwrap();
+        let mut bytes = String::from("{\"shape\":\"enum:");
+        bytes.push_str(&"x".repeat(4 * 1024 * 1024));
+        bytes.push_str("\"}");
+        if newline {
+            bytes.push('\n');
+        }
+        std::fs::write(dir.join("store/oversized.jsonl"), &bytes).unwrap();
+        let out = dir.join("envelope");
+        std::fs::create_dir(&out).unwrap();
+        std::fs::write(out.join("preserve.txt"), "prior envelope").unwrap();
+        let result = Command::new(bin())
+            .args(["share", "--force", "--dir"])
+            .arg(&out)
+            .env("MCPEVAL_HOME", &dir)
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "oversized record was exported");
+        assert!(String::from_utf8_lossy(&result.stderr).contains("4 MiB"));
+        assert_eq!(
+            std::fs::read_to_string(out.join("preserve.txt")).unwrap(),
+            "prior envelope"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("store/oversized.jsonl")).unwrap(),
+            bytes
+        );
+        assert!(std::fs::read_dir(&dir).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".mcpeval-share-")));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
+fn many_records_and_complete_unterminated_tail_export_the_checked_normalization() {
+    let dir = home();
+    std::fs::create_dir_all(dir.join("store/nested")).unwrap();
+    let input = "\r\n{ \"value\" : 42, \"shape\" : \"str<32\" }\r\n".repeat(4096);
+    std::fs::write(dir.join("store/calls.jsonl"), &input).unwrap();
+    std::fs::write(dir.join("store/nested/final.jsonl"), b"{\"value\":43}").unwrap();
+    let out = dir.join("envelope");
+    let result = Command::new(bin())
+        .args(["share", "--dir"])
+        .arg(&out)
+        .env("MCPEVAL_HOME", &dir)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    assert_eq!(
+        std::fs::read_to_string(out.join("store/calls.jsonl")).unwrap(),
+        "{\"shape\":\"str<32\",\"value\":42}\n".repeat(4096)
+    );
+    assert_eq!(
+        std::fs::read(out.join("store/nested/final.jsonl")).unwrap(),
+        b"{\"value\":43}\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.join("store/calls.jsonl")).unwrap(),
+        input
+    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&out).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn share_limit_includes_the_normalized_newline_at_eof() {
+    let dir = home();
+    std::fs::create_dir_all(dir.join("store")).unwrap();
+    let prefix = "{\"shape\":\"enum:";
+    let suffix = "\"}";
+    let bound = 4 * 1024 * 1024;
+    for extra in [0, 1] {
+        let bytes = format!(
+            "{prefix}{}{suffix}",
+            "x".repeat(bound - prefix.len() - suffix.len() - 1 + extra)
+        );
+        std::fs::write(dir.join("store/boundary.jsonl"), &bytes).unwrap();
+        let out = dir.join(format!("envelope-{extra}"));
+        let result = Command::new(bin())
+            .args(["share", "--dir"])
+            .arg(&out)
+            .env("MCPEVAL_HOME", &dir)
+            .output()
+            .unwrap();
+        if extra == 0 {
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert_eq!(
+                std::fs::read_to_string(out.join("store/boundary.jsonl")).unwrap(),
+                format!("{bytes}\n")
+            );
+        } else {
+            assert!(
+                !result.status.success(),
+                "normalization exported a record beyond the limit"
+            );
+            assert!(String::from_utf8_lossy(&result.stderr).contains("4 MiB"));
+            assert!(!out.exists());
+        }
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn malformed_late_snapshot_rejects_force_without_publishing_earlier_records() {
+    let dir = home();
+    std::fs::create_dir_all(dir.join("store/nested")).unwrap();
+    std::fs::write(dir.join("store/a.jsonl"), b"{\"shape\":\"str<32\"}\n").unwrap();
+    let out = dir.join("envelope");
+    std::fs::create_dir(&out).unwrap();
+    std::fs::write(out.join("preserve.txt"), "prior envelope").unwrap();
+    for tail in [
+        b"{bad}\n".as_slice(),
+        b"{\"unfinished\":".as_slice(),
+        b"[]\n".as_slice(),
+        &[0xff, b'\n'],
+    ] {
+        std::fs::write(dir.join("store/nested/z.jsonl"), tail).unwrap();
+        let result = Command::new(bin())
+            .args(["share", "--force", "--dir"])
+            .arg(&out)
+            .env("MCPEVAL_HOME", &dir)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert_eq!(
+            std::fs::read_to_string(out.join("preserve.txt")).unwrap(),
+            "prior envelope"
+        );
+        assert!(!out.join("store/a.jsonl").exists());
+        assert!(std::fs::read_dir(&dir).unwrap().all(|entry| !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".mcpeval-share-")));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[cfg(unix)]
 #[test]
 fn share_rejects_symlinked_source_files_and_output_directories() {

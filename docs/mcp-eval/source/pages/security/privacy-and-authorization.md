@@ -66,6 +66,18 @@ Schemas exceeding a budget are reported as unsynthesizable rather than called.
 
 `mcpeval share --dir <directory>` snapshots every selected JSONL file under a shared journal lock, scans the exact exported bytes, and publishes the envelope only after the scan succeeds. Nested JSONL files are checked too; symlinks and output paths overlapping the capture store are refused. A flagged sweep exits `1` and publishes nothing. Invalid JSON records also stop export.
 
+Records are normalized, checked, and streamed into a staging directory beside
+the requested envelope; full journals are not retained in memory. Both source
+records and normalized output records are limited to 4 MiB, including their
+newline. A complete JSON object at EOF is accepted and receives a newline;
+an incomplete trailing record rejects export. Privacy and parsing failures
+discard staging and preserve the prior envelope. Source journals are unchanged.
+
+Staging and the published envelope have owner-only directory permissions on
+Unix. On Windows, access depends on the parent's ACLs; use a private parent.
+Export requires temporary disk space proportional to the selected envelope.
+Directory traversal metadata still grows with the number of selected files.
+
 The envelope contains JSONL records, typed annotation metadata, and a `SHARE.md` manifest. Annotation prose is omitted by default; after manual review, `--include-annotation-notes` explicitly includes it and prints a warning. `--include-probe-history` includes readiness-trend history. The redaction scan is a heuristic, not proof that arbitrary metadata is non-sensitive.
 
 The fingerprint salt, databases (including authoritative `lifecycle.db`), and manifests are excluded. Keep any file containing the salt separate. `--force` replaces the entire prior envelope after successful preparation; a refused export preserves it.

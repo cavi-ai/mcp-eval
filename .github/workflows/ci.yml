@@ -21,6 +21,7 @@ jobs:
     name: rust · build · test · lint
     if: ${{ !github.event.repository.private }} # public repos only (Actions is billed when private)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -55,9 +56,15 @@ jobs:
         # Timing budgets share this runner with the native fixture tests.
         # Serialize tests so our own workloads cannot overlap measurements.
         run: cargo test --all-targets --locked -- --test-threads=1
+        timeout-minutes: 30
+
+      - name: Build release timing tests
+        run: cargo test --release --locked --test overhead --no-run
+        timeout-minutes: 20
 
       - name: Release shim timing budgets
         run: cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
+        timeout-minutes: 5
 
       - name: Version and naming agreement
         # One tag ships binaries, npm, and the crate, so a version that
@@ -71,6 +78,7 @@ jobs:
     # of the tag.
     if: ${{ !github.event.repository.private }}
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -94,14 +102,21 @@ jobs:
 
       - name: Test
         run: cargo test --all-targets --locked -- --test-threads=1
+        timeout-minutes: 30
+
+      - name: Build release timing tests
+        run: cargo test --release --locked --test overhead --no-run
+        timeout-minutes: 20
 
       - name: Release shim timing budgets
         run: cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
+        timeout-minutes: 5
 
   macos:
     name: macos · build · test
     if: ${{ !github.event.repository.private }}
     runs-on: macos-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
@@ -125,9 +140,15 @@ jobs:
 
       - name: Test
         run: cargo test --all-targets --locked -- --test-threads=1
+        timeout-minutes: 30
+
+      - name: Build release timing tests
+        run: cargo test --release --locked --test overhead --no-run
+        timeout-minutes: 20
 
       - name: Release shim timing budgets
         run: cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
+        timeout-minutes: 5
 
   node:
     name: node · distribution · docs

@@ -21,7 +21,8 @@ Historical bytes are still read and hashed, so validation remains proportional
 to retained journal size. When calls change, correlation windows and annotation
 links are recomputed over indexed data. This avoids reparsing and reinserting
 unchanged records; it does not provide constant-time history processing. Recent
-readiness trends continue to scan their separate history journal.
+readiness trends use a separate validated cache and retain the same historical
+byte-validation cost.
 
 Force reconstruction after repairing or replacing a derived cache:
 

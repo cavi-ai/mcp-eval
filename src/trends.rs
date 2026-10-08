@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::probe::ProbeReport;
 
+mod cache;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrendPoint {
     pub ts: String,
@@ -94,10 +96,16 @@ pub fn record(root: &Path, server: &str, report: &ProbeReport) -> anyhow::Result
     };
     let mut file = std::fs::OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(&path)
         .context("opening trend history")?;
-    writeln!(file, "{}", serde_json::to_string(&point)?).context("appending trend point")?;
+    let mut line = serde_json::to_string(&point)?;
+    line.push('\n');
+    file.lock().context("locking trend history")?;
+    file.write_all(line.as_bytes())
+        .context("appending trend point")?;
+    file.unlock().context("unlocking trend history")?;
     Ok(())
 }
 
@@ -112,10 +120,27 @@ pub fn load(root: &Path, last: usize) -> anyhow::Result<Vec<TrendPoint>> {
     if !path.is_file() {
         return Ok(Vec::new());
     }
+    let mut file = locked_history(&path)?;
+    if let Ok(points) = cache::load(root, &path, &mut file, last) {
+        return Ok(points);
+    }
+    // A derived cache is optional. Reopen the journal in case it was replaced
+    // during refresh; unavailable or corrupt caches never supply stale rows.
+    drop(file);
+    let file = locked_history(&path)?;
+    scan(&mut std::io::BufReader::new(file), last)
+}
+
+fn locked_history(path: &Path) -> anyhow::Result<std::fs::File> {
+    let file = std::fs::File::open(path).context("opening trend history")?;
+    file.lock_shared().context("locking trend history")?;
+    Ok(file)
+}
+
+fn scan(reader: &mut impl std::io::BufRead, last: usize) -> anyhow::Result<Vec<TrendPoint>> {
     let mut groups: std::collections::BTreeMap<String, Vec<TrendPoint>> =
         std::collections::BTreeMap::new();
-    let mut reader = std::io::BufReader::new(std::fs::File::open(&path)?);
-    crate::jsonl::visit(&mut reader, |point: TrendPoint| {
+    crate::jsonl::visit(reader, |point: TrendPoint| {
         if let Some(profile) = &point.measurement_profile {
             profile.validate()?;
         }

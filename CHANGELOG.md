@@ -7,6 +7,9 @@
 - History indexing reuses content-validated call and annotation checkpoints for
   append-safe journals, with atomic full reconstruction when cached inputs or
   ordering change. `index --rebuild` explicitly reconstructs derived rows.
+- Readiness history coordinates readers and writers with journal locks and
+  reuses a private, content-validated cache for complete append records. Changed
+  inputs rebuild atomically; unavailable caches fall back to a locked scan.
 
 ## 0.5.0
 

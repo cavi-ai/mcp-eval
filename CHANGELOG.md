@@ -2,8 +2,28 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-10-08
+
+### Added
+
+- Readiness reports and history record measurement profiles covering evaluator
+  version, platform, architecture, client capabilities, read-only attestation,
+  skip rules, timeout, and repetition count. Reports identify structural
+  assessment separately from semantic correctness, which requires a reviewed oracle.
+- Corpus targets accept reviewed read-only assessment policies and tool
+  exclusions. Collection and replay retain these policies and detect profile
+  drift; `--require-deployments` requires prepared deployment locks.
+
 ### Changed
 
+- Readiness score deltas and corpus placement require the same standard and
+  known, matching measurement profiles. Older reports remain readable without
+  inferring missing conditions; the standard/2 scoring policy is unchanged.
+- Finding verification binds resolved stdio executables and regular file
+  arguments by their bytes, with checks before launch and before recording credit.
+  Changed launch artifacts restart the passing streak or prevent new credit.
+- Findings tools distinguish unavailable, corrupt, or incomplete index evidence
+  from an empty valid index, and report an explicit unavailable-evidence error.
 - Readiness-history writes reject invalid measurement profiles before creating
   or extending a journal. Older profile-less readiness records remain supported.
 - Call, annotation, and readiness-history writes enforce the same 4 MiB encoded

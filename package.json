@@ -1,6 +1,6 @@
 {
   "name": "@cavi-ai/mcp-eval",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Checksummed native distribution of the MCP Eval CLI",
   "license": "MIT",
   "repository": {

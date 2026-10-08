@@ -296,6 +296,7 @@ fn representative_large_frame_stays_under_the_same_two_millisecond_budget() {
     shimmed.finish().unwrap();
 
     let added = through.saturating_sub(baseline);
+    eprintln!("large-frame overhead: bytes={} baseline={baseline}us shimmed={through}us added={added}us budget=2000us", message.len());
     assert!(
         added < 2_000,
         "large-frame shim added {added}us (baseline {baseline}us, shimmed {through}us)"
@@ -321,9 +322,9 @@ fn shim_adds_under_two_milliseconds_at_p95() {
     direct
         .round_trip(WARM_UP_ID)
         .expect("direct warm-up round trip");
-    let baseline = p95(direct
+    let baseline_samples = direct
         .round_trips(TIMED_SAMPLES)
-        .expect("direct timed round trips"));
+        .expect("direct timed round trips");
     direct
         .finish()
         .expect("direct child must exit successfully");
@@ -332,15 +333,19 @@ fn shim_adds_under_two_milliseconds_at_p95() {
     shimmed
         .round_trip(WARM_UP_ID)
         .expect("shimmed warm-up round trip");
-    let through = p95(shimmed
+    let shimmed_samples = shimmed
         .round_trips(TIMED_SAMPLES)
-        .expect("shimmed timed round trips"));
+        .expect("shimmed timed round trips");
     shimmed
         .finish()
         .expect("shimmed child must exit successfully");
 
+    let baseline_max = baseline_samples.iter().max().copied().unwrap();
+    let shimmed_max = shimmed_samples.iter().max().copied().unwrap();
+    let baseline = p95(baseline_samples);
+    let through = p95(shimmed_samples);
     let added = through.saturating_sub(baseline);
-    eprintln!("overhead p95: baseline={baseline}us shimmed={through}us added={added}us");
+    eprintln!("overhead p95: samples={TIMED_SAMPLES} baseline={baseline}us shimmed={through}us added={added}us baseline_max={baseline_max}us shimmed_max={shimmed_max}us budget=2000us os={} arch={} debug_assertions={}", std::env::consts::OS, std::env::consts::ARCH, cfg!(debug_assertions));
     assert!(
         added < 2_000,
         "shim added {added}us at p95 (baseline {baseline}us, shimmed {through}us)"

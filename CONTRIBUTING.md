@@ -9,7 +9,7 @@ Install the Rust toolchain declared in `rust-toolchain.toml`, then build and tes
 
 ```sh
 cargo build
-cargo test --all-targets
+cargo test --all-targets --locked -- --test-threads=1
 ```
 
 ## Pull requests
@@ -23,15 +23,22 @@ cargo test --all-targets
 - Use synthetic fixtures. Privacy canaries must be obviously fictitious and must
   be asserted absent from persisted output.
 
-Before opening a pull request, run:
+Before opening a pull request, run every command in [`.pr-gates`](.pr-gates)
+and the full release suite. The native test lanes include:
 
 ```sh
-cargo fmt -- --check
-cargo test --all-targets
-cargo clippy --all-targets -- -D warnings
-cargo test --release
-git diff --check
+cargo test --all-targets --locked -- --test-threads=1
+cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
+cargo test --release --locked -- --test-threads=1
 ```
+
+Native tests run serially to prevent fixture workloads from overlapping timing
+measurements. The release lane also exercises the large-frame budget, which is
+not compiled in debug builds. Both timing limits remain 2 ms; output records
+baseline and shim timings, with sample counts and maxima for the p95 check.
+Run these lanes on a quiet machine. Serialization controls this test suite,
+not unrelated host processes. Investigate a failure using the recorded
+measurements; a passing retry alone does not establish its cause.
 
 ## Privacy boundary
 

@@ -2,7 +2,8 @@
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo build --all-targets --locked
-cargo test --all-targets --locked
+cargo test --all-targets --locked -- --test-threads=1
+cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
 python3 scripts/check-version-agreement.py
 npm run docs:build
 npm run docs:verify

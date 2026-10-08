@@ -52,7 +52,12 @@ jobs:
         run: cargo build --all-targets --locked
 
       - name: Test
-        run: cargo test --all-targets --locked
+        # Timing budgets share this runner with the native fixture tests.
+        # Serialize tests so our own workloads cannot overlap measurements.
+        run: cargo test --all-targets --locked -- --test-threads=1
+
+      - name: Release shim timing budgets
+        run: cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
 
       - name: Version and naming agreement
         # One tag ships binaries, npm, and the crate, so a version that
@@ -88,7 +93,10 @@ jobs:
           python-version: "3.x"
 
       - name: Test
-        run: cargo test --all-targets --locked
+        run: cargo test --all-targets --locked -- --test-threads=1
+
+      - name: Release shim timing budgets
+        run: cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
 
   macos:
     name: macos · build · test
@@ -116,7 +124,10 @@ jobs:
           python-version: "3.x"
 
       - name: Test
-        run: cargo test --all-targets --locked
+        run: cargo test --all-targets --locked -- --test-threads=1
+
+      - name: Release shim timing budgets
+        run: cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
 
   node:
     name: node · distribution · docs

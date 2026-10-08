@@ -128,11 +128,11 @@ their missing conditions are reported as unavailable rather than inferred.
 Target deployments and backing state must still be controlled by the operator.
 
 Index rebuilds stream journal records into a transaction with disk-backed scratch
-tables. Recent trends retain at most the requested count per server while scanning
-history. Both readers reject records larger than 4 MiB and tolerate an unfinished
-trailing record from an active writer. Index failures preserve the prior database.
-Rebuild and history-scan time still grow with the retained journal; there is no
-automatic pruning or incremental checkpointing.
+tables. Index and trend refreshes use content-validated checkpoints to parse only
+complete append records when cached inputs remain compatible. Both readers reject
+records larger than 4 MiB and tolerate an unfinished trailing record. Rejected
+refreshes preserve the prior cache generation. Historical byte validation and
+derived queries still grow with retained history; there is no automatic pruning.
 
 The shipped corpus is a historical `mcpeval-standard/1` snapshot. Its readiness scores are not compared with `mcpeval-standard/2`; catalog token comparisons remain available. Recollect under the current standard to produce a new readiness baseline. The placement example below belongs to a standard/1 report.
 
@@ -170,6 +170,21 @@ Every full-battery run that measured readiness appends a content-free record —
 ```sh
 mcpeval trends --last 5
 ```
+
+Trend writers take an exclusive journal lock for each complete line; readers
+take a shared lock. Readers cache validated records in `<MCPEVAL_HOME>/trends.db`,
+outside the shareable `store/` directory. Changed or truncated journal bytes and
+incompatible cached schemas trigger atomic reconstruction. An unavailable or
+corrupt cache falls back to a locked full scan, so read-only copies remain usable
+and journal corruption still fails the request. With evaluations stopped, remove
+`trends.db` to discard derived rows; the next read reconstructs them from history.
+
+The returned count can change without rebuilding: points remain ordered by
+server and timestamp, with append order breaking equal timestamps. Historical
+bytes are still hashed, and cached queries still traverse retained data; this
+avoids repeated parsing rather than making reads constant-time. External editors
+that ignore locks can replace or change and restore files between checks; use
+controlled, immutable copies when that race matters.
 
 ```text
 demo

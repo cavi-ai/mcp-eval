@@ -220,6 +220,63 @@ fn findings_queries_report_unavailable_evidence_without_private_diagnostics() {
 }
 
 #[test]
+fn invalid_tool_arguments_are_refused_with_32602_naming_the_path_without_values() {
+    let dir = home();
+    let (_server, port) = start_serve(&dir, &[]);
+    let endpoint = format!("http://127.0.0.1:{port}/mcp");
+    let mut messages = Vec::new();
+    for (tool, arguments, needle, canary) in [
+        ("list_findings", json!({"state": 5}), "/state", false),
+        ("get_finding", json!({}), "finding_id", false),
+        (
+            "list_findings",
+            json!({"state": {"k": "CANARY_7Q"}}),
+            "/state",
+            true,
+        ),
+        (
+            "get_finding",
+            json!({"finding_id": ["CANARY_7Q"]}),
+            "/finding_id",
+            true,
+        ),
+        (
+            "get_finding",
+            json!({"finding_id": 5, "extra": "CANARY_7Q"}),
+            "/finding_id",
+            true,
+        ),
+    ] {
+        let (status, response) = call(&endpoint, tool, arguments);
+        assert_eq!(status, 200);
+        assert_eq!(response["error"]["code"], -32602, "{response}");
+        let message = response["error"]["message"].as_str().unwrap().to_owned();
+        assert!(message.contains(needle), "{response}");
+        if canary {
+            assert!(!response.to_string().contains("CANARY_7Q"), "{response}");
+        }
+        messages.push(message);
+    }
+    for message in &messages {
+        assert!(message.chars().count() <= 240, "{message}");
+    }
+    let other = home();
+    promoted_finding(&other);
+    let (_loaded, port) = start_serve(&other, &[]);
+    let (status, response) = call(
+        &format!("http://127.0.0.1:{port}/mcp"),
+        "get_finding",
+        json!({"finding_id": "finding-0000000000000000"}),
+    );
+    assert_eq!(status, 200);
+    assert_eq!(response["error"]["code"], -32000, "{response}");
+    assert_eq!(
+        response["error"]["message"], "no such finding",
+        "{response}"
+    );
+}
+
+#[test]
 fn serve_exposes_findings_and_trends_over_streamable_http() {
     let dir = home();
     // Two full-battery runs record two trend points.
@@ -650,6 +707,7 @@ fn shipped_service_passes_ping_and_exercises_its_read_only_contract_over_http() 
                         "protocol-ping-failed"
                             | "catalog-no-output-schema"
                             | "reliability-output-schema-broken"
+                            | "honesty-wrong-code"
                     )
                 ),
                 "{check}"
@@ -661,6 +719,14 @@ fn shipped_service_passes_ping_and_exercises_its_read_only_contract_over_http() 
         invalid.get("error").is_some(),
         "invalid declared input was accepted: {invalid}"
     );
+    assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
+    let honesty = report["readiness"]["areas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|area| area["name"] == "error-honesty")
+        .unwrap_or_else(|| panic!("error-honesty area missing: {report}"));
+    assert_eq!(honesty["score"], 100, "{honesty}");
 }
 
 #[test]

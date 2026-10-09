@@ -28,6 +28,19 @@ use serde_json::{json, Value};
 
 use crate::loopback::Provenance;
 
+/// A `tools/call` refused because its arguments violate the declared input
+/// schema; answered with JSON-RPC -32602.
+#[derive(Debug)]
+struct InvalidParams(String);
+
+impl std::fmt::Display for InvalidParams {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for InvalidParams {}
+
 const IO_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_BODY_BYTES: usize = 1024 * 1024;
 const MAX_HEADER_BYTES: usize = 16 * 1024;
@@ -115,11 +128,18 @@ fn handle_connection(stream: &mut TcpStream, server: &Server) -> anyhow::Result<
         }
         Some("tools/call") => match handle_call(&message, server) {
             Ok(result) => json!({"jsonrpc": "2.0", "id": message["id"], "result": result}),
-            Err(error) => json!({
-                "jsonrpc": "2.0",
-                "id": message["id"],
-                "error": {"code": -32000, "message": error.to_string()}
-            }),
+            Err(error) => {
+                let code = if error.is::<InvalidParams>() {
+                    -32602
+                } else {
+                    -32000
+                };
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": message["id"],
+                    "error": {"code": code, "message": error.to_string()}
+                })
+            }
         },
         Some(method) => json!({
             "jsonrpc": "2.0",
@@ -406,10 +426,10 @@ fn handle_call(message: &Value, server: &Server) -> anyhow::Result<Value> {
         .with_context(|| format!("unknown tool {name}"))?;
     // These tools already validate typed arguments or the CLI's annotation
     // contract, preserving their more specific error messages.
-    if !matches!(name, "record_annotation" | "score" | "verify_finding")
-        && !crate::schema::conforms(&declared["inputSchema"], &arguments)
-    {
-        bail!("invalid tool arguments");
+    if !matches!(name, "record_annotation" | "score" | "verify_finding") {
+        if let Some(reason) = crate::schema::violation(&declared["inputSchema"], &arguments) {
+            return Err(InvalidParams(reason).into());
+        }
     }
     // Keep spare HTTP workers available to data queries. Concurrent
     // evaluations fail immediately instead of tying up workers in a wait.

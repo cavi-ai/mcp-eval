@@ -14,7 +14,11 @@ MCP Eval validates the manifest, case selection, mutation authorization, server 
 - every required tool is returned by the server's `tools/list`;
 - every mutating case names a declared sandbox and the command includes `--allow-mutation`.
 
-A missing manifest prints `manifest <path> not found; run mcpeval init to scaffold one` and exits 2; `--manifest` defaults to `mcp-eval.manifest.json` in the working directory. A case that fails validation is named in the error, as in `probe case slow-read: latency-budget attempts must be between 2 and 20`. A server command that cannot start prints `spawning MCP server <program>` with the operating-system cause.
+Common errors:
+
+- A missing manifest prints `manifest <path> not found; run mcpeval init to scaffold one` and exits 2. `--manifest` defaults to `mcp-eval.manifest.json` in the working directory.
+- A case that fails validation is named in the error, as in `probe case slow-read: latency-budget attempts must be between 2 and 20`.
+- A server command that cannot start prints `spawning MCP server <program>` with the operating-system cause.
 
 ## An HTTP endpoint is rejected
 
@@ -28,7 +32,9 @@ Run the hygiene scan:
 mcpeval doctor --check-redaction
 ```
 
-The command exits non-zero when a non-note JSONL field looks unredacted and prints the salt path as a must-not-share reminder. Annotation notes are exempt from automated redaction detectors because they contain deliberate user prose. When notes exist, `doctor` prints a non-failing review warning and can still exit zero, so a successful check does not prove those notes are safe. Manually review or remove every annotation note before sharing store records. Never include the sibling `.salt`, manifests, configuration, or `index.db`.
+The command exits non-zero when a non-note JSONL field looks unredacted, and it prints the salt path as a must-not-share reminder.
+
+Annotation notes are exempt from the automated detectors because they are deliberate user prose. When notes exist, `doctor` prints a non-failing review warning and can still exit zero, so a successful check does not prove the notes are safe. Review or remove every annotation note before sharing store records. Never include the sibling `.salt`, manifests, configuration, or `index.db`.
 
 ## Generation is refused
 

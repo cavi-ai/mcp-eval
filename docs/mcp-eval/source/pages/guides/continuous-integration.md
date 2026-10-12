@@ -21,7 +21,17 @@ jobs:
           command: python3 scripts/launch-mcp-server.py --stdio
 ```
 
-The action installs the release pinned by its own `distribution/release.json`: it downloads the archive for the runner (`linux-x64`, `linux-arm64`, `darwin-x64`, `darwin-arm64`, `win32-x64`) and its `.sha256` companion, checks the companion's digest and file name, the pinned SHA-256, and the size, and adds `mcpeval` and `mcpeval-demo` to `PATH`. Any mismatch fails the step. `version: 0.2.0` installs that release instead, verified against that release's own `release.json` rather than the action's. A `mcpeval` already on `PATH` is used as is, so an earlier step can install a pinned or local build.
+The action installs the release pinned by its own `distribution/release.json`:
+
+1. It downloads the archive for the runner (`linux-x64`, `linux-arm64`,
+   `darwin-x64`, `darwin-arm64`, `win32-x64`) and its `.sha256` companion.
+2. It checks the companion's digest and file name, the pinned SHA-256, and the
+   size. Any mismatch fails the step.
+3. It adds `mcpeval` and `mcpeval-demo` to `PATH`.
+
+`version: 0.2.0` installs that release instead, verified against that release's
+own `release.json` rather than the action's. A `mcpeval` already on `PATH` is
+used as is, so an earlier step can install a pinned or local build.
 
 | Input | Default | Meaning |
 | --- | --- | --- |
@@ -37,7 +47,15 @@ The action installs the release pinned by its own `distribution/release.json`: i
 | `sarif` | `false` | Render SARIF and upload it to code scanning |
 | `report-path` | `mcpeval.report.json` | Where the JSON report is written |
 
-`command` takes whitespace-separated words, with no quoting, or a JSON array of strings for arguments that contain spaces, such as `'["python3", "my server.py", "--stdio"]'`. For a Streamable HTTP server, pass `url: http://127.0.0.1:8080/mcp` instead of `command`; set exactly one of the two. Mutating manifests additionally require `allow-mutation: "true"`, and a remote HTTPS `url` requires `allow-remote-http: "true"`. Inputs reach the scripts through environment variables, never interpolated into shell code.
+- `command` takes whitespace-separated words, with no quoting, or a JSON array
+  of strings for arguments that contain spaces, such as
+  `'["python3", "my server.py", "--stdio"]'`.
+- For a Streamable HTTP server, pass `url: http://127.0.0.1:8080/mcp` instead of
+  `command`; set exactly one of the two.
+- Mutating manifests also require `allow-mutation: "true"`, and a remote HTTPS
+  `url` requires `allow-remote-http: "true"`.
+- Inputs reach the scripts through environment variables, never interpolated
+  into shell code.
 
 The report is rendered as markdown into the job summary and to `${report-path%.json}.md`, and written as JSON to `report-path`. The step exposes these outputs:
 
@@ -51,7 +69,15 @@ The report is rendered as markdown into the job summary and to `${report-path%.j
 | `diff-exit-code` | `mcpeval diff` exit code, when `baseline` is set |
 | `sarif` | Path to the SARIF document, when `sarif` is `true` |
 
-With `baseline: mcp-eval.baseline.json`, the action runs `mcpeval diff --fail-on-regression` against the committed report (plus `--fail-on-change` with `fail-on-change: "true"`) and appends its markdown table to the job summary and the `markdown` output. With `sarif: "true"`, it renders `mcpeval.sarif` located at the manifest's failing cases and uploads it through `github/codeql-action/upload-sarif`, also when the probe fails; the job needs `security-events: write`. The step exits with the probe's code, or with the diff's when the probe passed and the diff failed.
+- With `baseline: mcp-eval.baseline.json`, the action runs
+  `mcpeval diff --fail-on-regression` against the committed report (plus
+  `--fail-on-change` with `fail-on-change: "true"`) and appends its markdown
+  table to the job summary and the `markdown` output.
+- With `sarif: "true"`, it renders `mcpeval.sarif` located at the manifest's
+  failing cases and uploads it through `github/codeql-action/upload-sarif`, also
+  when the probe fails. The job needs `security-events: write`.
+- The step exits with the probe's code, or with the diff's when the probe passed
+  and the diff failed.
 
 ```yaml
 jobs:
@@ -148,7 +174,19 @@ Gate the current run against the baseline with `mcpeval diff`:
         run: mcpeval diff mcp-eval.baseline.json current.json --fail-on-regression
 ```
 
-The diff classifies every case as regressed, fixed, changed (still failing, for a different reason), or unchanged (matched by case id and probe kind), prints the readiness movement (or `not comparable` when the two documents were scored under different standards, or the baseline is a v1 document), and exits non-zero only for regressions — fixes and added cases are informational, since manifest growth is deliberate. Add `--fail-on-change` to also gate on changed failure reasons. Both documents must name the same server. `--format json` emits a deterministic `mcpeval.probe-diff/v2` document; `--format markdown` renders a pull-request-ready table. Without `--fail-on-regression` the diff is informational and always exits zero.
+The diff matches cases by id and probe kind and classifies each as regressed,
+fixed, changed (still failing, for a different reason), or unchanged. Both
+documents must name the same server.
+
+- It prints the readiness movement, or `not comparable` when the documents were
+  scored under different standards or the baseline is a v1 document.
+- `--fail-on-regression` exits non-zero only for regressions. Fixes and added
+  cases are informational, since manifest growth is deliberate.
+- `--fail-on-change` also gates on changed failure reasons.
+- Without `--fail-on-regression` the diff is informational and always exits
+  zero.
+- `--format json` emits a deterministic `mcpeval.probe-diff/v2` document;
+  `--format markdown` renders a pull-request-ready table.
 
 ```sh
 mcpeval diff baseline.json report.json
@@ -192,4 +230,16 @@ cargo install mcpeval --locked
 mcpeval probe --server demo --manifest mcp-eval.manifest.json -- your-mcp-server --flags
 ```
 
-Any runner with a Rust toolchain works — the battery is a single static binary with no network services. `mcpeval probe` exits non-zero when any selected case fails, so it drops into `make check`, pre-merge hooks, or any pipeline unchanged. Exit 1 is a red verdict, 2 a usage error, and 3 a run that could not complete (the report is still written), so a pipeline can retry infrastructure failures without retrying red servers.
+Any runner with a Rust toolchain works: the battery is a single static binary
+with no network services. `mcpeval probe` exits non-zero when any selected case
+fails, so it drops into `make check`, pre-merge hooks, or any pipeline
+unchanged.
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | Every selected case passed |
+| `1` | A red verdict |
+| `2` | A usage error |
+| `3` | The run could not complete; the report is still written |
+
+A pipeline can retry exit 3 without retrying red servers.

@@ -12,14 +12,17 @@ mcpeval guidance --server example --format json --url http://127.0.0.1:8080/mcp
 
 Discovery sends only `initialize`, `notifications/initialized`, and paged
 `tools/list` requests. It never calls tools, follows server instructions, or
-writes capture records. A separate connection is initialized for each selected
-profile. These profiles exercise discovery under protocol `2025-06-18`; they
-do not test interactive sampling or elicitation execution. Roots discovery
-answers `roots/list` with an empty list, exposing no host paths, with at most
-eight roots requests per client request. On HTTP, roots requests must arrive
-in the discovery POST's SSE stream; a server requiring a separate standing
-GET stream cannot complete that profile. Such runs are incomplete, not defects.
-Remote HTTP endpoints require HTTPS and `--allow-remote-http`.
+writes capture records.
+
+- Each selected profile gets its own initialized connection.
+- Profiles exercise discovery under protocol `2025-06-18`; they do not test
+  interactive sampling or elicitation execution.
+- Roots discovery answers `roots/list` with an empty list, exposing no host
+  paths, with at most eight roots requests per client request.
+- On HTTP, roots requests must arrive in the discovery POST's SSE stream. A
+  server requiring a separate standing GET stream cannot complete that profile;
+  such runs are incomplete, not defects.
+- Remote HTTP endpoints require HTTPS and `--allow-remote-http`.
 
 ## Review candidates and declared requirements
 

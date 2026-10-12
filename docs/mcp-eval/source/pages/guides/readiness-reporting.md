@@ -1,10 +1,22 @@
 # Readiness reporting
 
-Every full-battery `mcpeval probe` run produces two results: the **gate**, which is your manifest's cases, and **readiness**, a 0-100 score under mcpeval's standard. The gate sets `passed` and the exit code. Readiness is measured by mcpeval's own read-only standard battery over the server's whole catalog, so two servers' scores mean the same thing whatever their manifests declare. `mcpeval score` runs the standard battery alone, with no manifest.
+Every full-battery `mcpeval probe` run produces two results:
+
+- the **gate**: your manifest's cases, which set `passed` and the exit code;
+- **readiness**: a 0-100 score from mcpeval's own read-only standard battery
+  over the server's whole catalog.
+
+The battery is fixed, so two servers' scores mean the same thing whatever their
+manifests declare. `mcpeval score` runs the standard battery alone, with no
+manifest.
 
 ## Text
 
-The default format prints one line per case — verdict, attempts, first-failure position, fixed reason label, and measurement numbers — then the gate, the readiness line with each area's score, the surface the standard saw, and every lost point. It never prints arguments, responses, or error text. Each reason's hint prints once, under its first lost point:
+The default format prints one line per case: verdict, attempts, first-failure
+position, fixed reason label, and measurement numbers. Then it prints the gate,
+the readiness line with each area's score, the surface the standard saw, and
+every lost point. It never prints arguments, responses, or error text. Each
+reason's hint prints once, under its first lost point:
 
 ```text
 literal-status instruction-fidelity pass attempts=1
@@ -26,7 +38,9 @@ demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reli
   catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
 ```
 
-Failing cases print a remediation hint: the concrete server-side fix for that fixed reason. A case that exceeded a manifest bound also names the bound, its limit, and the observed value:
+A failing case prints a remediation hint: the concrete server-side fix for its
+fixed reason. A case that exceeded a manifest bound also names the bound, its
+limit, and the observed value:
 
 ```text
 bounded-discovery discovery-cost fail attempts=1 first_failure=1 reason=discovery-limit-exceeded tools=12 schema_bytes=2262 bound=max_tools limit=10 observed=12
@@ -41,7 +55,8 @@ tiny-budget token-cost fail attempts=1 first_failure=1 reason=token-budget-excee
   heaviest: report_weather 56, shared_read 56, elicited_read 49
 ```
 
-Use `--brief` to suppress hints in scripts. The same hints appear in the markdown report under *Remediation*, and every reason is documented standalone:
+`--brief` suppresses hints for scripts. The markdown report shows the same hints
+under *Remediation*, and `mcpeval explain` documents every reason:
 
 ```sh
 mcpeval explain pagination-stalled-cursor
@@ -50,7 +65,17 @@ mcpeval explain        # list every fixed reason
 
 ## JSON
 
-`--format json` emits the versioned `mcpeval.probe-report/v2` document: the generator, server label, manifest SHA-256, the `gate` counts, the `readiness` object, and per-case verdicts with tool names, fixed reason labels with their remediation hints, the declared bound behind a bound-based failure, and measurement numbers. `readiness` names its standard, the surface, and each area with its weight, score, and lost checks. There are no timestamps, sessions, arguments, or payloads, so the document is safe to commit as a baseline or attach to CI artifacts. `mcpeval schema report` prints its JSON Schema.
+`--format json` emits the versioned `mcpeval.probe-report/v2` document, and
+`mcpeval schema report` prints its JSON Schema. The document contains:
+
+- the generator, server label, manifest SHA-256, and `gate` counts;
+- the `readiness` object: its standard, the surface, and each area's weight,
+  score, and lost checks;
+- per-case verdicts with tool names, fixed reason labels and hints, the declared
+  bound behind a bound-based failure, and measurement numbers.
+
+It has no timestamps, sessions, arguments, or payloads, so it is safe to commit
+as a baseline or attach to CI artifacts.
 
 ```json
 {
@@ -93,32 +118,157 @@ mcpeval explain        # list every fixed reason
 
 ## Markdown
 
-`--format markdown` renders a pull-request-ready report: the readiness score with its standard and a static shields.io badge URL encoding only the score, an area table, the surface, *Lost points* with their hints, the gate, and the verdict table. The verdict table's `Bound` column shows `<field> <observed> > <limit>` for a case that exceeded a manifest bound (`max_tools 12 > 10`), and *Remediation* lists the heaviest tools under a `token-budget-exceeded` case. No payload or server detail ever leaves the report.
+`--format markdown` renders a pull-request-ready report:
+
+- the readiness score, its standard, and a static shields.io badge URL encoding
+  only the score;
+- an area table, the surface, and *Lost points* with their hints;
+- the gate and the verdict table.
+
+The verdict table's `Bound` column shows `<field> <observed> > <limit>` for a case
+that exceeded a manifest bound (`max_tools 12 > 10`). *Remediation* lists the
+heaviest tools under a `token-budget-exceeded` case. No payload or server detail
+ever leaves the report.
 
 ## The readiness score
 
-Readiness (0-100) is the weighted mean of the standard's areas, each scored on fixed curves that mcpeval defines. The weights, curves, bands, and checks are the standard; the report names it (`mcpeval-standard/2` in this build), and any change to them changes the name. No area ever drops out: surface the standard could not test counts against the score.
+Readiness is the weighted mean of the standard's areas, each scored on fixed
+curves that mcpeval defines. The weights, curves, bands, and checks are the
+standard. The report names it (`mcpeval-standard/2` in this build), and any
+change to them changes the name. No area ever drops out: surface the standard
+could not test counts against the score.
 
-| Area | Weight | Scored as |
+| Area | Weight | Measures |
 | --- | --- | --- |
-| protocol | 15 | the share of these checks passed: an unknown method answers error -32601; `ping` answers an empty result; `tools/call` with an unknown tool name is refused; `tools/list` pages with finite cursors and valid, distinct entries; a declared resources or prompts capability lists cleanly (only when declared); `initialize` with an unknown version answers a date-shaped version the server supports and will echo |
-| catalog | 20 | per tool, the share of its checks it passes, averaged over the catalog: a description of at least 40 characters; every input property described and typed (type, enum, const, `$ref`, anyOf, or oneOf), for tools with properties; `readOnlyHint` declared; `destructiveHint` declared, for writers; `outputSchema` declared. An empty catalog scores 0 |
-| context | 15 | 75% the catalog's token estimate (100 at 2,000 tokens or fewer, 0 at 40,000 or more, logarithmic between) and 25% the heaviest tool's (100 at 500 or fewer, 0 at 5,000 or more) |
-| reliability | 20 | each tool's consistency, latency, and output-conformance mean multiplied by its successful-call fraction; an untested tool earns 0. The three calls check the same outcome every time, the median latency band (100 up to 100 ms, 80 up to 300 ms, 50 up to 1 s, 20 up to 3 s, else 0), and a declared `outputSchema` fully honored on every successful result; plus one contention and one payload-bounds case on the first fully successful tool |
-| error-honesty | 15 | the share of judged read-only tools that refuse one call with arguments violating their input schema — the required properties omitted, else the first typed property (by name) given the wrong type, else an unknown property when `additionalProperties` is `false` — with error -32602 or an `isError` result whose text says why, and still answer the next request. Tools whose schema admits every input are not judged; when none can be judged the area scores 0 (`honesty-untestable`) |
-| coverage | 15 | exercised read-only tools over every read-only tool |
+| protocol | 15 | Protocol checks passed |
+| catalog | 20 | Per-tool catalog hygiene, averaged over the catalog |
+| context | 15 | Token cost of the catalog and its heaviest tool |
+| reliability | 20 | Consistent, fast, schema-conforming successful calls |
+| error-honesty | 15 | Refusal of schema-violating arguments |
+| coverage | 15 | Exercised read-only tools over every read-only tool |
 
-The standard battery is read-only by construction. It never calls a tool annotated `readOnlyHint: false` or `destructiveHint: true`, and it calls a tool with neither annotation only when you pass `--confirm-read-only`; otherwise that tool stays in the surface as unexercised (`coverage-unannotated`). Each tool's arguments are synthesized from its input schema, every required property by the first rule that applies: `$ref`; `const`, the first `enum` member, `default`, or the first of `examples`; the first `anyOf` or `oneOf` branch; then by type: a fixed sample for the `date`, `date-time`, `uri`, `email`, and `uuid` formats, else `mcpeval` padded or cut to `minLength` and `maxLength`; the minimum (or 1) for numbers; `false`; `minItems` copies of the item; nested objects the same way. Every synthesized candidate is validated against the complete input schema before calling the server. Invalid defaults, examples, or constraints leave the tool unexercised. External schema references are disabled; local references are supported. A required string with only a `pattern`, or a property with no rule, leaves the tool unexercised (`coverage-unsynthesizable`). The battery trusts `readOnlyHint`: a server that marks a writing tool read-only gets it called. `--skip-tool <NAME>` (repeatable) never calls that tool; a skipped tool the battery would have called scores 0 for reliability (`reliability.skipped`) and error honesty, and any skip scores the contention and payload cases 0, so skipping never raises the score. `--gate-only` skips the battery entirely. Each call waits at most 15 seconds; a call that times out or ends the connection costs that tool only, and the next tool starts on a fresh connection. The battery runs on its own connection after the gate and never writes to the call journal. Before a read-only tool's ordinary calls, the battery makes one call with schema-violating arguments for the error-honesty area. The protocol checks run last: they send an unknown method, `ping`, a `tools/call` naming a tool that does not exist, the paged listings, and extra `initialize` handshakes. A page after the first that fails ends the catalog with the tools already listed and costs `protocol.pagination`.
+### protocol
 
-It runs on full-battery `probe` runs and on `compare`; `--gate-only` skips it, and `--probe <kind>` and `verify` never run it. `mcpeval explain` covers the gate's reasons; each lost readiness check carries its own hint.
+The share of these checks passed:
+
+- an unknown method answers error -32601;
+- `ping` answers an empty result;
+- `tools/call` with an unknown tool name is refused;
+- `tools/list` pages with finite cursors and valid, distinct entries;
+- a declared resources or prompts capability lists cleanly (only when declared);
+- `initialize` with an unknown version answers a date-shaped version the server
+  supports and will echo.
+
+### catalog
+
+Per tool, the share of these checks it passes, averaged over the catalog. An
+empty catalog scores 0.
+
+- a description of at least 40 characters;
+- every input property described and typed (type, enum, const, `$ref`, anyOf,
+  or oneOf), for tools with properties;
+- `readOnlyHint` declared;
+- `destructiveHint` declared, for writers;
+- `outputSchema` declared.
+
+### context
+
+- 75%: the catalog's token estimate, 100 at 2,000 tokens or fewer and 0 at
+  40,000 or more, logarithmic between;
+- 25%: the heaviest tool's estimate, 100 at 500 tokens or fewer and 0 at 5,000
+  or more.
+
+### reliability
+
+Each tool's mean of three checks, multiplied by its successful-call fraction.
+An untested tool earns 0.
+
+- consistency: the three calls end with the same outcome every time;
+- latency: the median latency band, 100 up to 100 ms, 80 up to 300 ms, 50 up to
+  1 s, 20 up to 3 s, else 0;
+- output conformance: a declared `outputSchema` fully honored on every
+  successful result.
+
+The first fully successful tool also carries one contention and one
+payload-bounds case.
+
+### error-honesty
+
+The share of judged read-only tools that refuse one call with schema-violating
+arguments and still answer the next request. A refusal is error -32602 or an
+`isError` result whose text says why. The violation is the first that applies:
+
+- the required properties omitted;
+- the first typed property, by name, given the wrong type;
+- an unknown property when `additionalProperties` is `false`.
+
+Tools whose schema admits every input are not judged. When none can be judged,
+the area scores 0 (`honesty-untestable`).
+
+### coverage
+
+Exercised read-only tools over every read-only tool.
+
+## How the battery calls tools
+
+The standard battery is read-only by construction:
+
+- It never calls a tool annotated `readOnlyHint: false` or `destructiveHint: true`.
+- It calls a tool with neither annotation only when you pass
+  `--confirm-read-only`; otherwise that tool stays in the surface as unexercised
+  (`coverage-unannotated`).
+- It trusts `readOnlyHint`: a server that marks a writing tool read-only gets it
+  called.
+
+Arguments are synthesized from each tool's input schema. Every required
+property takes the first rule that applies:
+
+1. `$ref`;
+2. `const`, the first `enum` member, `default`, or the first of `examples`;
+3. the first `anyOf` or `oneOf` branch;
+4. by type: a fixed sample for the `date`, `date-time`, `uri`, `email`, and
+   `uuid` formats, else `mcpeval` padded or cut to `minLength` and `maxLength`;
+   the minimum (or 1) for numbers; `false`; `minItems` copies of the item;
+   nested objects the same way.
+
+Every synthesized candidate is validated against the complete input schema
+before the call. Invalid defaults, examples, or constraints leave the tool
+unexercised. External schema references are disabled; local references are
+supported. A required string with only a `pattern`, or a property with no rule,
+leaves the tool unexercised (`coverage-unsynthesizable`).
+
+`--skip-tool <NAME>` (repeatable) never calls that tool. A skipped tool the
+battery would have called scores 0 for reliability (`reliability.skipped`) and
+error honesty. Any skip scores the contention and payload cases 0, so skipping
+never raises the score.
+
+The battery runs on its own connection after the gate and never writes to the
+call journal:
+
+- Before a read-only tool's ordinary calls, one call with schema-violating
+  arguments feeds the error-honesty area.
+- Each call waits at most 15 seconds. A call that times out or ends the
+  connection costs that tool only, and the next tool starts on a fresh
+  connection.
+- The protocol checks run last: an unknown method, `ping`, a `tools/call`
+  naming a tool that does not exist, the paged listings, and extra `initialize`
+  handshakes. A page after the first that fails ends the catalog with the tools
+  already listed and costs `protocol.pagination`.
+
+The battery runs on full-battery `probe` runs and on `compare`. `--gate-only`
+skips it, and `--probe <kind>` and `verify` never run it. `mcpeval explain`
+covers the gate's reasons; each lost readiness check carries its own hint.
 
 ## Calibration
 
-Readiness measures read-only structural behavior. It does not establish semantic
-correctness; use reviewed result assertions in manifest cases for that. Writer
-tools are excluded from the standard battery. Three repeated calls are a bounded
-consistency check, not an estimate of long-term availability. Unexercised tools
-remain visible in coverage and carry the reason they were not measured.
+Readiness measures read-only structural behavior. It does not establish
+semantic correctness; use reviewed result assertions in manifest cases for that.
+
+- Writer tools are excluded from the standard battery.
+- Three repeated calls are a bounded consistency check, not an estimate of
+  long-term availability.
+- Unexercised tools remain visible in coverage and carry the reason they were
+  not measured.
 
 New reports and trend points record a `measurement_profile`: evaluator version,
 platform, architecture, client capabilities, read-only attestation, sorted skip
@@ -127,64 +277,94 @@ the same standard and a known, matching profile. Older reports remain readable;
 their missing conditions are reported as unavailable rather than inferred.
 Target deployments and backing state must still be controlled by the operator.
 
-Index rebuilds stream journal records into a transaction with disk-backed scratch
-tables. Index and trend refreshes use content-validated checkpoints to parse only
-complete append records when cached inputs remain compatible. Both readers reject
-records larger than 4 MiB and tolerate an unfinished trailing record. Rejected
-refreshes preserve the prior cache generation. Historical byte validation and
-derived queries still grow with retained history; there is no automatic pruning.
+## Corpus placement
 
-The shipped corpus is a historical `mcpeval-standard/1` snapshot. Its readiness scores are not compared with `mcpeval-standard/2`; catalog token comparisons remain available. Recollect under the current standard to produce a new readiness baseline. The placement example below belongs to a standard/1 report.
+The shipped corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v2`)
+is a historical `mcpeval-standard/1` snapshot. Its readiness scores are not
+compared with `mcpeval-standard/2`; catalog token comparisons remain available.
+Recollect under the current standard to produce a new readiness baseline. New
+collection uses v3 with explicit pinned targets and retained provenance; see
+[Corpus collection and replay](corpus-replay.md).
 
-The historical corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v2`)
-holds readiness and area scores under its recorded standard. New collection
-uses v3 with explicit pinned targets and retained provenance; see
-[Corpus collection and replay](corpus-replay.md). Text and markdown reports from
-`probe` and `score` place your readiness among observations of the same standard,
-counting ties explicitly, and place your catalog among servers that recorded
-`catalog_tokens`; the median is the lower middle for an even count:
+Text and markdown reports from `probe` and `score` place your readiness among
+observations of the same standard, counting ties explicitly. They place your
+catalog among servers that recorded `catalog_tokens`; the median is the lower
+middle for an even count. This example belongs to a standard/1 report:
 
 ```text
   standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers
   catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
 ```
 
-A personal or private corpus takes precedence when placed at `<MCPEVAL_HOME>/corpus.json`; a v1 corpus (manifest pass rates) is not read. When no corpus is available, reports omit both lines. JSON reports never carry corpus context.
+- A personal or private corpus at `<MCPEVAL_HOME>/corpus.json` takes
+  precedence; a v1 corpus (manifest pass rates) is not read.
+- When no corpus is available, reports omit both lines.
+- JSON reports never carry corpus context.
 
 ## Session cost
 
-The token-cost probe's measurement is model-independent; interpreting it is the operator's call. Pass `--price-per-mtok <USD>` and the text and markdown reports translate the measurement into consequence: the catalog is charged to every session before the first tool call, so a 2,000-token catalog at $3/Mtok is $0.006 per session ($6 per 1,000 sessions) of pure context tax. Pricing never enters the JSON report — committed baselines stay byte-identical when prices change.
+The token-cost measurement is model-independent; interpreting it is the
+operator's call. Pass `--price-per-mtok <USD>` and the text and markdown
+reports translate it into consequence. The catalog is charged to every session
+before the first tool call, so a 2,000-token catalog at $3/Mtok is $0.006 per
+session ($6 per 1,000 sessions) of pure context tax. Pricing never enters the
+JSON report, so committed baselines stay byte-identical when prices change.
 
-## SARIF and re-rendering
+## SARIF
 
-`--format sarif` emits a SARIF 2.1.0 document: one result per failing case, the probe kind as the rule id, the fixed reason plus remediation hint as the message, and the failing case's line in the manifest as the location. The manifest URI is relative to the working directory, so run the command from the repository root. Each server gets its own code-scanning category (`mcpeval/<server>/`). Upload it with `github/codeql-action/upload-sarif` or the code-scanning API, and each failing case becomes an alert on its manifest line. `mcpeval report --format sarif` takes `--manifest` to locate results the same way. The document is deterministic and derived only from the sanitized report and the manifest's case lines.
+`--format sarif` emits a deterministic SARIF 2.1.0 document derived only from
+the sanitized report and the manifest's case lines:
 
-Reports traveled as JSON stay useful offline: `mcpeval report <baseline.json> --format markdown` re-renders any committed `mcpeval.probe-report/v1` or `/v2` document without re-running a server, so the probe run and the report rendering can live in different jobs — or on different days. Re-rendering a failing document exits non-zero, so a rendered report can gate in its own right.
+- one result per failing case;
+- the probe kind as the rule id;
+- the fixed reason plus remediation hint as the message;
+- the failing case's line in the manifest as the location.
 
-Two committed reports of the same server can also be compared directly: `mcpeval diff baseline.json current.json` classifies each case as regressed, fixed, changed (still failing, for a different reason), or unchanged and prints the readiness movement. Readiness moves only when both documents were scored under the same standard; against a v1 baseline or a different standard the diff says `not comparable` and still classifies every case. With `--fail-on-regression` it exits non-zero for regressions, which makes the committed baseline a first-class CI gate; `--fail-on-change` also gates on changed failure reasons. See the continuous-integration guide for the recipe.
+The manifest URI is relative to the working directory, so run the command from
+the repository root. Each server gets its own code-scanning category
+(`mcpeval/<server>/`). Upload it with `github/codeql-action/upload-sarif` or the
+code-scanning API, and each failing case becomes an alert on its manifest line.
+
+## Re-rendering and diffs
+
+`mcpeval report <baseline.json> --format markdown` re-renders any committed
+`mcpeval.probe-report/v1` or `/v2` document without re-running a server. The
+probe run and the rendering can live in different jobs, or on different days.
+Re-rendering a failing document exits non-zero, so a rendered report can gate
+in its own right. `mcpeval report --format sarif` takes `--manifest` to locate
+results.
+
+`mcpeval diff baseline.json current.json` compares two committed reports of the
+same server. It classifies each case as regressed, fixed, changed (still
+failing, for a different reason), or unchanged, and prints the readiness
+movement:
+
+- Readiness moves only when both documents were scored under the same standard.
+  Against a v1 baseline or a different standard the diff says `not comparable`
+  and still classifies every case.
+- `--fail-on-regression` exits non-zero for regressions, which makes the
+  committed baseline a CI gate.
+- `--fail-on-change` also gates on changed failure reasons.
+
+See [Committed baselines](continuous-integration.md#committed-baselines) for the
+recipe.
 
 ## Trends
 
-Every full-battery run that measured readiness appends a content-free record — server label, gate counts, readiness score, its standard, manifest SHA-256, timestamp — to `<MCPEVAL_HOME>/store/probes/history.jsonl`; `--gate-only` runs record none. `mcpeval trends` renders the per-server history with a score delta between consecutive runs under the same standard, `standard changed` where the standard differs, and the first eight hex digits of each run's manifest hash:
+Every full-battery run that measured readiness appends a content-free record to
+`<MCPEVAL_HOME>/store/probes/history.jsonl`: server label, gate counts,
+readiness score, its standard, manifest SHA-256, and timestamp. `--gate-only`
+runs record none.
+
+`mcpeval trends` renders the per-server history:
+
+- a score delta between consecutive runs under the same standard;
+- `standard changed` where the standard differs;
+- the first eight hex digits of each run's manifest hash.
 
 ```sh
 mcpeval trends --last 5
 ```
-
-Trend writers take an exclusive journal lock for each complete line; readers
-take a shared lock. Readers cache validated records in `<MCPEVAL_HOME>/trends.db`,
-outside the shareable `store/` directory. Changed or truncated journal bytes and
-incompatible cached schemas trigger atomic reconstruction. An unavailable or
-corrupt cache falls back to a locked full scan, so read-only copies remain usable
-and journal corruption still fails the request. With evaluations stopped, remove
-`trends.db` to discard derived rows; the next read reconstructs them from history.
-
-The returned count can change without rebuilding: points remain ordered by
-server and timestamp, with append order breaking equal timestamps. Historical
-bytes are still hashed, and cached queries still traverse retained data; this
-avoids repeated parsing rather than making reads constant-time. External editors
-that ignore locks can replace or change and restore files between checks; use
-controlled, immutable copies when that race matters.
 
 ```text
 demo
@@ -192,11 +372,49 @@ demo
   2026-09-30T18:03:50.618Z score=90/100 cases=1/1 -1 manifest=0524c76b
 ```
 
-Records written before the standard existed hold a manifest pass rate: they compare only with each other, by manifest hash.
+Records written before the standard existed hold a manifest pass rate: they
+compare only with each other, by manifest hash.
+
+Trend writers take an exclusive journal lock for each complete line; readers
+take a shared lock. Readers cache validated records in
+`<MCPEVAL_HOME>/trends.db`, outside the shareable `store/` directory.
+
+- Changed or truncated journal bytes and incompatible cached schemas trigger
+  atomic reconstruction.
+- An unavailable or corrupt cache falls back to a locked full scan, so read-only
+  copies remain usable and journal corruption still fails the request.
+- With evaluations stopped, remove `trends.db` to discard derived rows; the next
+  read reconstructs them from history.
+
+The returned count can change without rebuilding: points remain ordered by
+server and timestamp, with append order breaking equal timestamps. Historical
+bytes are still hashed, and cached queries still traverse retained data; the
+cache avoids repeated parsing rather than making reads constant-time.
+
+Index and trend refreshes use content-validated checkpoints to parse only
+complete append records when cached inputs remain compatible. Index rebuilds
+stream journal records into a transaction with disk-backed scratch tables. Both
+readers reject records larger than 4 MiB and tolerate an unfinished trailing
+record. Rejected refreshes preserve the prior cache generation. Historical byte
+validation and derived queries still grow with retained history; there is no
+automatic pruning. External editors that ignore locks can replace or change and
+restore files between checks; use controlled, immutable copies when that race
+matters.
 
 ## Comparing servers
 
-`mcpeval compare` runs one manifest against several targets and renders a side-by-side verdict and readiness grid in text, markdown, or JSON; `--gate-only` compares the manifest verdicts alone. Targets are `--endpoint LABEL=URL` Streamable HTTP endpoints, optionally plus one stdio command after `--`, whose column is labeled `stdio`; at least two targets are required. Comparison is informational: failing cases never make it exit non-zero, and it exits 3 only when a case could not be evaluated. Endpoints are loopback-only unless `--allow-remote-http` is passed, remote endpoints require HTTPS, and URLs follow the same credential-free policy as the probes.
+`mcpeval compare` runs one manifest against several targets and renders a
+side-by-side verdict and readiness grid in text, markdown, or JSON.
+`--gate-only` compares the manifest verdicts alone.
+
+- Targets are `--endpoint LABEL=URL` Streamable HTTP endpoints, optionally plus
+  one stdio command after `--`, whose column is labeled `stdio`. At least two
+  targets are required.
+- Comparison is informational: failing cases never make it exit non-zero, and it
+  exits 3 only when a case could not be evaluated.
+- Endpoints are loopback-only unless `--allow-remote-http` is passed, remote
+  endpoints require HTTPS, and URLs follow the same credential-free policy as
+  the probes.
 
 ```sh
 mcpeval compare --server demo \

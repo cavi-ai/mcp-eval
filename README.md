@@ -71,7 +71,7 @@ walks through the rest.
 | Gate pull requests and upload SARIF alerts | [Continuous integration](docs/mcp-eval/source/pages/guides/continuous-integration.md) |
 | Compare servers or deployments on one manifest | [Comparing servers](docs/mcp-eval/source/pages/guides/readiness-reporting.md#comparing-servers) |
 | Capture real agent sessions and promote findings | [Capture and probe](docs/mcp-eval/source/pages/guides/capture-and-probe.md), [Findings and verification](docs/mcp-eval/source/pages/guides/findings-and-verification.md) |
-| Let an agent probe, score, and verify over MCP | [Serving findings and the agent loop](docs/mcp-eval/source/pages/guides/findings-and-verification.md#serving-findings-and-the-agent-loop) |
+| Let an agent probe, score, and verify over MCP | [Agent loop over MCP](docs/mcp-eval/source/pages/guides/agent-loop.md) |
 | Check that instructions match tool behavior | [Instruction coherence](docs/mcp-eval/source/pages/guides/instruction-coherence.md) |
 | See how 33 popular public servers score | [State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md) |
 | Collect and replay your own corpus | [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md) |
@@ -94,7 +94,7 @@ private. See [Privacy and authorization](docs/mcp-eval/source/pages/security/pri
 Hosted at [cavi-ai.xyz/docs/mcp-eval](https://cavi-ai.xyz/docs/mcp-eval/).
 
 - Start: [Overview](docs/mcp-eval/source/pages/introduction/overview.md), [Installation](docs/mcp-eval/source/pages/introduction/installation.md), [Quickstart](docs/mcp-eval/source/pages/introduction/quickstart.md)
-- Guides: [Capture and probe](docs/mcp-eval/source/pages/guides/capture-and-probe.md), [Readiness reporting](docs/mcp-eval/source/pages/guides/readiness-reporting.md), [Findings and verification](docs/mcp-eval/source/pages/guides/findings-and-verification.md), [Continuous integration](docs/mcp-eval/source/pages/guides/continuous-integration.md), [Instruction coherence](docs/mcp-eval/source/pages/guides/instruction-coherence.md), [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md), [Troubleshooting](docs/mcp-eval/source/pages/guides/troubleshooting.md)
+- Guides: [Capture and probe](docs/mcp-eval/source/pages/guides/capture-and-probe.md), [Readiness reporting](docs/mcp-eval/source/pages/guides/readiness-reporting.md), [Findings and verification](docs/mcp-eval/source/pages/guides/findings-and-verification.md), [Agent loop over MCP](docs/mcp-eval/source/pages/guides/agent-loop.md), [Continuous integration](docs/mcp-eval/source/pages/guides/continuous-integration.md), [Instruction coherence](docs/mcp-eval/source/pages/guides/instruction-coherence.md), [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md), [Troubleshooting](docs/mcp-eval/source/pages/guides/troubleshooting.md)
 - Reference: [CLI](docs/mcp-eval/source/pages/reference/cli.md), [Manifest](docs/mcp-eval/source/pages/reference/manifest.md), [Evaluation dimensions](docs/mcp-eval/source/pages/reference/evaluation-dimensions.md)
 - Security and release: [Privacy and authorization](docs/mcp-eval/source/pages/security/privacy-and-authorization.md), [Version and support](docs/mcp-eval/source/pages/release/version-and-support.md)
 

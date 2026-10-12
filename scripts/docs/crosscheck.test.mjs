@@ -130,3 +130,16 @@ test("docs probe tables cover every probe kind the CLI accepts", async () => {
     assert.ok(reference.includes(`\`${label}\``), `evaluation-dimensions reference is missing ${label}`);
   }
 });
+
+test("CLI reference lists every command the binary accepts", async () => {
+  // Clap names each subcommand after its `Command` variant in kebab case.
+  const source = await readFile(path.join(ROOT, "src/cli.rs"), "utf8");
+  const body = source.match(/pub enum Command \{([\s\S]*?)\n\}/u)?.[1] ?? "";
+  const commands = [...body.matchAll(/^ {4}([A-Z][A-Za-z]*)(?: \{|,|\()/gmu)]
+    .map(([, variant]) => variant.replace(/([a-z])([A-Z])/gu, "$1-$2").toLowerCase());
+  assert.ok(commands.length > 0, "Command variants were not found");
+  const reference = await readFile(path.join(SOURCE, "pages/reference/cli.md"), "utf8");
+  const table = reference.slice(reference.indexOf("| Command | Does |"));
+  const listed = [...table.slice(0, table.indexOf("\n\n")).matchAll(/^\| `([a-z-]+)` \|/gmu)].map(([, name]) => name);
+  assert.deepEqual(listed.toSorted(), commands.toSorted(), "CLI reference command table differs from src/cli.rs");
+});

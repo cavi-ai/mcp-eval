@@ -1,23 +1,58 @@
 # Privacy and authorization
 
-MCP Eval is read-only by default. Capture journals store structured call metadata
-and shaped arguments, not raw response bodies. Human error text is reduced to
-the constant `{message}` plus a salted template identifier; the original message
-is not stored in the journal.
+MCP Eval is read-only by default.
 
-Server labels, methods, tool names, keys, enum values, numeric and boolean values, and registrable domains are retained only within their documented bounded grammars. Other hosts and string values are reduced to privacy-safe categories or length buckets. Server stderr passes through to the client and is not journaled.
+- Capture journals store structured call metadata and shaped arguments, not raw
+  response bodies.
+- Human error text is reduced to the constant `{message}` plus a salted template
+  identifier; the original message is not stored in the journal.
+- Server labels, methods, tool names, keys, enum values, numeric and boolean
+  values, and registrable domains are retained only within their documented
+  bounded grammars. Other hosts and string values are reduced to privacy-safe
+  categories or length buckets.
+- Server stderr passes through to the client and is not journaled.
+- Probe records are tagged `synthetic` and use the same journal boundary. Raw
+  manifest arguments, response bodies, tool descriptions, sandbox descriptions,
+  and raw errors are not stored in probe records or printed in summaries.
 
-Probe records are tagged `synthetic` and use the same journal boundary. Raw
-manifest arguments, response bodies, tool descriptions, sandbox descriptions,
-and raw errors are not stored in probe records or printed in summaries.
 Manifest files can still contain sensitive operational inputs and are outside
 the share-safe boundary.
 
-Capture records under `<MCPEVAL_HOME>/store/` are content-minimized, but annotation notes are deliberate free-form user prose and are not automatically redacted. Before sharing any store records, you must manually review or remove every annotation note and inspect the remaining files. The fingerprint salt lives at `<MCPEVAL_HOME>/.salt`, outside `store/`, and must never accompany shared records. Do not share the entire capture root.
+## Sharing store records
 
-Mutation requires two independent controls: the manifest case uses `"access": "mutating"` and names a declared sandbox, and the operator passes `--allow-mutation`. A missing or invalid manifest, undeclared sandbox, or missing flag never authorizes mutation. `generate --confirm-read-only` attests that an eligible tool is read-only and does not authorize mutation.
+Capture records under `<MCPEVAL_HOME>/store/` are content-minimized, but
+annotation notes are deliberate free-form user prose and are not automatically
+redacted.
+Before sharing any store records, you must manually review or remove every annotation note and inspect the remaining files.
+The fingerprint salt lives at `<MCPEVAL_HOME>/.salt`, outside `store/`, and must
+never accompany shared records. Do not share the entire capture root.
 
-HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS plus `--allow-remote-http`. Optional authorization is read from `MCPEVAL_HTTP_AUTHORIZATION`, validated, used in memory, and never persisted or printed. The HTTP proxy may relay an incoming `Authorization` value in memory, but it does not originate calls or grant mutation permission. `mcpeval serve` refuses requests without a loopback `Host`, with a non-loopback `Origin`, or without `Content-Type: application/json`, and lists its process-launching tools (`run_probe`, `scaffold`, `score`, `verify_finding`) only with `--allow-spawn`. `mcpeval shim-http` applies the same `Host` and `Origin` checks to every request and the `Content-Type` check to every POST before forwarding anything upstream.
+## Mutation
+
+Mutation requires two independent controls:
+
+- the manifest case uses `"access": "mutating"` and names a declared sandbox;
+- the operator passes `--allow-mutation`.
+
+A missing or invalid manifest, undeclared sandbox, or missing flag never
+authorizes mutation. `generate --confirm-read-only` attests that an eligible
+tool is read-only and does not authorize mutation.
+
+## HTTP and authorization
+
+- HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS
+  plus `--allow-remote-http`.
+- Optional authorization is read from `MCPEVAL_HTTP_AUTHORIZATION`, validated,
+  used in memory, and never persisted or printed.
+- The HTTP proxy may relay an incoming `Authorization` value in memory, but it
+  does not originate calls or grant mutation permission.
+- `mcpeval serve` refuses requests without a loopback `Host`, with a
+  non-loopback `Origin`, or without `Content-Type: application/json`. It lists
+  its process-launching tools (`run_probe`, `scaffold`, `score`,
+  `verify_finding`) only with `--allow-spawn`.
+- `mcpeval shim-http` applies the same `Host` and `Origin` checks to every
+  request and the `Content-Type` check to every POST before forwarding anything
+  upstream.
 
 ## What is recorded
 
@@ -151,7 +186,14 @@ that could otherwise change during the sweep.
 
 ## Producing the share envelope
 
-`mcpeval share --dir <directory>` snapshots every selected JSONL file under a shared journal lock, scans the exact exported bytes, and publishes the envelope only after the scan succeeds. Nested JSONL files are checked too; symlinks and output paths overlapping the capture store are refused. A flagged sweep exits `1` and publishes nothing. Invalid JSON records also stop export.
+`mcpeval share --dir <directory>` snapshots every selected JSONL file under a
+shared journal lock, scans the exact exported bytes, and publishes the envelope
+only after the scan succeeds.
+
+- Nested JSONL files are checked too.
+- Symlinks and output paths overlapping the capture store are refused.
+- A flagged sweep exits `1` and publishes nothing. Invalid JSON records also
+  stop export.
 
 ```sh
 mcpeval share --dir mcpeval-envelope
@@ -171,6 +213,16 @@ Unix. On Windows, access depends on the parent's ACLs; use a private parent.
 Export requires temporary disk space proportional to the selected envelope.
 Directory traversal metadata still grows with the number of selected files.
 
-The envelope contains JSONL records, typed annotation metadata, and a `SHARE.md` manifest. Annotation prose is omitted by default; after manual review, `--include-annotation-notes` explicitly includes it and prints a warning. `--include-probe-history` includes readiness-trend history. The redaction scan is a heuristic, not proof that arbitrary metadata is non-sensitive.
+The envelope contains JSONL records, typed annotation metadata, and a
+`SHARE.md` manifest.
 
-The fingerprint salt, databases (including authoritative `lifecycle.db`), and manifests are excluded. Keep any file containing the salt separate. `--force` replaces the entire prior envelope after successful preparation; a refused export preserves it.
+- Annotation prose is omitted by default; after manual review,
+  `--include-annotation-notes` explicitly includes it and prints a warning.
+- `--include-probe-history` includes readiness-trend history.
+- The fingerprint salt, databases (including authoritative `lifecycle.db`), and
+  manifests are excluded. Keep any file containing the salt separate.
+- `--force` replaces the entire prior envelope after successful preparation; a
+  refused export preserves it.
+
+The redaction scan is a heuristic, not proof that arbitrary metadata is
+non-sensitive.

@@ -69,6 +69,15 @@ fn open_index(root: &Path) -> anyhow::Result<Connection> {
     Ok(db)
 }
 
+/// [`load_findings`], except a store with no `index.db` has no findings.
+/// Any other metadata failure, including a dangling link, stays an error.
+pub fn load_findings_if_indexed(root: &Path) -> anyhow::Result<Vec<Finding>> {
+    match std::fs::symlink_metadata(root.join("index.db")) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        _ => load_findings(root),
+    }
+}
+
 /// Sanitized finding rows for consumers that serve them programmatically
 /// (`mcpeval serve`); identical content to `findings --format json`.
 pub fn load_findings(root: &Path) -> anyhow::Result<Vec<Finding>> {

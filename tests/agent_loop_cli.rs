@@ -254,7 +254,8 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
 
     // A missing target is a clean tool error, not a hang.
     let invalid = call(&http, "run_probe", json!({"manifest": manifest}));
-    assert!(invalid["error"]["message"]
+    assert_eq!(invalid["result"]["isError"], true, "{invalid}");
+    assert!(invalid["result"]["content"][0]["text"]
         .as_str()
         .unwrap()
         .contains("command array or a url"));
@@ -328,8 +329,9 @@ fn the_agent_loop_is_native_scaffold_then_run_probe() {
             "command":["python3","-c","import pathlib,sys; pathlib.Path(sys.argv[1]).touch()",marker]
         }),
     );
+    assert_eq!(rejected["result"]["isError"], true, "{rejected}");
     assert!(
-        rejected["error"]["message"]
+        rejected["result"]["content"][0]["text"]
             .as_str()
             .unwrap()
             .contains("result assertion or an expected error"),

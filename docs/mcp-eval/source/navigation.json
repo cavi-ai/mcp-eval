@@ -18,6 +18,7 @@
         { "title": "Corpus collection and replay", "path": "guides/corpus-replay.md" },
         { "title": "Instruction coherence", "path": "guides/instruction-coherence.md" },
         { "title": "Findings and verification", "path": "guides/findings-and-verification.md" },
+        { "title": "Agent loop over MCP", "path": "guides/agent-loop.md" },
         { "title": "Continuous integration", "path": "guides/continuous-integration.md" },
         { "title": "State of MCP servers", "path": "guides/state-of-mcp-servers.md" },
         { "title": "Troubleshooting", "path": "guides/troubleshooting.md" }

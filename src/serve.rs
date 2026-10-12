@@ -28,8 +28,8 @@ use serde_json::{json, Value};
 
 use crate::loopback::Provenance;
 
-/// A `tools/call` refused because its arguments violate the declared input
-/// schema; answered with JSON-RPC -32602.
+/// A `tools/call` refused because it names no listed tool or its arguments
+/// violate the declared input schema; answered with JSON-RPC -32602.
 #[derive(Debug)]
 struct InvalidParams(String);
 
@@ -128,18 +128,20 @@ fn handle_connection(stream: &mut TcpStream, server: &Server) -> anyhow::Result<
         }
         Some("tools/call") => match handle_call(&message, server) {
             Ok(result) => json!({"jsonrpc": "2.0", "id": message["id"], "result": result}),
-            Err(error) => {
-                let code = if error.is::<InvalidParams>() {
-                    -32602
-                } else {
-                    -32000
-                };
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": message["id"],
-                    "error": {"code": code, "message": error.to_string()}
-                })
-            }
+            Err(error) if error.is::<InvalidParams>() => json!({
+                "jsonrpc": "2.0",
+                "id": message["id"],
+                "error": {"code": -32602, "message": error.to_string()}
+            }),
+            // Tool execution failures are results the agent can read and act on.
+            Err(error) => json!({
+                "jsonrpc": "2.0",
+                "id": message["id"],
+                "result": {
+                    "content": [{"type": "text", "text": error.to_string()}],
+                    "isError": true
+                }
+            }),
         },
         Some(method) => json!({
             "jsonrpc": "2.0",
@@ -291,11 +293,11 @@ fn score_tool() -> Value {
     tool("score", "Measure readiness using the same standard battery as mcpeval score, without a manifest. Mutation is never authorized. confirm_read_only attests that unannotated tools are read-only; explicit destructive or non-read-only annotations still exclude them.", Some(json!({
         "type": "object", "additionalProperties": false,
         "properties": {
-            "command": {"type": "array", "items": {"type": "string"}},
-            "url": {"type": "string"},
-            "server_label": {"type": "string"},
-            "confirm_read_only": {"type": "boolean"},
-            "skip_tools": {"type": "array", "items": {"type": "string"}}
+            "command": {"type": "array", "items": {"type": "string"}, "description": "stdio server command split into program and arguments."},
+            "url": {"type": "string", "description": "Streamable HTTP endpoint instead of a stdio command."},
+            "server_label": {"type": "string", "description": "Server label for the report; defaults to 'probed'."},
+            "confirm_read_only": {"type": "boolean", "description": "Attest that tools with neither readOnlyHint nor destructiveHint are read-only, so the battery calls them."},
+            "skip_tools": {"type": "array", "items": {"type": "string"}, "description": "Tool names the battery never calls; each scores as unexercised."}
         }
     })))
 }
@@ -304,11 +306,11 @@ fn verify_finding_tool() -> Value {
     tool("verify_finding", "Verify a promoted finding against exactly one matching read-only manifest case. Uses the same durable evidence binding and closure rules as mcpeval verify. Transport failure records no evidence. Mutation is never authorized. Returns the report and lifecycle outcome.", Some(json!({
         "type": "object", "additionalProperties": false,
         "properties": {
-            "finding_id": {"type": "string"},
-            "case_id": {"type": "string"},
-            "manifest": {"type": "object"},
-            "command": {"type": "array", "items": {"type": "string"}},
-            "url": {"type": "string"}
+            "finding_id": {"type": "string", "description": "finding-* identifier of the promoted finding."},
+            "case_id": {"type": "string", "description": "Id of the one read-only manifest case that checks the finding."},
+            "manifest": {"type": "object", "description": "Inline mcp-eval manifest (version 1) declaring that case."},
+            "command": {"type": "array", "items": {"type": "string"}, "description": "stdio server command split into program and arguments."},
+            "url": {"type": "string", "description": "Streamable HTTP endpoint instead of a stdio command."}
         },
         "required": ["finding_id", "case_id", "manifest"]
     })))
@@ -331,9 +333,21 @@ fn tool(name: &str, description: &str, input_schema: Option<Value>) -> Value {
     entry
 }
 
+/// The report's top-level contract; `mcpeval schema report` prints the
+/// complete schema, which would dominate the catalog's token cost.
 fn report_schema() -> Value {
-    serde_json::from_str(include_str!("../docs/mcp-eval.probe-report.schema.json"))
-        .expect("embedded probe report schema is valid JSON")
+    json!({
+        "type": "object",
+        "required": ["schema", "server", "passed", "gate", "readiness", "cases"],
+        "properties": {
+            "schema": {"const": "mcpeval.probe-report/v2"},
+            "server": {"type": "string"},
+            "passed": {"type": "boolean"},
+            "gate": {"type": ["object", "null"]},
+            "readiness": {"type": ["object", "null"]},
+            "cases": {"type": "array"}
+        }
+    })
 }
 
 fn output_schema(name: &str) -> Value {
@@ -410,20 +424,20 @@ fn handle_call(message: &Value, server: &Server) -> anyhow::Result<Value> {
         .get("params")
         .and_then(|params| params.get("name"))
         .and_then(Value::as_str)
-        .context("tools/call is missing a tool name")?;
+        .ok_or_else(|| InvalidParams("tools/call is missing a tool name".into()))?;
     let arguments = message
         .get("params")
         .and_then(|params| params.get("arguments"))
         .cloned()
         .unwrap_or(Value::Object(Default::default()));
     if is_evaluation(name) && !server.allow_spawn {
-        bail!("{name} {SPAWN_DISABLED}");
+        return Err(InvalidParams(format!("{name} {SPAWN_DISABLED}")).into());
     }
     let declared = server
         .tools
         .iter()
         .find(|tool| tool["name"] == name)
-        .with_context(|| format!("unknown tool {name}"))?;
+        .ok_or_else(|| InvalidParams(format!("unknown tool {name}")))?;
     // These tools already validate typed arguments or the CLI's annotation
     // contract, preserving their more specific error messages.
     if !matches!(name, "record_annotation" | "score" | "verify_finding") {
@@ -444,7 +458,7 @@ fn handle_call(message: &Value, server: &Server) -> anyhow::Result<Value> {
     match name {
         "list_findings" => {
             let state_filter = arguments.get("state").and_then(Value::as_str);
-            let findings = crate::report::load_findings(root)
+            let findings = crate::report::load_findings_if_indexed(root)
                 .map_err(|_| anyhow::anyhow!(FINDINGS_UNAVAILABLE))?;
             let payload: Vec<Value> = findings
                 .iter()
@@ -464,7 +478,7 @@ fn handle_call(message: &Value, server: &Server) -> anyhow::Result<Value> {
                 .get("finding_id")
                 .and_then(Value::as_str)
                 .context("get_finding requires finding_id")?;
-            let findings = crate::report::load_findings(root)
+            let findings = crate::report::load_findings_if_indexed(root)
                 .map_err(|_| anyhow::anyhow!(FINDINGS_UNAVAILABLE))?;
             let payload: Vec<Value> = findings
                 .iter()

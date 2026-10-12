@@ -61,11 +61,14 @@ exceeded `max_pages` bound. Catalog descriptions and schemas stay in memory.
 
 Injects one exact-size argument — a deep copy of the declared arguments with a
 single oversized ASCII string field — and verifies the server neither crashes
-nor hangs. A clean structured JSON-RPC rejection is honest bounded behavior
-unless `expect_handled` asserts the tool must actually handle the size, in
-which case a rejection fails the case. A transport-level failure always fails
-with `payload-unhandled`. Only the numeric latency and a fixed label are
-reported; the injected bytes are never echoed.
+nor hangs.
+
+- A clean structured JSON-RPC rejection is honest bounded behavior, unless
+  `expect_handled` asserts the tool must actually handle the size; then a
+  rejection fails the case.
+- A transport-level failure always fails with `payload-unhandled`.
+- Only the numeric latency and a fixed label are reported; the injected bytes
+  are never echoed.
 
 ### `surface-listing`
 
@@ -86,23 +89,27 @@ are never persisted or printed.
 ### `cancellation`
 
 Issues a read-only call, cancels it with `notifications/cancelled`, and
-requires the server to acknowledge the cancellation: either silence for the
-cancelled request id within `grace_seconds`, or the structured "Request
-cancelled" error (`-32800`) that production servers return for cancelled
-requests. The probe first confirms the tool succeeds uncancelled, so an
-honoring server cannot pass by accident. A full result delivered after the
-cancellation, or an unrelated error code, fails the case on both stdio and
-Streamable HTTP transports.
+requires the server to acknowledge the cancellation. The probe first confirms
+the tool succeeds uncancelled, so an honoring server cannot pass by accident.
+
+- Passes: silence for the cancelled request id within `grace_seconds`, or the
+  structured "Request cancelled" error (`-32800`) that production servers return
+  for cancelled requests.
+- Fails: a full result delivered after the cancellation, or an unrelated error
+  code, on both stdio and Streamable HTTP transports.
 
 ### `protocol-negotiation`
 
-Runs three fresh `initialize` handshakes. The handshake with the supported
-date-shaped version must echo it; the handshake with an unknown date-shaped
-version (`bogus_version` from the manifest) must be answered with a
-date-shaped version the server actually supports — never the echoed
-request; and the version the server claims must itself be echoable on a
-third handshake. A server that parrots the unknown version, replies with a
-non-date-shaped value, or advertises support it does not have fails.
+Runs three fresh `initialize` handshakes:
+
+1. The handshake with the supported date-shaped version must echo it.
+2. The handshake with an unknown date-shaped version (`bogus_version` from the
+   manifest) must be answered with a date-shaped version the server actually
+   supports — never the echoed request.
+3. The version the server claims must itself be echoable on a third handshake.
+
+A server that parrots the unknown version, replies with a non-date-shaped
+value, or advertises support it does not have fails.
 
 ### `sampling`
 
@@ -131,25 +138,29 @@ passes trivially.
 
 ### `completion`
 
-For a server that declares the `completions` capability: one
+For a server that declares the `completions` capability, one
 `completion/complete` request for the manifest's reference
-(`ref_type`/`ref_uri`) and argument must answer with a well-formed
-completion — `completion.values`, an array of strings, optionally with
-`hasMore`/`total` — and stay within `max_values`. A structured error naming
-the argument is the argument-unknown defect: the server's completion
-surface is out of sync with its own prompt declarations. A malformed
-envelope, a transport failure, or a flood of values fails the case;
-undeclared completion support passes trivially.
+(`ref_type`/`ref_uri`) and argument must answer with a well-formed completion —
+`completion.values`, an array of strings, optionally with `hasMore`/`total` —
+and stay within `max_values`. Undeclared completion support passes trivially.
+
+- A structured error naming the argument is the argument-unknown defect: the
+  server's completion surface is out of sync with its own prompt declarations.
+- A malformed envelope, a transport failure, or a flood of values fails the
+  case.
 
 ### `workflow`
 
 Runs a declared read-only sequence in one fresh client session, with 2 through
-32 steps and 1 through 20 repetitions. Each step has explicit arguments and
-an `expect` object; the first mismatch stops the case and identifies the
-call number. All steps must pass for the workflow to pass. A transport fault
-makes the entire case incomplete. Tools annotated as writers are refused
-before any step executes. The workflow does not reuse other cases' client
-sessions; server-global or external state is not reset. See the
-[manifest example](manifest.md#read-only-workflows).
+32 steps and 1 through 20 repetitions. Each step has explicit arguments and an
+`expect` object. All steps must pass for the workflow to pass.
+
+- The first mismatch stops the case and identifies the call number.
+- A transport fault makes the entire case incomplete.
+- Tools annotated as writers are refused before any step executes.
+- The workflow does not reuse other cases' client sessions; server-global or
+  external state is not reset.
+
+See the [manifest example](manifest.md#read-only-workflows).
 
 All tool calls pass through the normal sanitized synthetic-record boundary.

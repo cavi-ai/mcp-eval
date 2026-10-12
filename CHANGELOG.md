@@ -11,6 +11,7 @@
 - `mcpeval serve` `list_findings` returns no findings before the first `mcpeval index`.
 - `mcpeval serve` describes every evaluation-tool argument and advertises the
   report's top-level contract as the evaluation tools' output schema.
+- The `coverage-call-failed` hint names tool and JSON-RPC errors as well as transport failures.
 
 ## 0.6.0 - 2026-10-08
 

@@ -2,15 +2,20 @@
 
 ## Unreleased
 
-### Fixed
+## 0.7.0 - 2026-10-12
+
+### Changed
 
 - `mcpeval serve` refuses `tools/call` arguments that violate a schema-validated
   tool's input schema, and calls naming no listed tool, with JSON-RPC `-32602`,
   naming the failing argument path and the schema rule without echoing argument
   values. Other tool failures return `isError` results.
-- `mcpeval serve` `list_findings` returns no findings before the first `mcpeval index`.
 - `mcpeval serve` describes every evaluation-tool argument and advertises the
   report's top-level contract as the evaluation tools' output schema.
+
+### Fixed
+
+- `mcpeval serve` `list_findings` returns no findings before the first `mcpeval index`.
 - The `coverage-call-failed` hint names tool and JSON-RPC errors as well as transport failures.
 
 ## 0.6.0 - 2026-10-08

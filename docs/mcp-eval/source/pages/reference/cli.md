@@ -196,6 +196,7 @@ for `probe`.
 Streamable HTTP MCP endpoint. `--allow-spawn` enables `run_probe`, `scaffold`,
 `score`, and `verify_finding`, which launch the server process an agent names.
 `--print-config` emits an MCP client config snippet for the endpoint and exits.
+See [Agent loop over MCP](../guides/agent-loop.md).
 
 ### `doctor`
 

@@ -193,30 +193,63 @@ fn call(endpoint: &str, tool: &str, arguments: Value) -> (u16, Value) {
     )
 }
 
+/// The text of a tool execution failure, which must be an `isError` result.
+fn tool_error(response: &Value) -> &str {
+    assert!(response.get("error").is_none(), "{response}");
+    assert_eq!(response["result"]["isError"], true, "{response}");
+    response["result"]["content"][0]["text"].as_str().unwrap()
+}
+
 #[test]
-fn findings_queries_report_unavailable_evidence_without_private_diagnostics() {
+fn findings_queries_treat_a_missing_index_as_empty_and_hide_unreadable_ones() {
     let dir = home();
     let (_server, port) = start_serve(&dir, &[]);
     let endpoint = format!("http://127.0.0.1:{port}/mcp");
-    for database in [None, Some("PRIVATE corrupt database bytes"), Some("")] {
-        if let Some(bytes) = database {
-            std::fs::write(dir.join("index.db"), bytes).unwrap();
-        }
+    let (_, listed) = call(&endpoint, "list_findings", json!({}));
+    assert!(listed["result"].get("isError").is_none(), "{listed}");
+    assert_eq!(
+        listed["result"]["structuredContent"]["text"],
+        "no findings; run `mcpeval index` and `mcpeval promote` first"
+    );
+    let (_, missing) = call(
+        &endpoint,
+        "get_finding",
+        json!({"finding_id":"finding-unknown"}),
+    );
+    assert_eq!(tool_error(&missing), "no such finding");
+    for bytes in ["PRIVATE corrupt database bytes", ""] {
+        std::fs::write(dir.join("index.db"), bytes).unwrap();
         for (tool, arguments) in [
             ("list_findings", json!({})),
             ("get_finding", json!({"finding_id":"finding-unknown"})),
         ] {
             let (status, response) = call(&endpoint, tool, arguments);
             assert_eq!(status, 200);
-            assert!(response.get("error").is_some(), "{response}");
             assert_eq!(
-                response["error"]["message"],
+                tool_error(&response),
                 "findings unavailable; run `mcpeval index` and `mcpeval promote` and retry"
             );
             assert!(!response.to_string().contains("PRIVATE"));
             assert!(!response.to_string().contains(dir.to_str().unwrap()));
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_index_link_is_unavailable_not_empty() {
+    let dir = home();
+    std::os::unix::fs::symlink(dir.join("missing-index.db"), dir.join("index.db")).unwrap();
+    let (_server, port) = start_serve(&dir, &[]);
+    let (_, response) = call(
+        &format!("http://127.0.0.1:{port}/mcp"),
+        "list_findings",
+        json!({}),
+    );
+    assert_eq!(
+        tool_error(&response),
+        "findings unavailable; run `mcpeval index` and `mcpeval promote` and retry"
+    );
 }
 
 #[test]
@@ -269,11 +302,7 @@ fn invalid_tool_arguments_are_refused_with_32602_naming_the_path_without_values(
         json!({"finding_id": "finding-0000000000000000"}),
     );
     assert_eq!(status, 200);
-    assert_eq!(response["error"]["code"], -32000, "{response}");
-    assert_eq!(
-        response["error"]["message"], "no such finding",
-        "{response}"
-    );
+    assert_eq!(tool_error(&response), "no such finding");
 }
 
 #[test]
@@ -326,6 +355,7 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
             tool,
             json!({"command": ["python3", CLEAN], "manifest": {"version": 1, "probes": []}}),
         );
+        assert_eq!(denied["error"]["code"], -32602, "{denied}");
         let message = denied["error"]["message"].as_str().unwrap();
         assert!(message.contains("--allow-spawn"), "{message}");
     }
@@ -365,10 +395,16 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
     assert!(text.contains("no findings"), "{text}");
 
     let (_, unknown) = call(&http, "nope", json!({}));
+    assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
     assert!(unknown["error"]["message"]
         .as_str()
         .unwrap()
         .contains("unknown tool"));
+    let (_, nameless) = raw_call(
+        &http,
+        &json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{}}),
+    );
+    assert_eq!(nameless["error"]["code"], -32602, "{nameless}");
 
     let (_, rejected) = raw_call(
         &http,
@@ -421,10 +457,7 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
             "note": "fine"
         }),
     );
-    assert!(bad_kind["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("unknown annotation kind"));
+    assert!(tool_error(&bad_kind).contains("unknown annotation kind"));
 
     // Control characters and overlong notes are rejected.
     let (_, control) = call(
@@ -437,10 +470,7 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
             "note": "line one\nline two"
         }),
     );
-    assert!(control["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("control characters"));
+    assert!(tool_error(&control).contains("control characters"));
     let long = "x".repeat(241);
     let (_, overlong) = call(
         &http,
@@ -452,10 +482,7 @@ fn serve_exposes_findings_and_trends_over_streamable_http() {
             "note": long
         }),
     );
-    assert!(overlong["error"]["message"]
-        .as_str()
-        .unwrap()
-        .contains("240 characters"));
+    assert!(tool_error(&overlong).contains("240 characters"));
 
     // The store still holds only the one accepted record.
     assert_eq!(read_annotations(&dir).len(), 1);
@@ -521,7 +548,7 @@ fn event_annotations_match_advertised_schema_and_link_only_the_named_call() {
         invalid["note"] = json!("n");
         assert!(!validator.is_valid(&invalid), "{invalid}");
         let (_, result) = call(&http, "record_annotation", invalid);
-        assert!(result.get("error").is_some(), "{result}");
+        assert!(!tool_error(&result).is_empty());
     }
     assert_eq!(read_annotations(&dir).len(), 1);
     mcpeval::index::build(&dir).unwrap();
@@ -614,13 +641,7 @@ fn queries_remain_responsive_and_overlapping_evaluations_are_refused() {
         "query waited for the evaluation"
     );
     let (_, overlapping) = call(&http, "run_probe", slow.clone());
-    assert!(
-        overlapping["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("evaluation already running"),
-        "{overlapping}"
-    );
+    assert!(tool_error(&overlapping).contains("evaluation already running"));
     let (_, report) = job.join().unwrap();
     assert_eq!(
         report["result"]["structuredContent"]["passed"], true,
@@ -880,7 +901,7 @@ fn native_verification_shares_cli_credit_and_preserves_transport_failure_state()
     let mut unavailable = args.clone();
     unavailable["command"] = json!(["python3", CLEAN, "early-exit"]);
     let (_, startup) = call(&http, "verify_finding", unavailable.clone());
-    assert!(startup.get("error").is_some(), "{startup}");
+    assert!(!tool_error(&startup).is_empty());
     unavailable["command"] = json!([
         "python3",
         "tests/fixtures/transport_fault_server.py",
@@ -945,13 +966,7 @@ fn native_verification_rejects_invalid_or_mutating_cases_before_launch() {
         (forbidden_flag, "invalid verify_finding arguments"),
     ] {
         let (_, denied) = call(&http, "verify_finding", arguments);
-        assert!(
-            denied["error"]["message"]
-                .as_str()
-                .unwrap()
-                .contains(expected),
-            "{denied}"
-        );
+        assert!(tool_error(&denied).contains(expected), "{denied}");
         assert!(!marker.exists(), "invalid verification launched its target");
     }
     let db = rusqlite::Connection::open(dir.join("lifecycle.db")).unwrap();
@@ -1022,6 +1037,44 @@ fn native_score_uses_the_cli_standard_and_reports_unavailable_targets() {
         .as_str()
         .unwrap();
     assert!(!text.contains("all cases passed"), "{text}");
+}
+
+#[test]
+fn the_standard_battery_scores_serve_with_only_the_unknown_finding_lookup_failing() {
+    let dir = home();
+    let (_server, port) = start_serve(&dir, &["--allow-spawn"]);
+    let output = Command::new(bin())
+        .args(["score", "--server", "mcpeval", "--format", "json", "--url"])
+        .arg(format!("http://127.0.0.1:{port}/mcp"))
+        .env("MCPEVAL_HOME", home())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    let areas = report["readiness"]["areas"].as_array().unwrap();
+    let area = |name: &str| areas.iter().find(|area| area["name"] == name).unwrap();
+    for name in ["protocol", "catalog", "error-honesty"] {
+        assert_eq!(area(name)["score"], 100, "{name}: {report}");
+    }
+    assert!(area("context")["score"].as_u64().unwrap() >= 90, "{report}");
+    // The battery's synthesized identifier names no promoted finding.
+    for (name, id) in [
+        ("reliability", "reliability.success"),
+        ("coverage", "coverage.exercised"),
+    ] {
+        let tools: Vec<&Value> = area(name)["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|check| check["id"] == id)
+            .map(|check| &check["tool"])
+            .collect();
+        assert_eq!(tools, [&json!("get_finding")], "{name}: {report}");
+    }
 }
 
 fn read_annotations(dir: &std::path::Path) -> Vec<Value> {

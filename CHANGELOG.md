@@ -8,6 +8,7 @@
   tool's input schema with JSON-RPC `-32602`, naming the failing argument path
   and the schema rule without echoing argument values. Other tool failures keep
   `-32000`.
+- The `coverage-call-failed` hint names tool and JSON-RPC errors as well as transport failures.
 
 ## 0.6.0 - 2026-10-08
 

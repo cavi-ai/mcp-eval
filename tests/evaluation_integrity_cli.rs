@@ -58,6 +58,16 @@ fn consistently_failing_calls_receive_no_reliability_credit() {
         0
     );
     assert_eq!(reliability(&document)["measurements"]["tool_errors"], 3);
+    let coverage = document["readiness"]["areas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|area| area["name"] == "coverage")
+        .unwrap();
+    let check = &coverage["checks"][0];
+    assert_eq!(check["reason"], "coverage-call-failed", "{coverage}");
+    let hint = check["hint"].as_str().unwrap();
+    assert!(hint.contains("tool or JSON-RPC error"), "{hint}");
 }
 
 #[test]

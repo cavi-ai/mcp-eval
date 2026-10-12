@@ -304,8 +304,9 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
              schema describe exactly what the tool accepts"
         }
         CheckReason::CoverageCallFailed => {
-            "the call timed out, closed the connection, or broke the protocol exchange; a \
-             read-only tool must answer within 15 seconds without ending the session"
+            "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the \
+             connection, or broke the protocol exchange; a read-only tool must answer valid \
+             calls successfully within 15 seconds without ending the session"
         }
         CheckReason::NoReadOnlyTools => {
             "the server declares no read-only tools, so behavior cannot be measured without \

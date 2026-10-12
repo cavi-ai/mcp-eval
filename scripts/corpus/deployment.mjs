@@ -49,9 +49,11 @@ export async function deploymentMatches(deployment) {
   } catch { return false; }
 }
 
+export const OPTIONS = { root: { type: "string" } };
+
 if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
   try {
-    const { values } = parseArgs({ options: { root: { type: "string" } } });
+    const { values } = parseArgs({ options: OPTIONS });
     if (!values.root || !path.isAbsolute(values.root)) throw new Error("--root requires an absolute deployment directory");
     console.log(await deploymentDigest(values.root));
   } catch (error) { console.error(error.message); process.exitCode = 1; }

@@ -21,7 +21,7 @@ function resultFields(row) {
   return Object.fromEntries([...resultKeys, ...("reason" in row ? ["reason"] : [])].map((key) => [key, row[key]]));
 }
 // These outcomes discard or never produce report bytes in evaluateTarget.
-const withoutReport = {
+export const WITHOUT_REPORT = {
   "missing-environment": ["untested"], "prerequisite-failed": ["untested"],
   "deployment-mismatch": ["errored"], "state-check-failed": ["untested", "errored"],
   "state-mismatch": ["errored"], "evaluation-failed": ["errored"], "invalid-report": ["errored"],
@@ -46,7 +46,7 @@ export async function checkEvidence(options = {}) {
     let replay;
     if (entry.status === "observed") {
       if (row.replay_report_sha256 === null) {
-        if (typeof row.reason !== "string" || !Object.hasOwn(withoutReport, row.reason) || !withoutReport[row.reason].includes(row.status)) throw new Error("unsupported evidence outcome without report");
+        if (typeof row.reason !== "string" || !Object.hasOwn(WITHOUT_REPORT, row.reason) || !WITHOUT_REPORT[row.reason].includes(row.status)) throw new Error("unsupported evidence outcome without report");
         replay = { status: row.status, reason: row.reason };
       } else {
         const name = `${entry.server}.json`; expectedFiles.push(name);
@@ -72,9 +72,11 @@ export async function checkEvidence(options = {}) {
   return verified;
 }
 
+export const OPTIONS = { evidence: { type: "string" }, corpus: { type: "string" }, targets: { type: "string" }, reports: { type: "string" }, json: { type: "boolean", default: false } };
+
 if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
   try {
-    const { values } = parseArgs({ options: { evidence: { type: "string" }, corpus: { type: "string" }, targets: { type: "string" }, reports: { type: "string" }, json: { type: "boolean", default: false } } });
+    const { values } = parseArgs({ options: OPTIONS });
     const result = await checkEvidence({ evidencePath: values.evidence, corpusPath: values.corpus, targetsPath: values.targets, reportsPath: values.reports });
     console.log(values.json ? JSON.stringify(result, null, 2) : `evidence intact; replay ${result.passed ? "passed" : "failed"}`);
     process.exitCode = result.passed ? 0 : 1;

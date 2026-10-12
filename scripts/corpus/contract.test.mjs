@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { commandFor, readinessScore, driftedResults } from "./verify.mjs";
-import { validateCorpus } from "./contract.mjs";
+import { UNOBSERVED_REASONS, validateCorpus } from "./contract.mjs";
 
 const corpusFixture = JSON.parse(await readFile(new URL("../../tests/fixtures/corpus-v3.json", import.meta.url), "utf8"));
 const metadataCases = JSON.parse(await readFile(new URL("../../tests/fixtures/corpus-v3-metadata-cases.json", import.meta.url), "utf8"));
@@ -15,6 +15,19 @@ for (const scenario of metadataCases) {
     else assert.throws(() => validateCorpus(document));
   });
 }
+
+test("published corpus schemas accept exactly the harness unobserved reasons", async () => {
+  for (const name of ["mcp-eval.corpus.schema.json", "mcp-eval.corpus-verification.schema.json"]) {
+    const enums = [];
+    const visit = (node) => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node.reason?.enum)) enums.push(node.reason.enum);
+      Object.values(node).forEach(visit);
+    };
+    visit(JSON.parse(await readFile(new URL(`../../docs/${name}`, import.meta.url), "utf8")));
+    assert.deepEqual(enums, [UNOBSERVED_REASONS], name);
+  }
+});
 
 test("launches only an explicitly pinned package target", () => {
   const target = { server: "memory", runtime: "npm", package: "@modelcontextprotocol/server-memory", version: "1.2.3", bin: "fixture-memory", args: [], prerequisites: { environment: [], checks: [] } };

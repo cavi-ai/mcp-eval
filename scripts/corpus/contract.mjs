@@ -8,6 +8,7 @@ export const ROOT = path.resolve(import.meta.dirname, "../..");
 export const SCHEMA = "mcpeval.readiness-corpus/v3";
 export const AREAS = ["protocol", "catalog", "context", "error-honesty", "reliability", "coverage"];
 export const COUNTS = ["successful_calls", "tool_errors", "rpc_errors", "rejected_calls", "transport_errors", "untested_tools"];
+export const UNOBSERVED_REASONS = ["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report", "deployment-mismatch", "state-check-failed", "state-mismatch"];
 export const ISOLATION = { KUBECONFIG: path.join(ROOT, "scripts/corpus/empty-kubeconfig.yaml"), DOCKER_HOST: "unix:///nonexistent/docker.sock" };
 export const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 export const digestFile = async (file) => sha256(await readFile(file));
@@ -142,7 +143,7 @@ export function validateCorpus(corpus) {
   for (const entry of corpus.population) {
     require(label(entry.server) && !seen.has(entry.server) && ["observed", "untested", "errored"].includes(entry.status), "invalid or duplicate population entry"); seen.add(entry.server);
     if (entry.status === "observed") { require(entry.reason === undefined, "observed target cannot have a failure reason"); observed.add(entry.server); }
-    else require(["missing-environment", "prerequisite-failed", "no-tools", "no-tool-calls", "readiness-unmeasured", "evaluation-failed", "invalid-report", "deployment-mismatch", "state-check-failed", "state-mismatch"].includes(entry.reason), "invalid unobserved reason");
+    else require(UNOBSERVED_REASONS.includes(entry.reason), "invalid unobserved reason");
   }
   const rows = new Set();
   for (const observation of corpus.observations) {

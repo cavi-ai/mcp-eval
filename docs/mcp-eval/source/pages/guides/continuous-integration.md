@@ -59,11 +59,22 @@ to a reviewed commit containing it:
     reports: private/original-reports
 ```
 
-Replace the commit placeholder before use. Relative input paths resolve from
-the calling workspace; all four inputs are required. With a local checkout of
-this repository, use `./actions/corpus-evidence`. The action uses GitHub's Node
-24 runtime and does not install an evaluator or launch servers, package runners,
-health checks, or state adapters.
+Replace the commit placeholder before use. With a local checkout of this
+repository, use `./actions/corpus-evidence`. The action is separate from the
+root probe action and is not in the npm package. It uses GitHub's built-in
+`node24` runtime, which self-hosted runners must support, has no npm
+dependencies, and does not install an evaluator or launch servers, package
+runners, health checks, or state adapters.
+
+| Input | Meaning |
+| --- | --- |
+| `evidence` | Replay bundle containing `verification.json` and `reports/`. |
+| `corpus` | Original provenance-bearing corpus JSON. |
+| `targets` | Original target file used for collection. |
+| `reports` | Directory of original collection reports. |
+
+All four inputs are required. Relative paths resolve from the calling
+workspace; absolute paths also work.
 
 | Output | Meaning |
 | --- | --- |
@@ -73,15 +84,19 @@ health checks, or state adapters.
 | `observations` | Original observed-target count; empty for invalid evidence. |
 | `population` | Original target-population count; empty for invalid evidence. |
 
-Failed or invalid evidence fails the step. Reporting errors also fail it and
-can leave outputs unavailable. If using `continue-on-error` to inspect outputs,
-keep an explicit downstream failure gate and treat missing outputs as failure.
-A pass means replay agreement, not server health or author authentication.
+Failed or invalid evidence fails the step. Outputs and the job summary are
+written before the verdict exit when runner file commands are available.
+Reporting errors also fail the step and can leave outputs unavailable. If using
+`continue-on-error` to inspect outputs, keep an explicit downstream failure gate
+and treat missing outputs as failure. A pass means replay agreement, not server
+health or author authentication.
 
 The action's diagnostics and summary contain fixed messages, counts, and
-verdicts; it does not upload reports. GitHub can log supplied inputs independently,
-so use secrets for sensitive paths and private storage with appropriate access
-controls. Do not upload raw evidence to public workflow artifacts. Follow
+verdicts. They omit server labels, paths, report payloads, digests, and
+artifact metadata, and the action uploads no reports. GitHub can log supplied
+inputs independently, so use secrets for sensitive paths and private storage
+with appropriate access controls. Do not upload raw evidence to public workflow
+artifacts. Follow
 [Corpus collection and replay](corpus-replay.md) to prepare and retain the files.
 
 ## Committed baselines

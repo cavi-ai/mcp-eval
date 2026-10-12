@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
+import { OPTIONS as CHECK_OPTIONS, WITHOUT_REPORT } from "../corpus/check-evidence.mjs";
+import { OPTIONS as COLLECT_OPTIONS } from "../corpus/collect.mjs";
+import { UNOBSERVED_REASONS } from "../corpus/contract.mjs";
+import { OPTIONS as DEPLOYMENT_OPTIONS } from "../corpus/deployment.mjs";
+import { OPTIONS as VERIFY_OPTIONS } from "../corpus/verify.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const SOURCE = path.join(ROOT, "docs/mcp-eval/source");
@@ -176,6 +181,44 @@ test("official docs cover recovery and authorization contracts", async () => {
   ]) {
     assert.ok(text.includes(phrase), phrase);
   }
+});
+
+test("corpus guide matches harness options and unobserved reasons", async () => {
+  const guide = await readFile(path.join(SOURCE, "pages/guides/corpus-replay.md"), "utf8");
+  const scripts = { collect: COLLECT_OPTIONS, verify: VERIFY_OPTIONS, "check-evidence": CHECK_OPTIONS, deployment: DEPLOYMENT_OPTIONS };
+  const documented = new Map(Object.keys(scripts).map((script) => [script, []]));
+  for (const [, script, flag] of section(guide, "Script options").matchAll(/^\| `([a-z-]+)\.(?:mjs|sh)` \| `--([a-z-]+)` \|/gmu)) {
+    assert.ok(documented.has(script), script);
+    documented.get(script).push(flag);
+  }
+  for (const [script, options] of Object.entries(scripts)) {
+    assert.deepEqual(documented.get(script).toSorted(), Object.keys(options).toSorted(), script);
+  }
+  const invoked = new Set();
+  for (const [, block] of guide.matchAll(/```sh\n([\s\S]*?)```/gu)) {
+    for (const command of block.replace(/\\\n/gu, " ").split("\n")) {
+      const script = /scripts\/corpus\/([a-z-]+)\.(?:mjs|sh)/u.exec(command)?.[1];
+      if (!script) continue;
+      assert.ok(Object.hasOwn(scripts, script), script);
+      invoked.add(script);
+      for (const [, flag] of command.matchAll(/--([a-z-]+)/gu)) assert.ok(Object.hasOwn(scripts[script], flag), `${script} --${flag}`);
+    }
+  }
+  assert.deepEqual([...invoked].toSorted(), Object.keys(scripts).toSorted());
+  const outcomes = [...section(guide, "Target outcomes").matchAll(/^\| ([a-z ]+) \| `([a-z-]+)` \| (yes|no) \|/gmu)];
+  assert.deepEqual(outcomes.map(([, , reason]) => reason).toSorted(), UNOBSERVED_REASONS.toSorted());
+  for (const [, status, reason, kept] of outcomes) {
+    assert.equal(kept === "no", Object.hasOwn(WITHOUT_REPORT, reason), reason);
+    if (kept === "no") assert.deepEqual(status.split(" or ").toSorted(), WITHOUT_REPORT[reason].toSorted(), reason);
+  }
+});
+
+test("CI guide lists every corpus evidence action input and output", async () => {
+  const action = await readFile(path.join(ROOT, "actions/corpus-evidence/action.yml"), "utf8");
+  const keys = (block) => [...action.split(`\n${block}:\n`)[1].split(/\n(?=\S)/u)[0].matchAll(/^ {2}([a-z-]+):/gmu)].map((match) => match[1]);
+  const guide = await readFile(path.join(SOURCE, "pages/guides/continuous-integration.md"), "utf8");
+  const documented = [...section(guide, "Saved corpus evidence").matchAll(/^\| `([a-z-]+)` \|/gmu)].map((match) => match[1]);
+  assert.deepEqual(documented.toSorted(), [...keys("inputs"), ...keys("outputs")].toSorted());
 });
 
 test("documentation publishes from the release chain and is gated in CI", async () => {

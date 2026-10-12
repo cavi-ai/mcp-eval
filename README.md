@@ -263,8 +263,7 @@ the corpus is also published: how healthy are the MCP servers agents actually
 use? 33 popular public servers, scored by the same standard battery,
 distribution published with full method notes. Its missing historical package
 and evaluator provenance cannot be recovered. New collections require explicit
-package pins and declared prerequisites; follow [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md)
-or the detailed [corpus harness reference](scripts/corpus/README.md).
+package pins and declared prerequisites; follow [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md).
 The v3 format records every target as observed, untested, or errored and keeps
 evaluator and report hashes. Historical v2 data remains readable, but the drift
 checker refuses to replay it as a pinned collection.

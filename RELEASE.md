@@ -109,7 +109,7 @@ not evidence of representativeness. Review the target population, exclusions,
 measurement profiles, and provenance before accepting a calibration baseline
 or deliberately publishing it. Never commit private
 target files, raw reports, or retained replay evidence. See
-[corpus collection and replay](scripts/corpus/README.md).
+[corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md).
 
 ## Pre-1.0 policy
 

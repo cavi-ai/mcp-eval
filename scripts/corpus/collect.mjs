@@ -48,9 +48,11 @@ export async function collectCorpus(options) {
   } finally { await rm(work, { recursive: true, force: true }); }
 }
 
+export const OPTIONS = { targets: { type: "string" }, out: { type: "string" }, binary: { type: "string" }, "min-observations": { type: "string", default: "10" }, force: { type: "boolean", default: false }, "require-deployments": { type: "boolean", default: false } };
+
 if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
   try {
-    const { values } = parseArgs({ options: { targets: { type: "string" }, out: { type: "string" }, binary: { type: "string" }, "min-observations": { type: "string", default: "10" }, force: { type: "boolean", default: false }, "require-deployments": { type: "boolean", default: false } } });
+    const { values } = parseArgs({ options: OPTIONS });
     const result = await collectCorpus({ targetsPath: values.targets, output: values.out, binary: values.binary, minimum: Number(values["min-observations"]), force: values.force, requireDeployments: values["require-deployments"] });
     console.log(`collected ${result.corpus.observations.length} observed of ${result.corpus.population.length} targets; reports: ${result.reports}`);
     if (!result.sufficient) { console.error("insufficient observed targets; retained candidate is not a calibration baseline"); process.exitCode = 1; }

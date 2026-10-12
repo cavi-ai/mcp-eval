@@ -62,9 +62,11 @@ export async function verifyCorpus(options = {}) {
   }
 }
 
+export const OPTIONS = { corpus: { type: "string" }, targets: { type: "string" }, reports: { type: "string" }, binary: { type: "string" }, out: { type: "string" }, json: { type: "boolean", default: false }, "require-deployments": { type: "boolean", default: false } };
+
 if (process.argv[1] && path.resolve(process.argv[1]) === import.meta.filename) {
   try {
-    const { values } = parseArgs({ options: { corpus: { type: "string" }, targets: { type: "string" }, reports: { type: "string" }, binary: { type: "string" }, out: { type: "string" }, json: { type: "boolean", default: false }, "require-deployments": { type: "boolean", default: false } } });
+    const { values } = parseArgs({ options: OPTIONS });
     const result = await verifyCorpus({ corpusPath: values.corpus, targetsPath: values.targets, reportsPath: values.reports, binary: values.binary, evidencePath: values.out, requireDeployments: values["require-deployments"] });
     if (values.json) console.log(JSON.stringify(result, null, 2));
     else for (const entry of result.results) console.log(`${entry.drifted ? "DRIFT" : entry.status} ${entry.server} expected=${entry.expected ?? "-"} observed=${entry.observed ?? "-"}`);

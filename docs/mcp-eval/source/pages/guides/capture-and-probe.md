@@ -8,7 +8,59 @@ Place the server command after `--` so MCP Eval can proxy it without interpretin
 mcpeval shim --server demo -- your-mcp-server --flags
 ```
 
-The stdio shim expects newline-delimited JSON-RPC. It forwards invalid frames unchanged but records only a content-free `unparsed/outbound` or `unparsed/inbound` event.
+The stdio shim runs on Unix and Windows; other targets return an unsupported-target
+error. It expects newline-delimited JSON-RPC, inherits the server's environment
+unchanged, and passes the server's stderr through untouched. It forwards invalid
+frames unchanged but records only a content-free `unparsed/outbound` or
+`unparsed/inbound` event.
+
+To capture an MCP client's sessions, wrap the server command in the client's
+config. Before:
+
+```json
+{ "command": "/path/to/server", "args": ["serve"] }
+```
+
+After:
+
+```json
+{
+  "command": "/path/to/mcpeval",
+  "args": ["shim", "--server", "myserver", "--", "/path/to/server", "serve"]
+}
+```
+
+On Windows, use the `.exe` binaries and escaped backslashes:
+
+```json
+{
+  "command": "C:\\path\\to\\mcpeval.exe",
+  "args": ["shim", "--server", "myserver", "--", "C:\\path\\to\\server.exe", "serve"]
+}
+```
+
+Set `MCPEVAL_HOME` in the client environment to choose the capture root. On
+Windows, set it explicitly when the client provides no `HOME`. Set
+`MCPEVAL_SESSION` to correlate captures with an agent session; when it is unset,
+the shim generates a UUID once per process.
+
+## Verify a live capture
+
+1. Restart the MCP client so it starts the server through the shim.
+2. Call one clearly read-only tool.
+3. Run `mcpeval index` with the same `MCPEVAL_HOME`; it must report a nonzero
+   call count.
+4. Inspect grouped counts:
+
+   ```sh
+   sqlite3 "$MCPEVAL_HOME/index.db" \
+     "SELECT server, tool, outcome, COUNT(*) FROM calls GROUP BY 1,2,3 ORDER BY 4 DESC;"
+   ```
+
+5. Run `mcpeval doctor --check-redaction`. It must exit 0 with no findings and
+   name the salt path as a must-not-share item. A finding names a file and line,
+   never the matched text, and is a redaction bug: stop capturing and inspect
+   that line.
 
 ## Capture Streamable HTTP traffic
 
@@ -22,6 +74,14 @@ mcpeval shim-http --server demo \
 
 Remote upstreams require HTTPS and `--allow-remote-http`. Endpoint URLs cannot contain credentials, query strings, or fragments, and redirects are disabled.
 
+The proxy listens only on an explicit loopback socket and bounds JSON and SSE
+responses. Before forwarding anything upstream, it refuses:
+
+- a repeated `Host`, `Origin`, or `Content-Type` (400);
+- a non-loopback `Origin` (403);
+- a missing `Host` (400) or a non-loopback `Host` (403);
+- a POST without `Content-Type: application/json` (415).
+
 ## Capture and event identity
 
 Every recorder instance and probe run mints a random UUIDv4
@@ -29,7 +89,8 @@ Every recorder instance and probe run mints a random UUIDv4
 Sequence numbers order recorded events within that capture. They are not
 JSON-RPC request IDs, and a capture ID does not create another logical session
 for the two-session promotion requirement. Reconnects within a probe run retain
-its capture identity.
+its capture identity. `MCPEVAL_SESSION` names the logical session; it is stored
+as a stable `session:<sha256>` token, never as the raw value.
 
 Indexing builds failure windows within one capture. Historical records have no
 recorder IDs; indexing retains them without inventing provenance. Their windows
@@ -58,6 +119,11 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json \
   --url http://127.0.0.1:8080/mcp
 ```
 
+The HTTP client accepts `application/json` and `text/event-stream` responses,
+carries the negotiated `Mcp-Session-Id`, and sends `MCP-Protocol-Version`.
+Redirects are disabled, responses are bounded to 8 MiB, and network timeouts are
+five seconds. Mutation gates apply identically to stdio and HTTP.
+
 Use `--format json` when a deterministic, versioned result is needed for a CI
 artifact or baseline:
 
@@ -76,25 +142,59 @@ or raw error text.
 
 Mutating cases are rejected unless each case names a declared sandbox and the invocation includes `--allow-mutation`. The flag authorizes only manifest-declared cases; it does not turn capture into a mutation capability.
 
-`init` writes discovery-cost and token-cost budgets from the measured
-catalog, pagination, protocol negotiation, and surface listing when
-`initialize` declares `resources` or `prompts`. Per-tool cases come from the
-candidates: zero-required tools the server annotates `readOnlyHint: true`,
-plus, with `--confirm-read-only` (an operator attestation that unannotated
-tools are read-only), the unannotated zero-required tools. A tool annotated
-`destructiveHint: true` or `readOnlyHint: false` is never called, with or
-without the attestation. `init` calls up to 20 candidates with `{}` and, for
-each that succeeds, adds schema-guessability, degradation-over-n,
-latency-budget (bound from the measured latency), and output-schema when an
-`outputSchema` is declared, plus one contention and one 1 MB payload-bounds
-case. `--tool <NAME>` (repeatable) restricts the candidates; a name the
-catalog lacks, or one init cannot call (annotated as a writer, required
-arguments, or unattested), is a usage error (exit 2).
-`--dry-run` prints each tool's decision after `initialize` and `tools/list`
-and calls no tool, writes no file, and skips the `--output` existence check. Error honesty, state
-recovery, instruction fidelity, cancellation, sampling, elicitation, resource
-subscription, and completion cases need inputs `init` cannot infer and are
-never scaffolded.
+## Scaffold a manifest
+
+`init` introspects a live server and writes every case that needs no domain
+input. Server-level cases come first:
+
+- `discovery-cost` and `token-cost` budgets from the measured catalog;
+- `pagination` with `max_pages` 5;
+- `protocol-negotiation`;
+- `surface-listing` when `initialize` declares `resources` or `prompts`.
+
+Candidates are zero-required tools annotated `readOnlyHint: true`. With
+`--confirm-read-only`, an operator attestation that unannotated tools are
+read-only, unannotated zero-required tools are candidates too. A tool annotated
+`destructiveHint: true` or `readOnlyHint: false` is never called.
+
+`init` calls up to 20 candidates with `{}`. Each one that succeeds gets:
+
+- `schema-guessability`;
+- `degradation-over-n` with 5 attempts;
+- `latency-budget` with 3 attempts, bounded at four times the measured latency,
+  rounded up to 100 ms and kept between 1 and 60 seconds;
+- `output-schema` when the tool declares an `outputSchema`.
+
+The first such tool also gets `contention`. One gets `payload-bounds`: a 1 MB
+string in its first string property, else in a `payload` field. A clean
+rejection passes.
+
+`--tool <NAME>` (repeatable) restricts the candidates. A name the catalog
+lacks, or one `init` cannot call (a writer, required arguments, or unattested),
+is a usage error (exit 2).
+
+`--dry-run` stops after `initialize` and `tools/list`, calls no tool, writes no
+file, and skips the `--output` existence check. It prints one decision per tool:
+`candidate (readOnlyHint)`, `candidate (attested)`, `needs --confirm-read-only`,
+`skipped: destructiveHint`, `skipped: readOnlyHint=false`,
+`skipped: required arguments`, or `skipped: not in --tool`.
+
+Discovery must finish within 20 `tools/list` pages. When a later page fails or
+the twentieth page still has a cursor, `init` exits 3 before calling tools or
+writing a manifest, even with `--force`. On the same catalog, `score` leaves
+readiness unmeasured. `probe` reports ordinary cases as transport errors with
+zero attempts, so `verify` grants no passing credit. Pagination cases still run
+to diagnose the listing; `--probe pagination` runs that diagnostic alone.
+
+Some cases are never scaffolded; add them by hand:
+
+- `workflow`, `error-honesty`, `state-recovery`, and `instruction-fidelity`
+  need expected inputs;
+- `cancellation` needs a deliberately slow tool;
+- `sampling`, `elicitation`, `resource-subscription`, and `completion` need
+  declared references.
+
+## Generate a case for a finding
 
 For a promoted finding with a valid tool, `generate` writes a deterministic
 one-case read-only manifest chosen from the finding's class. Recurring and

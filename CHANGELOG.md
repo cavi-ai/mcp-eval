@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- `mcpeval diff --help` names the `mcpeval.probe-diff/v2` document it emits.
+
 ## 0.7.0 - 2026-10-12
 
 ### Changed
@@ -648,7 +652,7 @@
   `list_findings`, `get_finding`, and `get_readiness_trends` so coding agents
   can query their own findings natively; serves only share-safe content.
 - Composite GitHub Action (`action.yml`) and a CI gating guide
-  ([docs/ci.md](docs/ci.md)) covering baseline diffs and readiness badges.
+  ([continuous integration](docs/mcp-eval/source/pages/guides/continuous-integration.md)) covering baseline diffs and readiness badges.
 - `mcpeval-demo`, a bundled MCP stdio server with a clean personality and
   `--broken <aspect>` personalities (`schema`, `fidelity`, `unstable-errors`,
   `bloated`, `duplicate-page`, `stalled-cursor`, `slow`) that reproduce each

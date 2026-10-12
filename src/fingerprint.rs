@@ -8,15 +8,15 @@ use sha2::{Digest, Sha256};
 use crate::errtemplate;
 
 /// Name of the salt file at the store root. A dotfile sibling of `store/`,
-/// deliberately outside the shareable capture tree — see `doctor` and
-/// `README.md` / `docs/install.md` for the sharing boundary this depends on.
+/// deliberately outside the shareable capture tree — see `doctor` and the
+/// privacy and authorization docs page for the sharing boundary this depends on.
 pub const SALT_FILENAME: &str = ".salt";
 
 /// Per-install secret used to salt error fingerprints. Generated once and
 /// persisted at `<root>/.salt` — a dotfile sibling of `store/`, deliberately
 /// outside the shareable capture tree; never leaves the machine and never
-/// appears in stored output. See `README.md` and `docs/install.md` for the
-/// sharing boundary this depends on.
+/// appears in stored output. See the privacy and authorization docs page for
+/// the sharing boundary this depends on.
 pub struct Salt([u8; 32]);
 
 impl Salt {

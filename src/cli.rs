@@ -82,7 +82,7 @@ pub enum DiffFormat {
     Text,
     /// Markdown movement table for issues and pull requests.
     Markdown,
-    /// Deterministic JSON diff document (mcpeval.probe-diff/v1).
+    /// Deterministic JSON diff document (mcpeval.probe-diff/v2).
     Json,
 }
 

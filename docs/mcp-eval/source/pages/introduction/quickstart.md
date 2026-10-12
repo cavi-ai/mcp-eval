@@ -17,6 +17,13 @@ mcpeval probe --server demo --manifest demo.manifest.json \
 # catalog-pagination fails with pagination-stalled-cursor
 ```
 
+`mcpeval-demo --help` lists every aspect, and an unknown aspect exits 2. The
+aspects reproduce incoherent schemas, unfaithful results, unstable error codes,
+accepted invalid arguments, bloated catalogs, terse descriptions, broken
+pagination, slow and flaky calls, dropped cancellations, echoed protocol
+versions, answered unknown methods, malformed sampling and elicitation
+requests, missing subscription notifications, and malformed completions.
+
 The same manifest fails `--broken negotiation` with a `negotiation-*` reason, `--broken bloated` with `discovery-limit-exceeded` and `token-budget-exceeded`, and `--broken slow` with `latency-budget-exceeded`. Error honesty, state recovery, instruction fidelity, cancellation, sampling, elicitation, resource subscription, and completion need inputs `init` cannot infer; add those cases by hand.
 
 To evaluate your own server, point the same flow at it:

@@ -4,8 +4,10 @@ Collect a corpus with declared inputs, replay it, and check the saved evidence
 before using its verdict in CI. New collections use
 `mcpeval.readiness-corpus/v3` and record every target as observed, untested, or
 errored. The shipped standard/1 snapshot lacks the provenance required for
-replay; collecting today cannot recover its original execution inputs. No
-target list or package version is inferred from historical observations.
+replay; collecting today cannot recover its original execution inputs. Historical
+`mcpeval.readiness-corpus/v2` data stays readable, but replay refuses it as a
+pinned collection. No target list or package version is inferred from
+historical observations.
 
 Collection, replay, and offline checking are repository scripts. Run them from
 a reviewed checkout containing `scripts/corpus`; installing the CLI alone does

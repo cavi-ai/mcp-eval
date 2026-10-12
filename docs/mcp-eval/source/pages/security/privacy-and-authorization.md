@@ -19,6 +19,54 @@ Mutation requires two independent controls: the manifest case uses `"access": "m
 
 HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS plus `--allow-remote-http`. Optional authorization is read from `MCPEVAL_HTTP_AUTHORIZATION`, validated, used in memory, and never persisted or printed. The HTTP proxy may relay an incoming `Authorization` value in memory, but it does not originate calls or grant mutation permission. `mcpeval serve` refuses requests without a loopback `Host`, with a non-loopback `Origin`, or without `Content-Type: application/json`, and lists its process-launching tools (`run_probe`, `scaffold`, `score`, `verify_finding`) only with `--allow-spawn`. `mcpeval shim-http` applies the same `Host` and `Origin` checks to every request and the `Content-Type` check to every POST before forwarding anything upstream.
 
+## What is recorded
+
+For completed JSON-RPC calls and inbound server notifications, the journal
+keeps:
+
+- timestamps, recorder and event UUIDs, an opaque session token, and a
+  sequence number;
+- the validated server label and method;
+- tool names that satisfy the tool-name grammar;
+- latency, outcome, and shim overhead;
+- shaped `params.arguments` when present.
+
+Server labels are 1-128 character ASCII labels, and methods use a bounded
+slash-separated grammar. A tool name is kept when it is non-empty ASCII
+alphanumeric plus `_`, `-`, `.`, or `:`, at most 128 bytes, whether or not
+`tools/list` declared it; any other name is recorded as `unlisted`. The store
+revalidates these fields before writing. There is no verbose or raw-payload
+mode.
+
+Every unparseable frame produces a content-free record with only `ts`,
+`session`, `seq`, `server`, an `unparsed/outbound` or `unparsed/inbound`
+method, the `unparsed` outcome, `shim_self_us`, and `kind`. Calls go to
+`calls-*.jsonl`; annotations go to `annotations-*.jsonl` beside them.
+
+Argument values are reduced to:
+
+- object keys, container sizes, and the shape of the first array item;
+- string length buckets and a `uuid` marker;
+- schema-declared enum values;
+- numbers and booleans as typed constants;
+- the public-suffix registrable domain of an HTTP(S) URL;
+- `ip`, `localhost`, or `host` for literal IP, localhost, or non-registrable
+  host values.
+
+Each error message becomes the constant `{message}` plus `template_id`: the
+lowercase hex of the first 8 bytes of `SHA256(salt || 0x00 || skeleton(message))`.
+The skeleton removes UUIDs, quoted runs, URLs, paths, and digits first. The
+identifier only tells failures with the same underlying message apart from
+unrelated ones. Error codes keep scalar numbers, booleans, or identifier-shaped
+strings: a letter followed by letters, digits, `_`, `.`, `:`, or `-`, at most
+64 bytes. Other string
+codes, and string `layer` or `kind` values, become length buckets.
+
+The salt is created once at `<MCPEVAL_HOME>/.salt`, with mode 0600 on Unix.
+`template_id` is non-invertible only while the salt stays secret: the space of
+error-message skeletons is small enough to guess. `mcpeval doctor
+--check-redaction` prints the salt path as a must-not-share reminder.
+
 ## Private corpus artifacts
 
 Corpus collection and replay retain original and replay report bytes in
@@ -104,6 +152,12 @@ that could otherwise change during the sweep.
 ## Producing the share envelope
 
 `mcpeval share --dir <directory>` snapshots every selected JSONL file under a shared journal lock, scans the exact exported bytes, and publishes the envelope only after the scan succeeds. Nested JSONL files are checked too; symlinks and output paths overlapping the capture store are refused. A flagged sweep exits `1` and publishes nothing. Invalid JSON records also stop export.
+
+```sh
+mcpeval share --dir mcpeval-envelope
+```
+
+Attach the envelope directory to an issue; the salt is never in it.
 
 Records are normalized, checked, and streamed into a staging directory beside
 the requested envelope; full journals are not retained in memory. Both source

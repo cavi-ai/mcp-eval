@@ -2,6 +2,8 @@
 
 MCP Eval captures the operational cost that MCP servers impose on agents and turns repeated friction into privacy-safe, queryable findings. It can proxy stdio or Streamable HTTP traffic, index sanitized records, promote recurring failures, and run deterministic probes against declared server behavior.
 
+The probe battery uses no LLM and no network services. The same server and manifest give the same result.
+
 ## Headline evaluation dimensions
 
 Version {{PRODUCT_VERSION}} has exactly five headline evaluation dimensions:

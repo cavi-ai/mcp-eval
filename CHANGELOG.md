@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.7.1 - 2026-10-12
+
+### Changed
+
+- Documentation has a README front page, an Agent loop over MCP guide, and a CLI reference covering every command and option.
+
 ### Fixed
 
 - `mcpeval diff --help` names the `mcpeval.probe-diff/v2` document it emits.

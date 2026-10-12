@@ -7,12 +7,15 @@ MCP Eval is under active development. Before 1.0, the CLI, on-disk schema, and m
 ## Upgrading to 0.7.0
 
 Readiness still uses `mcpeval-standard/2`, with unchanged scoring policy.
-`mcpeval serve` returns tool failures as `isError` results whose text carries
-the message that JSON-RPC `-32000` errors carried before. Calls naming no listed
-tool, including evaluation tools without `--allow-spawn`, answer `-32602`.
-`list_findings` returns no findings before the first `mcpeval index`. The
-evaluation tools' output schemas list the report's top-level fields;
-`mcpeval schema report` prints the complete schema.
+`mcpeval serve` changes for MCP clients:
+
+- Tool failures return `isError` results whose text carries the message that
+  JSON-RPC `-32000` errors carried before.
+- Calls naming no listed tool, including evaluation tools without
+  `--allow-spawn`, answer `-32602`.
+- `list_findings` returns no findings before the first `mcpeval index`.
+- The evaluation tools' output schemas list the report's top-level fields;
+  `mcpeval schema report` prints the complete schema.
 
 ## Upgrading to 0.6.0
 

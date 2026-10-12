@@ -3,11 +3,13 @@
 Collect a corpus with declared inputs, replay it, and check the saved evidence
 before using its verdict in CI. New collections use
 `mcpeval.readiness-corpus/v3` and record every target as observed, untested, or
-errored. The shipped standard/1 snapshot lacks the provenance required for
-replay; collecting today cannot recover its original execution inputs. Historical
-`mcpeval.readiness-corpus/v2` data stays readable, but replay refuses it as a
-pinned collection. No target list or package version is inferred from
-historical observations.
+errored.
+
+- The shipped standard/1 snapshot lacks the provenance required for replay;
+  collecting today cannot recover its original execution inputs.
+- Historical `mcpeval.readiness-corpus/v2` data stays readable, but replay
+  refuses it as a pinned collection.
+- No target list or package version is inferred from historical observations.
 
 Collection, replay, and offline checking are repository scripts. Run them from
 a reviewed checkout containing `scripts/corpus`; installing the CLI alone does
@@ -78,13 +80,16 @@ scripts/corpus/collect.sh --targets "$CORPUS_DIR/targets.json" \
 
 Collection launches the declared servers and writes the corpus atomically plus
 original reports in a directory printed at completion. Existing output is
-refused unless `--force` is passed. The default minimum is ten observed
-targets: extend the target list for that population, or deliberately choose
-`--min-observations` for a smaller collection. A candidate below the selected
-minimum is retained but exits nonzero; it is not an approved calibration
-baseline. Meeting the minimum is a size check, not evidence of
-representativeness: review the population and exclusions before accepting a
-baseline. Publishing new measurements remains a separate decision.
+refused unless `--force` is passed.
+
+- The default minimum is ten observed targets: extend the target list for that
+  population, or deliberately choose `--min-observations` for a smaller
+  collection.
+- A candidate below the selected minimum is retained but exits nonzero; it is
+  not an approved calibration baseline.
+- Meeting the minimum is a size check, not evidence of representativeness:
+  review the population and exclusions before accepting a baseline.
+- Publishing new measurements remains a separate decision.
 
 The corpus records the evaluator version and executable SHA-256, the target
 file and launch hashes, report hashes, package identities, call counts,
@@ -121,22 +126,28 @@ dependency identity.
 | `prerequisites.state_checks` | Optional; see [service-state checks](#service-state-checks). |
 
 Check names are unique across health and state checks. A check passes when it
-exits zero within ten seconds and prints at most 1 KiB. Presence of an
-environment variable does not prove its credentials work; declare a health
-check when validation is needed. Supply values at execution time; an empty or
-whitespace-only value counts as missing. Never put secrets in labels or check
-names. Target arguments can contain sensitive inputs, and hashes do not redact
-low-entropy secrets, so keep the target file private; a launch hash is not a
-credential protection.
+exits zero within ten seconds and prints at most 1 KiB.
+
+- Presence of an environment variable does not prove its credentials work;
+  declare a health check when validation is needed.
+- Supply values at execution time; an empty or whitespace-only value counts as
+  missing.
+- Never put secrets in labels or check names.
+- Target arguments can contain sensitive inputs, and hashes do not redact
+  low-entropy secrets, so keep the target file private; a launch hash is not a
+  credential protection.
 
 Calling uses tool annotations unless a reviewed target declares an
 `assessment`, for example
 `{ "attest_read_only": true, "skip_tools": ["write_record"] }`.
-Review every unannotated tool in the pinned deployment before attesting;
-exclude unannotated writers by name. Annotated writers remain forbidden even
-with attestation. Never attest merely to raise a score or turn an untested
-target into an observation. Keep this policy in the retained target file
-rather than changing it between collection and replay.
+
+- Review every unannotated tool in the pinned deployment before attesting;
+  exclude unannotated writers by name.
+- Annotated writers remain forbidden even with attestation.
+- Never attest merely to raise a score or turn an untested target into an
+  observation.
+- Keep this policy in the retained target file rather than changing it between
+  collection and replay.
 
 ## Prepared deployments
 
@@ -161,12 +172,14 @@ health checks, after each check, and after evaluation; a mismatch is
 `deployment-mismatch`. Observations record `deployment_sha256`; absolute paths
 stay in the private target file, bound by the launch hash.
 
-Keep the bundle read-only and outside the evaluation home. Hash checks detect
-changes; they do not prevent a concurrent writer from changing and restoring
-files between checks. A read-only filesystem or immutable image mitigates that
-race. A deployment digest does not prove dependency closure or sandbox
-execution: system libraries, dynamic downloads, commands found through `PATH`,
-and imports outside the tree remain external inputs.
+Keep the bundle read-only and outside the evaluation home.
+
+- Hash checks detect changes; they do not prevent a concurrent writer from
+  changing and restoring files between checks. A read-only filesystem or
+  immutable image mitigates that race.
+- A deployment digest does not prove dependency closure or sandbox execution:
+  system libraries, dynamic downloads, commands found through `PATH`, and
+  imports outside the tree remain external inputs.
 
 ## Service-state checks
 
@@ -189,21 +202,26 @@ after it. Observations retain only check names and expected digests; adapter
 output is not persisted.
 
 Fingerprint the service identity and relevant dataset or configuration
-together, and keep credentials and low-entropy values out of digests. A digest
-proves equality of what the adapter measures; an adapter that prints a constant
-proves nothing. State checks do not restore, freeze, or authenticate a service,
-and changes reverted between checks stay undetectable. Use a read-only snapshot
-or a service-supported consistent read boundary shared by the server and the
-adapter.
+together, and keep credentials and low-entropy values out of digests.
+
+- A digest proves equality of what the adapter measures; an adapter that prints
+  a constant proves nothing.
+- State checks do not restore, freeze, or authenticate a service, and changes
+  reverted between checks stay undetectable.
+- Use a read-only snapshot or a service-supported consistent read boundary
+  shared by the server and the adapter.
 
 ## Execution environment
 
-Every target runs in a fresh home shared by its checks and evaluation: `HOME`
-and `USERPROFILE` point to it and `MCPEVAL_HOME` to a directory inside it. Only `PATH`, `SystemRoot`,
-`WINDIR`, `COMSPEC`, `PATHEXT`, `TMPDIR`, `TEMP`, `TMP`, `LANG`, `LC_ALL`, and
-the declared environment pass through. `KUBECONFIG` points to an empty
-configuration and `DOCKER_HOST` to an unreachable socket. This is environment
-isolation, not a security sandbox.
+Every target runs in a fresh home shared by its checks and evaluation. This is
+environment isolation, not a security sandbox.
+
+- `HOME` and `USERPROFILE` point to it and `MCPEVAL_HOME` to a directory inside
+  it.
+- Only `PATH`, `SystemRoot`, `WINDIR`, `COMSPEC`, `PATHEXT`, `TMPDIR`, `TEMP`,
+  `TMP`, `LANG`, `LC_ALL`, and the declared environment pass through.
+- `KUBECONFIG` points to an empty configuration and `DOCKER_HOST` to an
+  unreachable socket.
 
 Each evaluation has a 350-second process deadline and an 8 MiB output limit;
 exceeding either terminates the process tree. The evaluator executable's
@@ -243,12 +261,14 @@ node scripts/corpus/verify.mjs --corpus "$CORPUS_DIR/corpus.json" \
 
 Replay validates original input identities and report projections before
 execution, runs observed targets again, and compares their measurements under
-the recorded standard. All targets must be observed and no area may drift
-beyond its policy; reliability has a ten-point tolerance. Equal report digests
-are not required. A pass means replay agreement, not server health or the
-cause of any drift: reproducing a consistently failing server can pass.
-Credentials and the host operating system remain external inputs; control
-them before attributing drift to a server change.
+the recorded standard.
+
+- All targets must be observed and no area may drift beyond its policy;
+  reliability has a ten-point tolerance. Equal report digests are not required.
+- A pass means replay agreement, not server health or the cause of any drift:
+  reproducing a consistently failing server can pass.
+- Credentials and the host operating system remain external inputs; control
+  them before attributing drift to a server change.
 
 New observations retain the report's measurement profile. Collection checks
 attestation and tool exclusions against the declared assessment; replay also
@@ -259,13 +279,17 @@ catalog-size context, but supply no readiness placement.
 
 Replay exits `0` for a pass and `1` otherwise. Invalid inputs or original
 artifact provenance abort before execution with an error on stderr and no
-verification artifact. `--json` prints the `mcpeval.corpus-verification/v1`
-artifact; `mcpeval schema corpus-verification` prints its schema. It binds the
-corpus and target-file bytes, evaluator identity, standard, platform, and
-tolerance, and lists each target with expected and observed scores, moved
-areas, and original and replay report digests. Originally unobserved targets
-have null scores and digests; a missing or discarded replay report has a null
-replay digest. Without `--json`, replay prints one line per target.
+verification artifact. Without `--json`, replay prints one line per target.
+
+`--json` prints the `mcpeval.corpus-verification/v1` artifact;
+`mcpeval schema corpus-verification` prints its schema.
+
+- It binds the corpus and target-file bytes, evaluator identity, standard,
+  platform, and tolerance.
+- It lists each target with expected and observed scores, moved areas, and
+  original and replay report digests.
+- Originally unobserved targets have null scores and digests; a missing or
+  discarded replay report has a null replay digest.
 
 Without `--out`, the artifact names replay report digests but no report bytes
 are kept. `--out` works with either output mode and keeps the replay exit
@@ -279,14 +303,16 @@ replay-evidence/
 ```
 
 `reports/` holds every replay report with a non-null digest, including valid
-reports from unobserved outcomes. On POSIX, directories are owner-only and
-files owner read/write; on Windows, permissions follow the parent's ACLs.
-Reports are written first, then `verification.json` is published atomically
-as the completion marker; completed failed verdicts keep their bundle. Fatal
-errors remove the incomplete bundle when possible. A crash can leave partial
-output: without `verification.json`, treat the bundle as incomplete. Do not
-modify the directory during replay. Original inputs are not copied into the
+reports from unobserved outcomes. Original inputs are not copied into the
 bundle, so retain them separately.
+
+- On POSIX, directories are owner-only and files owner read/write; on Windows,
+  permissions follow the parent's ACLs.
+- Reports are written first, then `verification.json` is published atomically
+  as the completion marker; completed failed verdicts keep their bundle.
+- Fatal errors remove the incomplete bundle when possible. A crash can leave
+  partial output: without `verification.json`, treat the bundle as incomplete.
+- Do not modify the directory during replay.
 
 ## Check saved evidence offline
 

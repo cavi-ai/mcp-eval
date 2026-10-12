@@ -32,7 +32,19 @@ For editor validation, set `"$schema"` to the published
 }
 ```
 
-Top-level `version` must be `1`, `probes` must contain at least one case, and case IDs must be unique valid identifiers. `sandboxes` defaults to an empty object. The optional `timeout_ms` (100 to 600000) is how long each request waits for its response. Without it, stdio waits 30 seconds and HTTP 5 seconds. A `latency-budget` call waits `max_latency_ms` plus that timeout, so a slow call is measured against its budget instead of timing out. A request past its timeout marks the case `transport-timeout`. Sandbox descriptions are bounded to 240 characters and cannot contain control characters.
+Top-level fields:
+
+- `version` must be `1`.
+- `probes` must contain at least one case; case IDs must be unique valid
+  identifiers.
+- `sandboxes` defaults to an empty object. Sandbox descriptions are bounded to
+  240 characters and cannot contain control characters.
+- The optional `timeout_ms` (100 to 600000) is how long each request waits for
+  its response. Without it, stdio waits 30 seconds and HTTP 5 seconds. A
+  request past its timeout marks the case `transport-timeout`.
+
+A `latency-budget` call waits `max_latency_ms` plus that timeout, so a slow call
+is measured against its budget instead of timing out.
 
 Every case declares `access` as `read_only` or `mutating`. A read-only case must not name a sandbox. A mutating case must name a key declared in `sandboxes` and still requires `--allow-mutation` at execution time.
 
@@ -62,11 +74,35 @@ Supplemental probe fields:
 - `completion`: read-only only, with `ref_type` (`ref/prompt` or `ref/resource`), `ref_uri` (1–512 characters), `argument_name`, identifier-shaped `argument_value`, and `max_values` from 1 through 100.
 - `workflow`: read-only only, with `repetitions` from 1 through 20 and `steps` containing 2 through 32 objects, each with a valid `tool`, object `arguments`, and `expect`. It has no sandbox. The first step's tool is the case's primary tool for finding verification and report identity.
 
-An `expect` object declares `outcome` as `ok` or `error`. Successful expectations may include unique `required_result_fields` and scalar `equals` values for literal top-level keys, or unique `required_result_paths` and scalar `equals_paths` values for nested fields. All declared assertions must pass. Error expectations may include a numeric `error_code`, but cannot declare result assertions. This probe checks declared machine-readable result fields, values, outcomes, and error codes; it does not send descriptions or results to an external LLM.
+An `expect` object declares `outcome` as `ok` or `error`. All declared
+assertions must pass.
 
-Nested paths use JSON Pointer, starting at the complete MCP result: `/structuredContent/status` selects a status field, and `/structuredContent/items/0/ready` selects a field in the first array item. Escape `/` in a key as `~1` and `~` as `~0`. Paths must start with `/`, be at most 512 ASCII characters, and contain only letters, digits, `_`, `.`, `:`, `-`, separators, and these escapes. The empty root pointer is rejected. String equality values must remain identifier-shaped; objects and arrays cannot be equality values. Review paths and values before sharing a manifest.
+- Successful expectations may include unique `required_result_fields` and
+  scalar `equals` values for literal top-level keys, or unique
+  `required_result_paths` and scalar `equals_paths` values for nested fields.
+- Error expectations may include a numeric `error_code`, but cannot declare
+  result assertions.
 
-A required path passes for an existing null value and fails for a missing path. Equality with `null` requires an existing null value. Existing `equals` keys retain their literal meaning: `structuredContent.status` selects a top-level key with that exact name. Earlier binaries reject the new optional path fields; existing manifests retain their behavior.
+The probe checks declared machine-readable result fields, values, outcomes, and
+error codes; it does not send descriptions or results to an external LLM.
+
+Nested paths use JSON Pointer, starting at the complete MCP result:
+`/structuredContent/status` selects a status field, and
+`/structuredContent/items/0/ready` selects a field in the first array item.
+
+- Escape `/` in a key as `~1` and `~` as `~0`.
+- Paths must start with `/`, be at most 512 ASCII characters, and contain only
+  letters, digits, `_`, `.`, `:`, `-`, separators, and these escapes. The empty
+  root pointer is rejected.
+- String equality values must remain identifier-shaped; objects and arrays
+  cannot be equality values.
+- A required path passes for an existing null value and fails for a missing
+  path. Equality with `null` requires an existing null value.
+- Existing `equals` keys retain their literal meaning:
+  `structuredContent.status` selects a top-level key with that exact name.
+
+Earlier binaries reject the optional path fields; existing manifests retain
+their behavior. Review paths and values before sharing a manifest.
 
 ## Read-only workflows
 

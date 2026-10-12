@@ -1,6 +1,11 @@
 # Manifest reference
 
-Probe manifests are strict JSON documents. Unknown fields are rejected.
+Probe manifests are strict JSON documents. Unknown fields, unsupported versions,
+and unsafe access and sandbox combinations are rejected before the server
+process starts.
+
+For editor validation, set `"$schema"` to the published
+`docs/mcp-eval.manifest.schema.json` or print it with `mcpeval schema`.
 
 ```json
 {

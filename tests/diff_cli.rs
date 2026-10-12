@@ -193,6 +193,11 @@ fn diff_json_document_is_versioned_and_deterministic() {
     assert!(first.status.success());
     let document: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
     assert_eq!(document["schema"], "mcpeval.probe-diff/v2");
+    let help = run(&dir, &["diff", "--help"]);
+    assert!(
+        String::from_utf8_lossy(&help.stdout).contains("mcpeval.probe-diff/v2"),
+        "diff --help names another schema"
+    );
     let score = |path: &std::path::Path| {
         let report: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();

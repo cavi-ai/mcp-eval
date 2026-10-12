@@ -4,7 +4,7 @@ Every full-battery `mcpeval probe` run produces two results: the **gate**, which
 
 ## Text
 
-The default format prints one line per case — verdict, attempts, first-failure position, fixed reason label, and measurement numbers — then the gate, the readiness line with each area's score, the surface the standard saw, and every lost point. Each reason's hint prints once, under its first lost point:
+The default format prints one line per case — verdict, attempts, first-failure position, fixed reason label, and measurement numbers — then the gate, the readiness line with each area's score, the surface the standard saw, and every lost point. It never prints arguments, responses, or error text. Each reason's hint prints once, under its first lost point:
 
 ```text
 literal-status instruction-fidelity pass attempts=1
@@ -157,7 +157,7 @@ The token-cost probe's measurement is model-independent; interpreting it is the 
 
 ## SARIF and re-rendering
 
-`--format sarif` emits a SARIF 2.1.0 document: one result per failing case, the probe kind as the rule id, the fixed reason plus remediation hint as the message, and the failing case's line in the manifest as the location. The manifest URI is relative to the working directory, so run the command from the repository root. Each server gets its own code-scanning category (`mcpeval/<server>/`). Upload it through GitHub code scanning and each failing case becomes an alert on its manifest line. `mcpeval report --format sarif` takes `--manifest` to locate results the same way. The document is deterministic and derived only from the sanitized report and the manifest's case lines.
+`--format sarif` emits a SARIF 2.1.0 document: one result per failing case, the probe kind as the rule id, the fixed reason plus remediation hint as the message, and the failing case's line in the manifest as the location. The manifest URI is relative to the working directory, so run the command from the repository root. Each server gets its own code-scanning category (`mcpeval/<server>/`). Upload it with `github/codeql-action/upload-sarif` or the code-scanning API, and each failing case becomes an alert on its manifest line. `mcpeval report --format sarif` takes `--manifest` to locate results the same way. The document is deterministic and derived only from the sanitized report and the manifest's case lines.
 
 Reports traveled as JSON stay useful offline: `mcpeval report <baseline.json> --format markdown` re-renders any committed `mcpeval.probe-report/v1` or `/v2` document without re-running a server, so the probe run and the report rendering can live in different jobs — or on different days. Re-rendering a failing document exits non-zero, so a rendered report can gate in its own right.
 
@@ -196,7 +196,7 @@ Records written before the standard existed hold a manifest pass rate: they comp
 
 ## Comparing servers
 
-`mcpeval compare` runs one manifest against several targets and renders a side-by-side verdict and readiness grid in text, markdown, or JSON; `--gate-only` compares the manifest verdicts alone. Targets are `--endpoint LABEL=URL` Streamable HTTP endpoints, optionally plus one stdio command after `--`, whose column is labeled `stdio`; at least two targets are required. Comparison is informational and never gates; endpoint URLs follow the same loopback-first, credential-free policy as the probes.
+`mcpeval compare` runs one manifest against several targets and renders a side-by-side verdict and readiness grid in text, markdown, or JSON; `--gate-only` compares the manifest verdicts alone. Targets are `--endpoint LABEL=URL` Streamable HTTP endpoints, optionally plus one stdio command after `--`, whose column is labeled `stdio`; at least two targets are required. Comparison is informational: failing cases never make it exit non-zero, and it exits 3 only when a case could not be evaluated. Endpoints are loopback-only unless `--allow-remote-http` is passed, remote endpoints require HTTPS, and URLs follow the same credential-free policy as the probes.
 
 ```sh
 mcpeval compare --server demo \

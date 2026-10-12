@@ -73,7 +73,7 @@ fn no_generated_canary_survives_shaping() {
 
 /// The property test above only ever proves the negative (canary *values*
 /// never survive). Object keys and numeric leaves are retained verbatim by
-/// public privacy contract in README.md, which makes them
+/// the privacy contract in docs/mcp-eval/source/pages/security/privacy-and-authorization.md, which makes them
 /// the highest-value things to pin down with a positive assertion — a
 /// regression here silently over-redacts, not under-redacts, so the
 /// negative-only property test above would never catch it.

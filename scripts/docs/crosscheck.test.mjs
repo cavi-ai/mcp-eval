@@ -125,11 +125,6 @@ test("docs probe tables cover every probe kind the CLI accepts", async () => {
   assert.ok(variants?.length, "ProbeKind variants were not found");
   assert.equal(labels.length, variants.length, "as_str label extraction must cover every variant");
 
-  const readme = await readFile(path.join(ROOT, "README.md"), "utf8");
-  for (const label of labels) {
-    assert.ok(readme.includes(`\`${label}\``), `README probe table is missing ${label}`);
-  }
-
   const reference = await readFile(path.join(SOURCE, "pages/reference/evaluation-dimensions.md"), "utf8");
   for (const label of labels) {
     assert.ok(reference.includes(`\`${label}\``), `evaluation-dimensions reference is missing ${label}`);

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+
+- `mcpeval serve` refuses `tools/call` arguments that violate a schema-validated
+  tool's input schema with JSON-RPC `-32602`, naming the failing argument path
+  and the schema rule without echoing argument values. Other tool failures keep
+  `-32000`.
+
 ## 0.6.0 - 2026-10-08
 
 ### Added

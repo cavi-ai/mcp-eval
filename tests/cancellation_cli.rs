@@ -80,6 +80,8 @@ enum CancelMode {
     Silence,
     /// Finish the work and return the full result anyway.
     Ignore,
+    /// Complete the cancelled call with a tool-level failure.
+    ToolError,
 }
 
 /// Run the cancellation probe against a thread-based Streamable HTTP
@@ -90,12 +92,20 @@ fn probe_http(
     mode: CancelMode,
     grace_seconds: u64,
 ) -> (std::process::Output, Option<std::time::Duration>) {
+    probe_http_with_requirement(mode, grace_seconds, true)
+}
+
+fn probe_http_with_requirement(
+    mode: CancelMode,
+    grace_seconds: u64,
+    require_honored: bool,
+) -> (std::process::Output, Option<std::time::Duration>) {
     let dir = home();
     let manifest = dir.join("m.json");
     std::fs::write(
         &manifest,
         format!(
-            r#"{{"version":1,"probes":[{{"id":"cancel-http","probe":"cancellation","tool":"slow_read","access":"read_only","arguments":{{}},"grace_seconds":{grace_seconds},"reason":"probe"}}]}}"#
+            r#"{{"version":1,"probes":[{{"id":"cancel-http","probe":"cancellation","tool":"slow_read","access":"read_only","arguments":{{}},"grace_seconds":{grace_seconds},"reason":"probe","require_honored":{require_honored}}}]}}"#
         ),
     )
     .unwrap();
@@ -105,17 +115,23 @@ fn probe_http(
     // notification arrives, mirroring a server that observes the
     // notification mid-flight.
     let cancel_seen = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let server = std::thread::spawn(move || {
         // initialize, initialized, tools/list, preflight call, cancelled
         // call, cancellation notification: six connections per run.
         let mut handlers = Vec::new();
-        for _ in 0..6 {
+        for _ in 0..if require_honored || mode == CancelMode::ToolError {
+            6
+        } else {
+            7
+        } {
             let Ok((mut stream, _)) = listener.accept() else {
                 break;
             };
             let cancel_seen = std::sync::Arc::clone(&cancel_seen);
+            let calls = std::sync::Arc::clone(&calls);
             handlers.push(std::thread::spawn(move || {
-                handle_http_connection(&mut stream, &cancel_seen, mode)
+                handle_http_connection(&mut stream, &cancel_seen, &calls, mode)
             }));
         }
         handlers
@@ -195,6 +211,30 @@ fn http_full_result_after_cancel_is_ignored() {
     assert_eq!(report["cases"][0]["reason"], "cancellation-ignored");
 }
 
+#[test]
+fn optional_http_cancellation_accepts_completion_after_session_recovery() {
+    let (output, _) = probe_http_with_requirement(CancelMode::Ignore, 1, false);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        report["cases"][0]["measurements"]["cancellation_outcome"],
+        "completed"
+    );
+    assert_eq!(report["cases"][0]["attempts"], 3);
+}
+
+#[test]
+fn optional_http_cancellation_rejects_tool_errors() {
+    let (output, _) = probe_http_with_requirement(CancelMode::ToolError, 1, false);
+    assert!(!output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["cases"][0]["reason"], "cancellation-errored");
+}
+
 /// Minimal Streamable HTTP MCP fixture: initialize/tools-list plus a
 /// tools/call handler whose response to a cancelled call depends on `mode`.
 /// Returns how long a call it never answered was held before the client
@@ -202,6 +242,7 @@ fn http_full_result_after_cancel_is_ignored() {
 fn handle_http_connection(
     stream: &mut std::net::TcpStream,
     cancel_seen: &std::sync::atomic::AtomicBool,
+    calls: &std::sync::atomic::AtomicUsize,
     mode: CancelMode,
 ) -> Option<std::time::Duration> {
     use std::io::{BufRead, BufReader, Read, Write};
@@ -242,13 +283,13 @@ fn handle_http_connection(
         _ => serde_json::json!({}),
     };
     let mut frame = serde_json::json!({"jsonrpc": "2.0", "id": request["id"], "result": result});
-    // A tools/call models a long-running operation: it holds its response
-    // until either the cancellation notification arrives or a bounded hold
-    // elapses (the uncancelled preflight call takes that path and is
-    // answered normally). This is what makes the cancellation observable
-    // mid-flight for the client.
-    if request["method"] == "tools/call" {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(300);
+    // Answer preflight immediately. Subsequent calls wait for cancellation
+    // with a bounded fallback, so scheduler delays cannot make the operation
+    // complete before the notification the test intends to observe.
+    if request["method"] == "tools/call"
+        && calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0
+    {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while !cancel_seen.load(std::sync::atomic::Ordering::SeqCst)
             && std::time::Instant::now() < deadline
         {
@@ -270,6 +311,10 @@ fn handle_http_connection(
                     return Some(arrived.elapsed());
                 }
                 CancelMode::Ignore => {}
+                CancelMode::ToolError => {
+                    frame = serde_json::json!({"jsonrpc":"2.0", "id":request["id"],
+                        "result":{"isError":true,"content":[]}});
+                }
             }
         }
     }

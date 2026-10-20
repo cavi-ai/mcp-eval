@@ -229,6 +229,7 @@ mod tests {
             token_usage: None,
             latency_ms: None,
             pages: None,
+            cancellation_outcome: None,
         }
     }
 

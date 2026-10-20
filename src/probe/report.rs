@@ -88,6 +88,9 @@ pub struct CaseReport {
     pub latency_ms: Option<u64>,
     /// Number of `tools/list` pages visited by pagination cases.
     pub pages: Option<u64>,
+    /// Observed resolution within the cancellation grace window; silence
+    /// alone does not prove that server-side work stopped.
+    pub cancellation_outcome: Option<crate::mcp_client::CancellationOutcome>,
 }
 
 impl CaseReport {
@@ -106,6 +109,7 @@ impl CaseReport {
             token_usage: None,
             latency_ms: None,
             pages: None,
+            cancellation_outcome: None,
         }
     }
 
@@ -242,6 +246,10 @@ impl ProbeReport {
                 pages: measurements
                     .get("pages")
                     .and_then(serde_json::Value::as_u64),
+                cancellation_outcome: measurements
+                    .get("cancellation_outcome")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(crate::mcp_client::CancellationOutcome::from_label),
             });
         }
         let (readiness, readiness_error, legacy_score) = if v2 {
@@ -339,6 +347,9 @@ impl ProbeReport {
                 }
                 if let Some(pages) = case.pages {
                     measurements.insert("pages".into(), pages.into());
+                }
+                if let Some(outcome) = case.cancellation_outcome {
+                    measurements.insert("cancellation_outcome".into(), outcome.as_str().into());
                 }
                 serde_json::json!({
                     "id": case.id,

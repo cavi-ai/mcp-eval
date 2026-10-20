@@ -396,6 +396,10 @@
             },
             "pages": {
               "$ref": "#/$defs/count"
+            },
+            "cancellation_outcome": {
+              "enum": ["no-result", "completed", "error"],
+              "description": "Resolution observed within the cancellation grace window. No-result includes silence and cancellation acknowledgement; it does not prove server-side work stopped."
             }
           }
         }

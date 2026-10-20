@@ -51,7 +51,7 @@ Every case declares `access` as `read_only` or `mutating`. A read-only case must
 Headline evaluation dimension fields:
 
 - `contention`: `tool`, object `arguments`.
-- `error-honesty`: `tool`, object `arguments`, `max_attempts` from 2 through 20, and boolean `expect_retryable`.
+- `error-honesty`: `tool`, object `arguments`, `max_attempts` from 2 through 20, and boolean `expect_retryable`. Reads the explicit boolean at JSON-RPC `error.data.retryable`, or the legacy `error.retryable` field. Missing, malformed, or conflicting hints fail; retryability is never inferred from an error code.
 - `state-recovery`: `failure_tool`, `failure_arguments`, `recovery_tool`, `recovery_arguments`, `validation_tool`, and `validation_arguments`; every arguments value is an object.
 - `discovery-cost`: read-only only, with `max_tools` from 1 through 10,000 and `max_schema_bytes` from 1 through 10,000,000.
 - `schema-guessability`: `tool` and object `arguments`.
@@ -63,10 +63,10 @@ Supplemental probe fields:
 - `instruction-fidelity`: `tool`, object `arguments`, and `expect`.
 - `latency-budget`: read-only only, with `tool`, object `arguments`, `attempts` from 1 through 20, and `max_latency_ms` from 1 through 60,000.
 - `pagination`: read-only only, with `max_pages` from 1 through 100.
-- `payload-bounds`: read-only only, with `tool`, object `arguments`, identifier `field`, `size_bytes` from 1 through 16,000,000, and boolean `expect_handled`.
+- `payload-bounds`: read-only only, with `tool`, object `arguments`, identifier `field`, `size_bytes` from 1 through 16,000,000, and boolean `expect_handled`. A stdio size limit may reject the complete frame with a null-ID `-32600` or `-32700` error before reading its request ID. Only this probe accepts that rejection; ordinary calls still require matching IDs. The same session must answer a subsequent ping. With `expect_handled: true`, any error still fails.
 - `surface-listing`: read-only only, with `max_pages` from 1 through 1,000.
 - `output-schema`: read-only only, with `tool` and object `arguments`.
-- `cancellation`: read-only only, with `tool`, object `arguments`, `grace_seconds` from 1 through 60 (how long the probe waits after cancelling for a response the server must never send), and an identifier `reason` recorded in the `notifications/cancelled` notification.
+- `cancellation`: read-only only, with `tool`, object `arguments`, `grace_seconds` from 1 through 60 (the observation window after cancelling), and an identifier `reason` recorded in the `notifications/cancelled` notification. `require_honored` defaults to `true`: a completed result fails this strict check. Set it to `false` for optional cancellation and completion races permitted by MCP; a completed result is accepted only if a subsequent call succeeds in the same session. Reports record `measurements.cancellation_outcome` as `no-result`, `completed`, or `error`. `no-result` includes silence and a cancellation acknowledgement and does not prove server-side work stopped. Late replies to cancelled requests are discarded.
 - `protocol-negotiation`: read-only only, with a date-shaped `bogus_version` (YYYY-MM-DD) other than the supported protocol version.
 - `sampling`: read-only only, with `tool`, object `arguments`, and `max_requests` from 1 through 10.
 - `elicitation`: read-only only, with `tool`, object `arguments`, `max_requests` from 1 through 10, and `respond` set to `accept`, `decline`, or `cancel`.

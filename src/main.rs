@@ -46,6 +46,9 @@ fn render_probe_text(
         if let Some(pages) = case.pages {
             measurements.push_str(&format!(" pages={pages}"));
         }
+        if let Some(outcome) = case.cancellation_outcome {
+            measurements.push_str(&format!(" cancellation_outcome={}", outcome.as_str()));
+        }
         if case.passed() {
             println!(
                 "{} {probe} pass attempts={}{measurements}",

@@ -30,7 +30,7 @@ demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reli
   lost catalog.output-schema score=0 tool=read_counter reason=catalog-no-output-schema
   …
   lost reliability.success score=33 tool=flaky_read observed=1 reason=reliability-call-failed
-    hint: make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability
+    hint: make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability. When a value built from the schema means nothing to the server (a path, an ID), declare examples that work, or pass working arguments with --arguments
   lost reliability.consistent score=0 tool=flaky_read reason=reliability-inconsistent
     hint: the same read-only call with the same arguments ended differently across three calls; make read paths deterministic, or return a retryable error with a stable code
   lost reliability.latency score=50 tool=slow_read reason=reliability-slow

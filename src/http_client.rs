@@ -785,6 +785,7 @@ fn worker_call(
         },
         _ => bail!("cancelled call response has an unsupported content type"),
     };
+    validate_response(&value, id)?;
     if let Some(error) = value.get("error") {
         let code = error.get("code").and_then(Value::as_i64);
         // -32800 "Request cancelled" is the structured cancellation
@@ -795,7 +796,10 @@ fn worker_call(
         return Ok(CancellationOutcome::Errored);
     }
     if value.get("result").is_some() {
-        return Ok(CancellationOutcome::Ignored);
+        return Ok(match crate::mcp_client::classify_tool_response(&value)? {
+            ToolResponse::Success(_) => CancellationOutcome::Ignored,
+            ToolResponse::Error { .. } => CancellationOutcome::Errored,
+        });
     }
     bail!("cancelled call response is neither a result nor an error")
 }

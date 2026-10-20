@@ -985,10 +985,14 @@ fn run_error_honesty(
                     return Ok(failed_case(case, attempt, FailureReason::UnstableErrorCode));
                 }
                 first_code.get_or_insert(code);
-                let retryable = payload
-                    .get("retryable")
-                    .and_then(serde_json::Value::as_bool);
-                if retryable != Some(expect_retryable) {
+                let data_hint = payload.pointer("/data/retryable");
+                let legacy_hint = payload.get("retryable");
+                let retryable = data_hint.or(legacy_hint).and_then(Value::as_bool);
+                if retryable != Some(expect_retryable)
+                    || data_hint
+                        .zip(legacy_hint)
+                        .is_some_and(|(data, legacy)| data != legacy)
+                {
                     return Ok(failed_case(
                         case,
                         attempt,
@@ -1356,8 +1360,7 @@ fn run_payload_bounds(
         Value::String("a".repeat(size_bytes as usize)),
     );
     let started = Instant::now();
-    let outcome = call_declining(
-        context.client,
+    let outcome = context.client.call_tool_allowing_frame_rejection(
         case.tool().expect("payload case has a tool"),
         &arguments,
     );
@@ -1397,6 +1400,13 @@ fn run_payload_bounds(
             latency_ms: Some(latency_ms),
             ..CaseReport::for_case(case)
         });
+    }
+    // A polite rejection followed by a closed or wedged session is not
+    // bounded handling. Check recovery without reconnecting.
+    let recovery = context.client.raw_request("ping", json!({}));
+    if !matches!(recovery, Ok(ref response) if response.get("result").is_some_and(Value::is_object))
+    {
+        return Ok(failed_case(case, attempts, FailureReason::PayloadUnhandled));
     }
     record_response(
         case.tool().expect("payload case has a tool"),
@@ -1560,23 +1570,23 @@ fn run_output_schema(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::
     })
 }
 
-/// Cancellation probe: issue a read-only call, cancel it immediately, and
-/// require the server to honor the cancellation: the cancelled request id
-/// must never be resolved, or only with the structured "Request
-/// cancelled" acknowledgement used by production servers.
+/// Observe a cancelled read-only call. Strict cases require silence or an
+/// acknowledgement; optional cases allow completion and verify recovery.
 fn run_cancellation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::Result<CaseReport> {
-    let (tool, arguments, grace_seconds, reason) = match case {
+    let (tool, arguments, grace_seconds, reason, require_honored) = match case {
         ProbeCase::Cancellation {
             tool,
             arguments,
             grace_seconds,
             reason,
+            require_honored,
             ..
         } => (
             tool.to_owned(),
             arguments.to_owned(),
             *grace_seconds,
             reason.to_owned(),
+            *require_honored,
         ),
         _ => unreachable!("cancellation arm"),
     };
@@ -1595,12 +1605,20 @@ fn run_cancellation(case: &ProbeCase, context: &mut RunContext<'_>) -> anyhow::R
             std::time::Duration::from_secs(grace_seconds),
         )
         .context("cancellation probe failed")?;
-    let attempts = 2;
-    let failure = outcome_had_failure(outcome);
+    let mut attempts = 2;
+    let mut failure = outcome_had_failure(outcome);
+    if !require_honored && outcome != crate::mcp_client::CancellationOutcome::Errored {
+        attempts += 1;
+        failure = match call_named_and_record(&tool, &arguments, context)? {
+            ToolResponse::Success(_) => None,
+            ToolResponse::Error { .. } => Some(FailureReason::RecoveryFailed),
+        };
+    }
     Ok(CaseReport {
         attempts,
         first_failure: failure.map(|_| attempts),
         reason: failure,
+        cancellation_outcome: Some(outcome),
         ..CaseReport::for_case(case)
     })
 }

@@ -94,6 +94,21 @@ fn mismatched_ids_fail_fast_without_echoing_payloads() {
 }
 
 #[test]
+fn ordinary_calls_still_refuse_null_id_frame_rejections() {
+    let command = vec![
+        "python3".into(),
+        "tests/fixtures/probe_contract_server.py".into(),
+        "reject".into(),
+    ];
+    let mut client = McpClient::spawn(&command).unwrap();
+    client.initialize().unwrap();
+    let error = client
+        .call_tool("read", &json!({"blob":"a".repeat(1000000)}))
+        .unwrap_err();
+    assert!(error.to_string().contains("response id"));
+}
+
+#[test]
 fn banners_and_notifications_are_skipped_without_failing_the_session() {
     // A server that writes prose to stdout before (and between) JSON-RPC
     // frames is a supported reality, not a protocol violation: the "banner"

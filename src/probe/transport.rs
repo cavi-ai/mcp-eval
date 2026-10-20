@@ -146,6 +146,17 @@ impl ProbeClient {
         }
     }
 
+    pub(super) fn call_tool_allowing_frame_rejection(
+        &mut self,
+        tool: &str,
+        arguments: &Value,
+    ) -> anyhow::Result<ToolResponse> {
+        match self {
+            Self::Stdio(client) => client.call_tool_allowing_frame_rejection(tool, arguments),
+            Self::Http(client) => client.call_tool(tool, arguments),
+        }
+    }
+
     pub(crate) fn capabilities(&self) -> Option<serde_json::Value> {
         match self {
             Self::Stdio(client) => client.capabilities(),

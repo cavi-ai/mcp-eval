@@ -214,6 +214,10 @@ pub enum ProbeCase {
         /// Bound on how long the probe waits post-cancel for a response
         /// the server must never send. 1..=60 seconds.
         grace_seconds: u64,
+        /// Strict by default. False accepts a completed call after cancellation
+        /// and verifies that the same session still serves the tool.
+        #[serde(default = "require_cancellation")]
+        require_honored: bool,
         /// Free-form reason recorded in the notification; identifier-shaped.
         reason: String,
     },
@@ -282,6 +286,10 @@ pub enum ProbeCase {
         /// request. 1..=100.
         max_values: u64,
     },
+}
+
+fn require_cancellation() -> bool {
+    true
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

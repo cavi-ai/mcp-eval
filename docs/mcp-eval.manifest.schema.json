@@ -334,7 +334,12 @@
               "type": "integer",
               "minimum": 1,
               "maximum": 60,
-              "description": "How long the probe waits post-cancel for a response the server must never send."
+              "description": "How long the probe observes the cancelled request before checking its outcome."
+            },
+            "require_honored": {
+              "type": "boolean",
+              "default": true,
+              "description": "When false, accept completion after cancellation if the same session serves a subsequent call."
             },
             "reason": {
               "$ref": "#/$defs/identifier",

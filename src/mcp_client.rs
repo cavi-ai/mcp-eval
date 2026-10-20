@@ -235,8 +235,8 @@ pub struct ToolCatalog {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CancellationOutcome {
     /// The request id was never resolved, or the server answered with the
-    /// structured "Request cancelled" error (-32800): the cancellation was
-    /// observed and honored.
+    /// structured "Request cancelled" error (-32800). Silence does not prove
+    /// that the server stopped processing the request.
     Honored,
     /// The server completed the work and returned the full result as if
     /// the cancellation had never been sent.
@@ -244,6 +244,25 @@ pub enum CancellationOutcome {
     /// The server answered the cancelled request with an error that shows
     /// no cancellation awareness.
     Errored,
+}
+
+impl CancellationOutcome {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Honored => "no-result",
+            Self::Ignored => "completed",
+            Self::Errored => "error",
+        }
+    }
+
+    pub fn from_label(label: &str) -> Option<Self> {
+        match label {
+            "no-result" => Some(Self::Honored),
+            "completed" => Some(Self::Ignored),
+            "error" => Some(Self::Errored),
+            _ => None,
+        }
+    }
 }
 
 pub struct McpClient {
@@ -407,6 +426,35 @@ impl McpClient {
         respond: &mut dyn FnMut(&str, &Value) -> Option<Value>,
         max_server_requests: u64,
     ) -> anyhow::Result<(ToolResponse, u64)> {
+        self.call_tool_observing_inner(tool, arguments, respond, max_server_requests, false)
+    }
+
+    /// A size-bound probe has one outstanding request and may receive a
+    /// null-id parse/invalid-request rejection before the server can read its id.
+    /// Ordinary calls retain strict request-id matching.
+    pub fn call_tool_allowing_frame_rejection(
+        &mut self,
+        tool: &str,
+        arguments: &Value,
+    ) -> anyhow::Result<ToolResponse> {
+        self.call_tool_observing_inner(
+            tool,
+            arguments,
+            &mut |_, _| None,
+            crate::standard::MAX_SERVER_REQUESTS,
+            true,
+        )
+        .map(|(response, _)| response)
+    }
+
+    fn call_tool_observing_inner(
+        &mut self,
+        tool: &str,
+        arguments: &Value,
+        respond: &mut dyn FnMut(&str, &Value) -> Option<Value>,
+        max_server_requests: u64,
+        allow_frame_rejection: bool,
+    ) -> anyhow::Result<(ToolResponse, u64)> {
         let id = self.next_id;
         self.next_id += 1;
         self.write(&json!({
@@ -442,7 +490,23 @@ impl McpClient {
                 if self.is_abandoned_reply(object) {
                     continue;
                 }
-                if object.get("id").and_then(Value::as_u64) != Some(id) {
+                let frame_rejection = allow_frame_rejection
+                    && object.get("jsonrpc").and_then(Value::as_str) == Some("2.0")
+                    && object.get("id").is_some_and(Value::is_null)
+                    && !object.contains_key("result")
+                    && matches!(
+                        object
+                            .get("error")
+                            .and_then(|e| e.get("code"))
+                            .and_then(Value::as_i64),
+                        Some(-32600 | -32700)
+                    )
+                    && object
+                        .get("error")
+                        .and_then(|e| e.get("message"))
+                        .and_then(Value::as_str)
+                        .is_some();
+                if object.get("id").and_then(Value::as_u64) != Some(id) && !frame_rejection {
                     bail!("MCP response id does not match request");
                 }
                 let response = classify_tool_response(&frame)?;
@@ -564,6 +628,7 @@ impl McpClient {
                 if let Some(budget) = &self.budget {
                     budget.check()?;
                 }
+                self.abandoned.insert(id);
                 return Ok(CancellationOutcome::Honored);
             }
             let raw = match self.lines.recv_timeout(remaining) {
@@ -572,6 +637,7 @@ impl McpClient {
                     if let Some(budget) = &self.budget {
                         budget.check()?;
                     }
+                    self.abandoned.insert(id);
                     return Ok(CancellationOutcome::Honored);
                 }
                 Ok(Err(_)) | Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -588,6 +654,11 @@ impl McpClient {
             if object.get("id").and_then(Value::as_u64) != Some(id) {
                 continue;
             }
+            if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0")
+                || object.contains_key("result") == object.contains_key("error")
+            {
+                bail!("MCP cancellation response is invalid");
+            }
             if object.contains_key("error") {
                 // The structured "Request cancelled" error (-32800) is how
                 // production servers acknowledge a cancellation while
@@ -603,7 +674,10 @@ impl McpClient {
                     CancellationOutcome::Errored
                 });
             }
-            return Ok(CancellationOutcome::Ignored);
+            return Ok(match classify_tool_response(&response)? {
+                ToolResponse::Success(_) => CancellationOutcome::Ignored,
+                ToolResponse::Error { .. } => CancellationOutcome::Errored,
+            });
         }
     }
 

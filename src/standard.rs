@@ -8,6 +8,7 @@ use std::time::{Duration, Instant};
 use anyhow::Context;
 use serde_json::{json, Value};
 
+use crate::catalog_contract::CatalogContract;
 use crate::manifest::{Access, ProbeCase};
 use crate::mcp_client::{ToolCatalog, ToolDefinition, ToolResponse};
 use crate::probe::{estimate_tokens, ClientTarget, FailureReason, ProbeClient};
@@ -198,15 +199,19 @@ impl Outcome {
     }
 }
 
-/// Run the standard battery against `target` and fold it into readiness.
-pub(crate) fn run(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<Readiness> {
-    let observations = observe(target, options);
-    let mut readiness = crate::score::fold(&target.budget.finish(observations)?);
+/// Run the standard battery against `target` and fold it into readiness,
+/// with the contract of the catalog it listed.
+pub(crate) fn run(
+    target: &ClientTarget,
+    options: &StandardOptions,
+) -> anyhow::Result<(Readiness, CatalogContract)> {
+    let (observations, contract) = target.budget.finish(observe(target, options))?;
+    let mut readiness = crate::score::fold(&observations);
     readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
         options.confirm_read_only,
         &options.skip_tools,
     ));
-    Ok(readiness)
+    Ok((readiness, contract))
 }
 
 /// A fresh, initialized connection. The handshake keeps the transport's
@@ -219,7 +224,10 @@ fn connect(target: &ClientTarget) -> anyhow::Result<ProbeClient> {
     Ok(client)
 }
 
-fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<Observations> {
+fn observe(
+    target: &ClientTarget,
+    options: &StandardOptions,
+) -> anyhow::Result<(Observations, CatalogContract)> {
     let mut client = Some(connect(target).context("connecting for the standard battery")?);
     let catalog = list_catalog(client.as_mut().expect("just connected"))
         .context("listing tools for the standard battery")?;
@@ -328,13 +336,16 @@ fn observe(target: &ClientTarget, options: &StandardOptions) -> anyhow::Result<O
             )
         });
     let protocol = protocol_checks(&mut client, target, &catalog);
-    Ok(Observations {
-        tools,
-        attested_read_only: options.confirm_read_only,
-        contention,
-        payload,
-        protocol,
-    })
+    Ok((
+        Observations {
+            tools,
+            attested_read_only: options.confirm_read_only,
+            contention,
+            payload,
+            protocol,
+        },
+        CatalogContract::of(&catalog),
+    ))
 }
 
 /// Every distinct tool over every page; see `mcp_client::page_catalog`.

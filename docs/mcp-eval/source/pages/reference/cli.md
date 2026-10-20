@@ -146,6 +146,11 @@ reason), or unchanged. Documents naming different servers are rejected.
 
 - `--fail-on-regression` exits non-zero for regressions.
 - `--fail-on-change` exits non-zero for changed failure reasons.
+- `--fail-on-breaking` exits non-zero when the catalog contract changed in a
+  way that breaks callers: a tool removed, a parameter newly required or
+  removed, a read-only tool turned writer or unannotated, or an output schema
+  removed. Changed parameter or output constraints are listed for review, and
+  additive changes are compatible. A document without a `catalog` exits 2.
 - `--max-readiness-drop <POINTS>` exits non-zero when readiness fell by more
   than `POINTS` since the baseline. Readiness that is not comparable (another
   standard or measurement profile, or a v1 document) exits 2.
@@ -247,10 +252,16 @@ packages nothing and exits `1`.
   every latency check at full marks;
 - the `readiness_gate` object when a floor was declared: the floors, whether
   latency was excluded, `passed`, and each shortfall (subject, observed,
-  floor). `report` exits 1 for a document whose floor failed.
+  floor). `report` exits 1 for a document whose floor failed;
+- the `catalog` contract: per tool, its name, its class (`read-only`,
+  `writer`, or `unannotated`), and SHA-256 digests of its required parameter
+  names, of each parameter's name and constraints, and of its output schema.
+  Prose keywords (`description`, `title`, `examples`, `default`, `$comment`)
+  are left out of the digests, so rewording a description changes nothing. It
+  is null when the catalog listing did not complete.
 
 It excludes timestamps, sessions, arguments, response bodies, descriptions,
-schemas, and raw error text. `mcpeval schema report` and `mcpeval schema diff`
+schema text and parameter names (only their digests), and raw error text. `mcpeval schema report` and `mcpeval schema diff`
 print the JSON Schemas for the report and diff documents; version 2 only gains
 optional fields. `report` and `diff` also read v1 documents; `diff` marks
 readiness not comparable across standards or against a v1 document.
@@ -260,7 +271,7 @@ readiness not comparable across standards or against a v1 document.
 | Code | Meaning |
 | --- | --- |
 | `0` | The command succeeded; every selected case passed. |
-| `1` | The evaluation completed and a case failed its probe, or a gate such as a readiness floor, `diff --fail-on-regression`, `diff --max-readiness-drop`, or the `share` redaction sweep fired. |
+| `1` | The evaluation completed and a case failed its probe, or a gate such as a readiness floor, `diff --fail-on-regression`, `diff --fail-on-breaking`, `diff --max-readiness-drop`, or the `share` redaction sweep fired. |
 | `2` | Usage error: invalid arguments, manifest, or input document. Nothing was evaluated. |
 | `3` | The evaluation could not complete: the server was unreachable, a case lost its transport, or local I/O failed. |
 

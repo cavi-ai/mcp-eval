@@ -400,6 +400,10 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     let mut report = ProbeReport {
         cases: reports,
         manifest_sha256: Some(manifest_sha256),
+        catalog: discovery
+            .incomplete
+            .is_none()
+            .then(|| crate::catalog_contract::CatalogContract::of(&catalog)),
         ..ProbeReport::default()
     };
     if options.standard && options.selected_probe.is_none() && options.selected_case.is_none() {
@@ -454,7 +458,10 @@ fn measure_standard(
     options: &crate::standard::StandardOptions,
 ) -> anyhow::Result<()> {
     match crate::standard::run(target, options) {
-        Ok(readiness) => report.readiness = Some(readiness),
+        Ok((readiness, contract)) => {
+            report.readiness = Some(readiness);
+            report.catalog.get_or_insert(contract);
+        }
         Err(error) if crate::exit::code(&error) == crate::exit::USAGE => return Err(error),
         Err(error) => {
             let reason = transport_reason(&error);

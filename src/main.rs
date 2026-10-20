@@ -559,6 +559,7 @@ fn run() -> anyhow::Result<()> {
             current,
             fail_on_regression,
             fail_on_change,
+            fail_on_breaking,
             max_readiness_drop,
             exclude_latency,
             format,
@@ -582,6 +583,17 @@ fn run() -> anyhow::Result<()> {
                 .readiness_gate
                 .as_ref()
                 .is_some_and(|gate| !gate.passed());
+            let breaking = if fail_on_breaking {
+                outcome
+                    .catalog_changes(mcpeval::catalog_contract::Severity::Breaking)
+                    .context(
+                        "a document carries no catalog contract; regenerate it with this mcpeval",
+                    )
+                    .map_err(mcpeval::exit::usage)?
+                    > 0
+            } else {
+                false
+            };
             match format {
                 cli::DiffFormat::Json => {
                     println!(
@@ -599,6 +611,7 @@ fn run() -> anyhow::Result<()> {
             if (fail_on_regression && outcome.gated())
                 || (fail_on_change && outcome.changed() > 0)
                 || dropped
+                || breaking
             {
                 std::process::exit(mcpeval::exit::VERDICT);
             }

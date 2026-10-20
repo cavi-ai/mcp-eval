@@ -53,6 +53,12 @@ inputs:
     description: "With `baseline`, also fail on changed failure reasons ('true'/'false')."
     required: false
     default: 'false'
+  fail-on-breaking:
+    description: >
+      With `baseline`, also fail on catalog contract changes that break
+      callers ('true'/'false').
+    required: false
+    default: 'false'
   min-readiness:
     description: 'Fail when readiness is under this score (0-100).'
     required: false
@@ -131,6 +137,7 @@ runs:
         INPUT_ALLOW_REMOTE_HTTP: ${{ inputs.allow-remote-http }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_FAIL_ON_CHANGE: ${{ inputs.fail-on-change }}
+        INPUT_FAIL_ON_BREAKING: ${{ inputs.fail-on-breaking }}
         INPUT_MIN_READINESS: ${{ inputs.min-readiness }}
         INPUT_MIN_AREA: ${{ inputs.min-area }}
         INPUT_MAX_READINESS_DROP: ${{ inputs.max-readiness-drop }}

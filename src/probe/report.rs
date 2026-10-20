@@ -156,6 +156,9 @@ pub struct ProbeReport {
     /// Declared readiness floors and their outcome; None when the run
     /// declared no floor.
     pub readiness_gate: Option<crate::readiness_gate::FloorGate>,
+    /// The catalog's contract as digests; None when no complete catalog
+    /// was listed, or for a document that predates it.
+    pub catalog: Option<crate::catalog_contract::CatalogContract>,
 }
 
 impl ProbeReport {
@@ -255,7 +258,7 @@ impl ProbeReport {
                     .and_then(crate::mcp_client::CancellationOutcome::from_label),
             });
         }
-        let (readiness, readiness_error, legacy_score, readiness_gate) = if v2 {
+        let (readiness, readiness_error, legacy_score, readiness_gate, catalog) = if v2 {
             let readiness = match document.get("readiness") {
                 None | Some(serde_json::Value::Null) => None,
                 Some(value) => Some(crate::score::Readiness::from_json(value)?),
@@ -273,13 +276,17 @@ impl ProbeReport {
                 None | Some(serde_json::Value::Null) => None,
                 Some(value) => Some(crate::readiness_gate::FloorGate::from_json(value)?),
             };
-            (readiness, readiness_error, None, readiness_gate)
+            let catalog = match document.get("catalog") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(crate::catalog_contract::CatalogContract::from_json(value)?),
+            };
+            (readiness, readiness_error, None, readiness_gate, catalog)
         } else {
             let legacy = document
                 .get("readiness")
                 .and_then(|readiness| readiness.get("score"))
                 .and_then(serde_json::Value::as_u64);
-            (None, None, legacy, None)
+            (None, None, legacy, None, None)
         };
         Ok(Self {
             cases: parsed,
@@ -291,6 +298,7 @@ impl ProbeReport {
             readiness_error,
             legacy_score,
             readiness_gate,
+            catalog,
         })
     }
 
@@ -394,6 +402,7 @@ impl ProbeReport {
             "readiness": self.readiness.as_ref().map(crate::score::Readiness::to_json),
             "readiness_error": self.readiness_error.map(|reason| reason.as_str()),
             "readiness_gate": self.readiness_gate.as_ref().map(crate::readiness_gate::FloorGate::to_json),
+            "catalog": self.catalog.as_ref().map(crate::catalog_contract::CatalogContract::to_json),
             "cases": cases,
         })
     }

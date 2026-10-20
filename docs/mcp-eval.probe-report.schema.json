@@ -112,9 +112,82 @@
         }
       ],
       "description": "Declared readiness floors and their outcome; null when the run declared none."
+    },
+    "catalog": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/catalog"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The catalog's contract as digests, for `mcpeval diff --fail-on-breaking`; null when no complete catalog was listed."
     }
   },
   "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "The first 16 hex digits of a SHA-256."
+    },
+    "catalog": {
+      "type": "object",
+      "required": [
+        "tools"
+      ],
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "class",
+              "required",
+              "parameters",
+              "output_schema"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "class": {
+                "enum": [
+                  "read-only",
+                  "writer",
+                  "unannotated"
+                ]
+              },
+              "required": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/digest"
+                },
+                "description": "Digests of the required parameter names."
+              },
+              "parameters": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "#/$defs/digest"
+                },
+                "description": "Parameter-name digest to the digest of its constraints, prose keywords excluded."
+              },
+              "output_schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/$defs/digest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
     "count": {
       "type": "integer",
       "minimum": 0

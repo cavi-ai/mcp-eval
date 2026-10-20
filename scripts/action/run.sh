@@ -86,6 +86,11 @@ fi
 if [ -n "${INPUT_MAX_READINESS_DROP:-}" ] && ! mcpeval diff --help 2>&1 | grep -q -- --max-readiness-drop; then
   usage "$(mcpeval --version) does not support max-readiness-drop; set the version input to a release that does"
 fi
+if [ "${INPUT_FAIL_ON_BREAKING:-false}" = true ]; then
+  [ -n "${INPUT_BASELINE:-}" ] || usage "fail-on-breaking needs a baseline"
+  mcpeval diff --help 2>&1 | grep -q -- --fail-on-breaking \
+    || usage "$(mcpeval --version) does not support fail-on-breaking; set the version input to a release that does"
+fi
 
 case "$report" in
   *.json) markdown="${report%.json}.md" ;;
@@ -117,6 +122,7 @@ diff_code=0
 if [ -n "${INPUT_BASELINE:-}" ] && [ -s "$report" ]; then
   diff_args=(diff "$INPUT_BASELINE" "$report" --format markdown --fail-on-regression)
   [ "${INPUT_FAIL_ON_CHANGE:-false}" != true ] || diff_args+=(--fail-on-change)
+  [ "${INPUT_FAIL_ON_BREAKING:-false}" != true ] || diff_args+=(--fail-on-breaking)
   if [ -n "${INPUT_MAX_READINESS_DROP:-}" ]; then
     diff_args+=(--max-readiness-drop "$INPUT_MAX_READINESS_DROP")
     [ "$exclude_latency" != true ] || diff_args+=(--exclude-latency)

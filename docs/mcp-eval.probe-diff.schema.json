@@ -124,6 +124,77 @@
       ],
       "description": "The --max-readiness-drop gate; null when none was declared."
     },
+    "catalog": {
+      "type": "object",
+      "required": [
+        "comparable",
+        "changes"
+      ],
+      "properties": {
+        "comparable": {
+          "type": "boolean",
+          "description": "Both documents carry a catalog contract."
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "tool",
+              "change",
+              "severity",
+              "count"
+            ],
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "change": {
+                "enum": [
+                  "tool-removed",
+                  "tool-added",
+                  "parameter-required",
+                  "parameter-optional",
+                  "parameter-removed",
+                  "parameter-added",
+                  "parameter-changed",
+                  "class-changed",
+                  "output-schema-removed",
+                  "output-schema-added",
+                  "output-schema-changed"
+                ]
+              },
+              "severity": {
+                "enum": [
+                  "breaking",
+                  "review",
+                  "compatible"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "from": {
+                "enum": [
+                  "read-only",
+                  "writer",
+                  "unannotated"
+                ]
+              },
+              "to": {
+                "enum": [
+                  "read-only",
+                  "writer",
+                  "unannotated"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "description": "Catalog contract changes, breaking first."
+    },
     "summary": {
       "type": "object",
       "required": [

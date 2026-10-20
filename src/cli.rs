@@ -355,6 +355,12 @@ pub enum Command {
         /// the baseline.
         #[arg(long)]
         fail_on_change: bool,
+        /// Exit non-zero when the catalog contract changed in a way that
+        /// breaks callers: a tool removed, a parameter newly required or
+        /// removed, a read-only tool become a writer or unannotated, or an
+        /// output schema removed. Both documents must carry the catalog.
+        #[arg(long)]
+        fail_on_breaking: bool,
         /// Exit non-zero when readiness dropped by more than this many
         /// points since the baseline. Both documents must carry readiness
         /// under the same standard and measurement profile.

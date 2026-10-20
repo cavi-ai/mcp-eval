@@ -151,6 +151,9 @@ pub struct Diff {
     pub readiness: ReadinessMovement,
     /// The readiness-drop gate, when one was declared.
     pub readiness_gate: Option<DropGate>,
+    /// Catalog contract changes, breaking first; None when a document
+    /// carries no catalog contract.
+    pub catalog: Option<Vec<crate::catalog_contract::Change>>,
     /// Case IDs present only in the baseline.
     pub missing: Vec<String>,
     /// Case IDs present only in the current run.
@@ -194,6 +197,31 @@ impl Diff {
     /// and the committed baseline is regenerated deliberately.
     pub fn gated(&self) -> bool {
         self.regressed() > 0
+    }
+
+    /// Catalog changes of one severity; None when the catalogs were not
+    /// both recorded.
+    pub fn catalog_changes(&self, severity: crate::catalog_contract::Severity) -> Option<usize> {
+        self.catalog.as_ref().map(|changes| {
+            changes
+                .iter()
+                .filter(|change| change.kind.severity() == severity)
+                .count()
+        })
+    }
+
+    fn catalog_summary(&self) -> String {
+        use crate::catalog_contract::Severity;
+        match (
+            self.catalog_changes(Severity::Breaking),
+            self.catalog_changes(Severity::Review),
+            self.catalog_changes(Severity::Compatible),
+        ) {
+            (Some(breaking), Some(review), Some(compatible)) => {
+                format!("catalog  {breaking} breaking, {review} to review, {compatible} compatible")
+            }
+            _ => "catalog  not comparable (a document carries no catalog contract)".into(),
+        }
     }
 
     /// Declare how far readiness may fall. Readiness must be comparable on
@@ -328,6 +356,10 @@ pub fn diff(baseline: &ProbeReport, current: &ProbeReport) -> Diff {
     Diff {
         readiness: ReadinessMovement::of(baseline, current),
         readiness_gate: None,
+        catalog: match (&baseline.catalog, &current.catalog) {
+            (Some(before), Some(after)) => Some(crate::catalog_contract::compare(before, after)),
+            _ => None,
+        },
         cases,
         missing,
         added,
@@ -419,6 +451,22 @@ pub fn to_json(outcome: &Diff) -> serde_json::Value {
             "drop": gate.drop,
             "passed": gate.passed(),
         })),
+        "catalog": {
+            "comparable": outcome.catalog.is_some(),
+            "changes": outcome.catalog.iter().flatten().map(|change| {
+                let mut entry = serde_json::json!({
+                    "tool": change.tool,
+                    "change": change.kind.as_str(),
+                    "severity": change.kind.severity().as_str(),
+                    "count": change.count,
+                });
+                if let crate::catalog_contract::ChangeKind::ClassChanged { from, to } = change.kind {
+                    entry["from"] = crate::catalog_contract::class_label(from).into();
+                    entry["to"] = crate::catalog_contract::class_label(to).into();
+                }
+                entry
+            }).collect::<Vec<_>>(),
+        },
         "summary": {
             "regressed": outcome.regressed(),
             "fixed": outcome.fixed(),
@@ -458,6 +506,9 @@ pub fn render(outcome: &Diff) -> String {
     }
     for id in outcome.missing.iter().chain(outcome.added.iter()) {
         width = width.max(id.len());
+    }
+    for change in outcome.catalog.iter().flatten() {
+        width = width.max(change.tool.len());
     }
     width = width.max("readiness".len());
     let mut out = String::new();
@@ -499,10 +550,24 @@ pub fn render(outcome: &Diff) -> String {
     for id in &outcome.added {
         out.push_str(&format!("{:<width$}  added\n", id, width = width));
     }
+    for change in outcome.catalog.iter().flatten() {
+        let severity = match change.kind.severity() {
+            crate::catalog_contract::Severity::Breaking => "BREAKING",
+            crate::catalog_contract::Severity::Review => "REVIEW",
+            crate::catalog_contract::Severity::Compatible => "compatible",
+        };
+        out.push_str(&format!(
+            "{:<width$}  catalog {severity} {}\n",
+            change.tool,
+            change.label(),
+            width = width
+        ));
+    }
     out.push_str(&format!("readiness  {}\n", outcome.readiness.text()));
     if let Some(gate) = &outcome.readiness_gate {
         out.push_str(&format!("{}\n", gate.text()));
     }
+    out.push_str(&format!("{}\n", outcome.catalog_summary()));
     out.push_str(&format!(
         "{} regressed, {} fixed, {} changed, {} unchanged, {} removed, {} added\n",
         outcome.regressed(),
@@ -555,6 +620,30 @@ pub fn render_markdown(outcome: &Diff) -> String {
     }
     for id in &outcome.added {
         out.push_str(&format!("| {id} | added | — | pass |\n"));
+    }
+    match &outcome.catalog {
+        None => out.push_str(
+            "\nCatalog contract: not comparable (a document carries no catalog contract).\n",
+        ),
+        Some(changes) if changes.is_empty() => {
+            out.push_str("\nCatalog contract: unchanged.\n");
+        }
+        Some(changes) => {
+            out.push_str(
+                "\n### Catalog contract\n\n| Tool | Change | Severity |\n| --- | --- | --- |\n",
+            );
+            for change in changes {
+                let severity = match change.kind.severity() {
+                    crate::catalog_contract::Severity::Breaking => "**breaking**",
+                    other => other.as_str(),
+                };
+                out.push_str(&format!(
+                    "| {} | `{}` | {severity} |\n",
+                    change.tool,
+                    change.label()
+                ));
+            }
+        }
     }
     out.push_str(&format!(
         "\n{} regressed, {} fixed, {} changed, {} removed, {} added. *Deterministic diff of share-safe report documents; no payloads or error prose are included.*\n",

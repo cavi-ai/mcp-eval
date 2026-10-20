@@ -44,6 +44,7 @@ used as is, so an earlier step can install a pinned or local build.
 | `version` | | Release to install instead of the pinned one |
 | `baseline` | | Committed report to gate against with `mcpeval diff --fail-on-regression` |
 | `fail-on-change` | `false` | With `baseline`, also fail on changed failure reasons |
+| `fail-on-breaking` | `false` | With `baseline`, also fail on [breaking catalog changes](#breaking-catalog-changes) |
 | `min-readiness` | | Fail when readiness is under this score |
 | `min-area` | | Area floors as whitespace-separated `AREA=SCORE` words |
 | `max-readiness-drop` | | With `baseline`, fail when readiness fell by more than this many points |
@@ -212,6 +213,7 @@ documents must name the same server.
 - `--fail-on-regression` exits non-zero only for regressions. Fixes and added
   cases are informational, since manifest growth is deliberate.
 - `--fail-on-change` also gates on changed failure reasons.
+- `--fail-on-breaking` gates on the catalog contract (see below).
 - `--max-readiness-drop <POINTS>` gates on readiness movement; readiness that
   is not comparable exits 2.
 - Without a gate flag the diff is informational and always exits zero.
@@ -229,6 +231,33 @@ Both inputs are share-safe reports, so every diff format carries only case IDs,
 verdicts, fixed reason labels, and measurement numbers.
 
 Regenerate the baseline deliberately and review the diff in a pull request — never regenerate it inside CI, or the gate gates nothing.
+
+### Breaking catalog changes
+
+Manifest cases only call the tools they name. Every report also records the
+catalog's contract: each tool's class and digests of its parameters, their
+constraints, and its output schema. `--fail-on-breaking` compares the two
+contracts and fails on a change that breaks callers written against the
+baseline, whether or not a case exercises the tool:
+
+| Change | Severity |
+| --- | --- |
+| `tool-removed`, `parameter-required`, `parameter-removed`, `output-schema-removed` | breaking |
+| `class-changed` to `writer`, or from `read-only` to `unannotated` | breaking |
+| `parameter-changed`, `output-schema-changed` | review |
+| `tool-added`, `parameter-added`, `parameter-optional`, `output-schema-added`, other class changes | compatible |
+
+```sh
+mcpeval diff baseline.json current.json --fail-on-breaking
+# describe_status            catalog BREAKING parameter-required
+# catalog  1 breaking, 0 to review, 0 compatible
+```
+
+Descriptions and other prose keywords are not part of the contract, so
+rewording them changes nothing. A digest cannot say whether a changed
+constraint narrowed or widened, so those changes are listed for review and do
+not fail the gate. Reports from earlier releases carry no `catalog`;
+`--fail-on-breaking` exits 2 against them until the baseline is regenerated.
 
 ## Verifying findings in CI
 

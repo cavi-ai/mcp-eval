@@ -1,3 +1,4 @@
+pub mod catalog_contract;
 pub mod compare;
 pub mod corpus;
 pub mod correlate;

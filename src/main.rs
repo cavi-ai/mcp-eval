@@ -343,6 +343,9 @@ fn run() -> anyhow::Result<()> {
                 cli::ProbeFormat::Sarif => {
                     println!("{}", render_sarif(&server, &report, &manifest));
                 }
+                cli::ProbeFormat::Junit => {
+                    print!("{}", mcpeval::junit::render_junit(&server, &report));
+                }
                 cli::ProbeFormat::Text => {
                     render_probe_text(&server, &report, brief, corpus.as_ref(), price_per_mtok)
                 }
@@ -389,6 +392,9 @@ fn run() -> anyhow::Result<()> {
                 ),
                 cli::ScoreFormat::Text => {
                     render_probe_text(&server, &report, brief, corpus.as_ref(), None)
+                }
+                cli::ScoreFormat::Junit => {
+                    print!("{}", mcpeval::junit::render_junit(&server, &report));
                 }
             }
             exit_for_report(&report);
@@ -693,6 +699,9 @@ fn run() -> anyhow::Result<()> {
                 ),
                 cli::ReportFormat::Sarif => {
                     println!("{}", render_sarif(&server, &report, &manifest));
+                }
+                cli::ReportFormat::Junit => {
+                    print!("{}", mcpeval::junit::render_junit(&server, &report));
                 }
             }
             exit_for_report(&report);

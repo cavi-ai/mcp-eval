@@ -292,7 +292,12 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json -- your-mcp-server
 Any runner with a Rust toolchain works: the battery is a single static binary
 with no network services. `mcpeval probe` exits non-zero when any selected case
 fails, so it drops into `make check`, pre-merge hooks, or any pipeline
-unchanged.
+unchanged. `--format junit` writes a JUnit XML report for test-result views:
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json --format junit \
+  --min-readiness 85 -- your-mcp-server --flags > mcpeval.junit.xml
+```
 
 | Exit | Meaning |
 | --- | --- |

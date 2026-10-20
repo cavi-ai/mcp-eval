@@ -17,6 +17,7 @@ pub mod http_proxy;
 pub mod index;
 pub mod init;
 mod jsonl;
+pub mod junit;
 pub mod lifecycle;
 mod loopback;
 pub mod manifest;

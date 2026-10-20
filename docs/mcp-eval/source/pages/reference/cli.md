@@ -39,7 +39,9 @@ The default manifest path for `probe`, `verify`, and `report` is
 
 - `--manifest <PATH>` selects the manifest.
 - `--probe <KIND>` runs one probe kind and skips the standard battery.
-- `--format text|json|markdown|sarif` selects the output.
+- `--format text|json|markdown|sarif|junit` selects the output. JUnit XML
+  has one suite of manifest cases and one for readiness: whether it was
+  measured, each declared floor, and every lost point as output.
 - `--brief` suppresses remediation hints in text output.
 - `--price-per-mtok <USD>` adds session-cost interpretation to text and
   markdown.
@@ -80,7 +82,7 @@ version {{PRODUCT_VERSION}}.
 `mcpeval score --server <SERVER>` plus `-- <CMD>...` or `--url <URL>`. Runs the
 standard battery with no manifest and reports readiness under the named mcpeval
 standard, its areas, and every lost point. Supports
-`--format text|json|markdown`, `--brief`, `--confirm-read-only`,
+`--format text|json|markdown|junit`, `--brief`, `--confirm-read-only`,
 `--skip-tool <NAME>`, `--arguments <FILE>`, `--min-readiness <SCORE>`,
 `--min-area <AREA=SCORE>`, `--exclude-latency`, and `--allow-remote-http`, as
 for `probe`.
@@ -142,8 +144,8 @@ across servers side by side.
 ### `report`
 
 `mcpeval report <DOCUMENT>` (or `-` for stdin). Re-renders a committed
-`mcpeval.probe-report` document (v1 or v2) as text, markdown, or SARIF without
-re-running any server. Supports `--brief`, `--price-per-mtok`, and
+`mcpeval.probe-report` document (v1 or v2) as text, markdown, SARIF, or JUnit
+XML without re-running any server. Supports `--brief`, `--price-per-mtok`, and
 `--manifest <PATH>` (default `mcp-eval.manifest.json`), which locates SARIF
 results.
 

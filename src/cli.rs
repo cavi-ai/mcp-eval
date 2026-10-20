@@ -18,6 +18,8 @@ pub enum ProbeFormat {
     Markdown,
     /// SARIF 2.1.0 for GitHub code-scanning annotations.
     Sarif,
+    /// JUnit XML for CI test-result views.
+    Junit,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -29,6 +31,8 @@ pub enum ScoreFormat {
     Json,
     /// Pull-request-ready markdown with the readiness badge.
     Markdown,
+    /// JUnit XML for CI test-result views.
+    Junit,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
@@ -62,6 +66,8 @@ pub enum ReportFormat {
     Markdown,
     /// SARIF 2.1.0 for code-scanning uploads.
     Sarif,
+    /// JUnit XML for CI test-result views.
+    Junit,
 }
 
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]

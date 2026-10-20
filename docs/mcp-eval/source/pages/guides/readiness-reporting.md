@@ -316,15 +316,28 @@ JSON report, so committed baselines stay byte-identical when prices change.
 `--format sarif` emits a deterministic SARIF 2.1.0 document derived only from
 the sanitized report and the manifest's case lines:
 
-- one result per failing case;
-- the probe kind as the rule id;
-- the fixed reason plus remediation hint as the message;
-- the failing case's line in the manifest as the location.
+- one error result per failing case, with the probe kind as the rule id, the
+  fixed reason plus remediation hint as the message, and the failing case's
+  line in the manifest as the location;
+- one warning result per readiness check that lost points, with
+  `readiness/<reason>` as the rule id, the rule's help carrying the hint, and
+  the manifest's first line as the location;
+- one error result per readiness floor shortfall, under `readiness/floor`.
 
 The manifest URI is relative to the working directory, so run the command from
 the repository root. Each server gets its own code-scanning category
 (`mcpeval/<server>/`). Upload it with `github/codeql-action/upload-sarif` or the
 code-scanning API, and each failing case becomes an alert on its manifest line.
+
+## JUnit
+
+`--format junit` on `probe`, `score`, and `report` emits JUnit XML for CI
+systems that show test results from it. The `<server>.manifest` suite has one
+test per case: a failure for a red verdict, an error for a case that could not
+finish. The `<server>.readiness` suite has a test for the measured readiness,
+or an error when it could not be measured, and one test per declared floor.
+Its properties carry the standard and every area score, and its output lists
+every lost point with its hint. The document has no timestamps or durations.
 
 ## Re-rendering and diffs
 

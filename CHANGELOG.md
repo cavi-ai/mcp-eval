@@ -7,11 +7,13 @@
 - Readiness gates: `probe` and `score` fail under `--min-readiness` or a `--min-area` floor, `diff` fails a drop over `--max-readiness-drop`, `--exclude-latency` compares `readiness.score_without_latency`, and the action takes each as an input.
 - Reports record the catalog contract as digests, and `diff --fail-on-breaking` (action input `fail-on-breaking`) fails on a removed tool, a newly required or removed parameter, a read-only tool turned writer, or a removed output schema.
 - `--arguments <FILE>` on `score`, `probe`, and `init` supplies working arguments for tools whose inputs no schema implies; the measurement profile records its SHA-256.
+- `--format junit` on `probe`, `score`, and `report` writes JUnit XML with the manifest cases, readiness, and each declared floor.
 
 ### Changed
 
 - `init` calls tools with required parameters using values built from their schema, and names every tool it left without cases and why.
 - The readiness corpus is recollected under `mcpeval-standard/2` from the pinned public targets in `data/corpus-targets.json` (13 of 34 targets observed), so reports place readiness again.
+- SARIF output adds a warning per lost readiness point (`readiness/<reason>`) and an error per readiness floor shortfall (`readiness/floor`).
 
 ## 0.7.1 - 2026-10-12
 

@@ -48,8 +48,16 @@ function releaseManifest(sha256, size) {
   };
 }
 
-async function fixtureServer(routes) {
+/** `failures` maps a path to the statuses it answers, in order, before serving its body. */
+async function fixtureServer(routes, failures = new Map()) {
+  const requests = [];
   const server = http.createServer((request, response) => {
+    requests.push(request.url);
+    const failure = failures.get(request.url)?.shift();
+    if (failure !== undefined) {
+      response.writeHead(failure).end();
+      return;
+    }
     const body = routes.get(request.url);
     if (body === undefined) {
       response.writeHead(404).end();
@@ -62,6 +70,7 @@ async function fixtureServer(routes) {
   const address = server.address();
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
+    requests,
     close: () => new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve())),
   };
 }
@@ -149,6 +158,59 @@ test("installer rejects an archive larger than its pinned release size", async (
     }),
     /download exceeds the pinned size/u,
   );
+});
+
+async function retryFixture(context, failures) {
+  const temporary = await mkdtemp(path.join(os.tmpdir(), "mcpeval-npm-retry-"));
+  context.after(() => rm(temporary, { recursive: true, force: true }));
+  const fixture = await fixtureArchive(temporary);
+  const assetName = path.basename(fixture.archive);
+  const routes = new Map([
+    [`/${assetName}`, fixture.bytes],
+    [`/${assetName}.sha256`, `${fixture.sha256}  ${assetName}\n`],
+  ]);
+  const server = await fixtureServer(routes, failures(assetName));
+  context.after(server.close);
+  const { installRelease } = await import(path.join(ROOT, "npm/install.mjs"));
+  const packageRoot = path.join(temporary, "package");
+  const install = () => installRelease({
+    manifest: releaseManifest(fixture.sha256, fixture.bytes.length),
+    packageRoot,
+    platform: "linux",
+    arch: "x64",
+    downloadBaseUrl: server.baseUrl,
+    retryDelaysMs: [0, 0],
+  });
+  return { assetName, server, packageRoot, install };
+}
+
+test("installer retries transient server errors and then installs", async (context) => {
+  const { assetName, server, packageRoot, install } = await retryFixture(context, (asset) => new Map([
+    [`/${asset}.sha256`, [500]],
+    [`/${asset}`, [503, 429]],
+  ]));
+  await install();
+
+  const executed = spawnSync(path.join(packageRoot, "npm/vendor/mcpeval"), [], { encoding: "utf8" });
+  assert.equal(executed.status, 0, executed.stderr);
+  assert.equal(executed.stdout, "fixture mcpeval 0.1.0\n");
+  assert.deepEqual(server.requests, [
+    `/${assetName}.sha256`, `/${assetName}.sha256`,
+    `/${assetName}`, `/${assetName}`, `/${assetName}`,
+  ]);
+});
+
+test("installer does not retry a missing asset", async (context) => {
+  const { assetName, server, install } = await retryFixture(context, (asset) => new Map([[`/${asset}.sha256`, [404]]]));
+  await assert.rejects(install(), /download failed \(404\)/u);
+  assert.deepEqual(server.requests, [`/${assetName}.sha256`]);
+});
+
+test("installer gives up after its last retry", async (context) => {
+  const { server, packageRoot, install } = await retryFixture(context, (asset) => new Map([[`/${asset}.sha256`, [500, 500, 500]]]));
+  await assert.rejects(install(), /download failed \(500\) for \S+ after 3 attempts/u);
+  assert.equal(server.requests.length, 3);
+  await assert.rejects(readFile(path.join(packageRoot, "npm/vendor/mcpeval")), { code: "ENOENT" });
 });
 
 test("installer rejects unsupported platform pairs before download", async () => {

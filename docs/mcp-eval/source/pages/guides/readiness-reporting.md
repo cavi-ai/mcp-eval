@@ -30,12 +30,13 @@ demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reli
   lost catalog.output-schema score=0 tool=read_counter reason=catalog-no-output-schema
   …
   lost reliability.success score=33 tool=flaky_read observed=1 reason=reliability-call-failed
-    hint: make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability
+    hint: make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability. When a value built from the schema means nothing to the server (a path, an ID), declare examples that work, or pass working arguments with --arguments
   lost reliability.consistent score=0 tool=flaky_read reason=reliability-inconsistent
     hint: the same read-only call with the same arguments ended differently across three calls; make read paths deterministic, or return a retryable error with a stable code
   lost reliability.latency score=50 tool=slow_read reason=reliability-slow
     hint: median latency is above 100 ms (score 80: up to 300 ms, 50: up to 1 s, 20: up to 3 s, 0: slower); cache or precompute the read, or page large results
-  catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
+  standard corpus (mcpeval-standard/2): above 9, tied 0, below 4 of 13 observed servers
+  catalog: 566 tokens over 12 tools, lighter than 12 of 13 observed servers (median 2536 tokens)
 ```
 
 A failing case prints a remediation hint: the concrete server-side fix for its
@@ -279,21 +280,21 @@ Target deployments and backing state must still be controlled by the operator.
 
 ## Corpus placement
 
-The shipped corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v2`)
-is a historical `mcpeval-standard/1` snapshot. Its readiness scores are not
-compared with `mcpeval-standard/2`; catalog token comparisons remain available.
-Recollect under the current standard to produce a new readiness baseline. New
-collection uses v3 with explicit pinned targets and retained provenance; see
+The shipped corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v3`)
+is collected under `mcpeval-standard/2` from the pinned targets in
+`data/corpus-targets.json`, and retains the evaluator, target-file hash, and
+each target's package, version, and outcome; see
+[State of MCP servers](state-of-mcp-servers.md) and
 [Corpus collection and replay](corpus-replay.md).
 
 Text and markdown reports from `probe` and `score` place your readiness among
-observations of the same standard, counting ties explicitly. They place your
-catalog among servers that recorded `catalog_tokens`; the median is the lower
-middle for an even count. This example belongs to a standard/1 report:
+observations of the same standard and measurement profile, counting ties
+explicitly. They place your catalog among servers that recorded
+`catalog_tokens`; the median is the lower middle for an even count:
 
 ```text
-  standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers
-  catalog: 566 tokens over 12 tools, lighter than 23 of 33 observed servers (median 1186 tokens)
+  standard corpus (mcpeval-standard/2): above 9, tied 0, below 4 of 13 observed servers
+  catalog: 566 tokens over 12 tools, lighter than 12 of 13 observed servers (median 2536 tokens)
 ```
 
 - A personal or private corpus at `<MCPEVAL_HOME>/corpus.json` takes
@@ -315,15 +316,28 @@ JSON report, so committed baselines stay byte-identical when prices change.
 `--format sarif` emits a deterministic SARIF 2.1.0 document derived only from
 the sanitized report and the manifest's case lines:
 
-- one result per failing case;
-- the probe kind as the rule id;
-- the fixed reason plus remediation hint as the message;
-- the failing case's line in the manifest as the location.
+- one error result per failing case, with the probe kind as the rule id, the
+  fixed reason plus remediation hint as the message, and the failing case's
+  line in the manifest as the location;
+- one warning result per readiness check that lost points, with
+  `readiness/<reason>` as the rule id, the rule's help carrying the hint, and
+  the manifest's first line as the location;
+- one error result per readiness floor shortfall, under `readiness/floor`.
 
 The manifest URI is relative to the working directory, so run the command from
 the repository root. Each server gets its own code-scanning category
 (`mcpeval/<server>/`). Upload it with `github/codeql-action/upload-sarif` or the
 code-scanning API, and each failing case becomes an alert on its manifest line.
+
+## JUnit
+
+`--format junit` on `probe`, `score`, and `report` emits JUnit XML for CI
+systems that show test results from it. The `<server>.manifest` suite has one
+test per case: a failure for a red verdict, an error for a case that could not
+finish. The `<server>.readiness` suite has a test for the measured readiness,
+or an error when it could not be measured, and one test per declared floor.
+Its properties carry the standard and every area score, and its output lists
+every lost point with its hint. The document has no timestamps or durations.
 
 ## Re-rendering and diffs
 

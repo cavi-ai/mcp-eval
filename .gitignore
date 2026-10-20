@@ -6,9 +6,11 @@
 .DS_Store
 # Capture-root artifacts stay out of the repo, except the readiness
 # corpus: a deliberate, share-safe check-in (no payloads, only server
-# labels and scores) that must ship with the release.
+# labels and scores) that must ship with the release, and the pinned
+# public target file it is collected from.
 data/*
 !data/readiness-corpus.json
+!data/corpus-targets.json
 .quarantine/
 .remember/
 .superpowers/

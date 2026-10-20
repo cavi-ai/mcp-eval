@@ -1,6 +1,6 @@
 # Continuous integration
 
-The probe battery is built for CI gating: deterministic verdicts, fixed failure reasons, and a versioned JSON report with no timestamps, sessions, or payloads. The manifest's cases are the gate that sets the exit code; the readiness score comes from mcpeval's standard battery and never changes the exit code.
+The probe battery is built for CI gating: deterministic verdicts, fixed failure reasons, and a versioned JSON report with no timestamps, sessions, or payloads. The manifest's cases are the gate that sets the exit code; the readiness score comes from mcpeval's standard battery and changes the exit code only through a declared [readiness floor](#readiness-floors).
 
 ## GitHub Actions
 
@@ -44,8 +44,16 @@ used as is, so an earlier step can install a pinned or local build.
 | `version` | | Release to install instead of the pinned one |
 | `baseline` | | Committed report to gate against with `mcpeval diff --fail-on-regression` |
 | `fail-on-change` | `false` | With `baseline`, also fail on changed failure reasons |
+| `fail-on-breaking` | `false` | With `baseline`, also fail on [breaking catalog changes](#breaking-catalog-changes) |
+| `min-readiness` | | Fail when readiness is under this score |
+| `min-area` | | Area floors as whitespace-separated `AREA=SCORE` words |
+| `max-readiness-drop` | | With `baseline`, fail when readiness fell by more than this many points |
+| `exclude-latency` | `false` | Compare floors and the drop with every latency check at full marks |
 | `sarif` | `false` | Render SARIF and upload it to code scanning |
-| `report-path` | `mcpeval.report.json` | Where the JSON report is written |
+| `report-path` | `mcpeval.report.json` | Where the JSON report is written; the markdown and SARIF go beside it |
+| `comment` | `false` | On pull requests, keep one comment per server with the report and baseline diff |
+| `github-token` | `github.token` | Token that writes the pull-request comment |
+| `artifact` | `false` | Upload the report, its markdown, and the SARIF as the artifact `mcpeval-<server>` |
 
 - `command` takes whitespace-separated words, with no quoting, or a JSON array
   of strings for arguments that contain spaces, such as
@@ -61,7 +69,7 @@ The report is rendered as markdown into the job summary and to `${report-path%.j
 
 | Output | Meaning |
 | --- | --- |
-| `passed` | `true` when every selected case passed |
+| `passed` | `true` when every selected case passed and every readiness floor held |
 | `readiness` | Readiness score (0-100) under the mcpeval standard the report names |
 | `report` | Path to the JSON report |
 | `markdown` | Path to the rendered markdown report |
@@ -73,9 +81,19 @@ The report is rendered as markdown into the job summary and to `${report-path%.j
   `mcpeval diff --fail-on-regression` against the committed report (plus
   `--fail-on-change` with `fail-on-change: "true"`) and appends its markdown
   table to the job summary and the `markdown` output.
-- With `sarif: "true"`, it renders `mcpeval.sarif` located at the manifest's
-  failing cases and uploads it through `github/codeql-action/upload-sarif`, also
-  when the probe fails. The job needs `security-events: write`.
+- With `sarif: "true"`, it renders `${report-path%.json}.sarif` located at the
+  manifest's failing cases and uploads it through
+  `github/codeql-action/upload-sarif`, also when the probe fails. The job needs
+  `security-events: write`.
+- With `comment: "true"` on a `pull_request` event, it keeps one comment per
+  server on the pull request, marked `<!-- mcpeval:<server> -->`, holding the
+  rendered report and baseline diff; later runs edit it in place. The job needs
+  `pull-requests: write`. A comment that cannot be written, such as from a fork
+  whose token is read-only, is a warning, not a failure.
+- With `artifact: "true"`, it uploads the report, its markdown, and the SARIF as
+  the workflow artifact `mcpeval-<server>`. Download the JSON report from a run
+  you accept and commit it as the next baseline.
+- Third-party actions the composite action calls are pinned to commit SHAs.
 - The step exits with the probe's code, or with the diff's when the probe passed
   and the diff failed.
 
@@ -86,6 +104,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: cavi-ai/mcp-eval@main
@@ -94,6 +113,7 @@ jobs:
           command: python3 scripts/launch-mcp-server.py --stdio
           baseline: mcp-eval.baseline.json
           sarif: 'true'
+          comment: 'true'
 ```
 
 `baseline` and `sarif` need `mcpeval` 0.3.0 or later (`diff` and `report --manifest`); the action's pinned release has both. A `version` input older than 0.3.0 fails fast with a usage error naming the installed version.
@@ -156,6 +176,31 @@ with appropriate access controls. Do not upload raw evidence to public workflow
 artifacts. Follow
 [Corpus collection and replay](corpus-replay.md) to prepare and retain the files.
 
+## Readiness floors
+
+Manifest cases gate what you declared. A readiness floor gates what the
+standard battery measures, so a server that starts lying about its error codes
+fails the build even when every manifest case still passes:
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json \
+  --min-readiness 85 --min-area error-honesty=90 -- your-mcp-server --flags
+# demo gate 25/25 passed
+# demo readiness 76/100 protocol=100 catalog=63 context=100 error-honesty=0 reliability=91 coverage=100 standard=mcpeval-standard/2
+# demo readiness floor failed: score 76 < 85, error-honesty 0 < 90
+```
+
+- `--min-readiness` and `--min-area` work on `probe` and `score` and exit 1
+  under the floor. The JSON report records the floors and each shortfall in
+  `readiness_gate`, and `mcpeval report` keeps that verdict.
+- Median latency is scored in coarse bands, and runners differ in speed. With
+  `--exclude-latency`, floors compare `readiness.score_without_latency`, the
+  score with every latency check at full marks. Gate latency itself with a
+  `latency-budget` manifest case.
+- Against a committed baseline, `mcpeval diff --max-readiness-drop <POINTS>`
+  fails when readiness fell by more than `POINTS`; add `--exclude-latency` to
+  compare the latency-free scores.
+
 ## Committed baselines
 
 The JSON report is deterministic, so it can be committed and diffed:
@@ -183,8 +228,10 @@ documents must name the same server.
 - `--fail-on-regression` exits non-zero only for regressions. Fixes and added
   cases are informational, since manifest growth is deliberate.
 - `--fail-on-change` also gates on changed failure reasons.
-- Without `--fail-on-regression` the diff is informational and always exits
-  zero.
+- `--fail-on-breaking` gates on the catalog contract (see below).
+- `--max-readiness-drop <POINTS>` gates on readiness movement; readiness that
+  is not comparable exits 2.
+- Without a gate flag the diff is informational and always exits zero.
 - `--format json` emits a deterministic `mcpeval.probe-diff/v2` document;
   `--format markdown` renders a pull-request-ready table.
 
@@ -199,6 +246,33 @@ Both inputs are share-safe reports, so every diff format carries only case IDs,
 verdicts, fixed reason labels, and measurement numbers.
 
 Regenerate the baseline deliberately and review the diff in a pull request — never regenerate it inside CI, or the gate gates nothing.
+
+### Breaking catalog changes
+
+Manifest cases only call the tools they name. Every report also records the
+catalog's contract: each tool's class and digests of its parameters, their
+constraints, and its output schema. `--fail-on-breaking` compares the two
+contracts and fails on a change that breaks callers written against the
+baseline, whether or not a case exercises the tool:
+
+| Change | Severity |
+| --- | --- |
+| `tool-removed`, `parameter-required`, `parameter-removed`, `output-schema-removed` | breaking |
+| `class-changed` to `writer`, or from `read-only` to `unannotated` | breaking |
+| `parameter-changed`, `output-schema-changed` | review |
+| `tool-added`, `parameter-added`, `parameter-optional`, `output-schema-added`, other class changes | compatible |
+
+```sh
+mcpeval diff baseline.json current.json --fail-on-breaking
+# describe_status            catalog BREAKING parameter-required
+# catalog  1 breaking, 0 to review, 0 compatible
+```
+
+Descriptions and other prose keywords are not part of the contract, so
+rewording them changes nothing. A digest cannot say whether a changed
+constraint narrowed or widened, so those changes are listed for review and do
+not fail the gate. Reports from earlier releases carry no `catalog`;
+`--fail-on-breaking` exits 2 against them until the baseline is regenerated.
 
 ## Verifying findings in CI
 
@@ -233,7 +307,12 @@ mcpeval probe --server demo --manifest mcp-eval.manifest.json -- your-mcp-server
 Any runner with a Rust toolchain works: the battery is a single static binary
 with no network services. `mcpeval probe` exits non-zero when any selected case
 fails, so it drops into `make check`, pre-merge hooks, or any pipeline
-unchanged.
+unchanged. `--format junit` writes a JUnit XML report for test-result views:
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json --format junit \
+  --min-readiness 85 -- your-mcp-server --flags > mcpeval.junit.xml
+```
 
 | Exit | Meaning |
 | --- | --- |

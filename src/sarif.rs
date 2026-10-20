@@ -22,10 +22,12 @@ pub struct ManifestSource<'a> {
     pub text: Option<&'a str>,
 }
 
-/// Render the report as a SARIF 2.1.0 log. Each failing case is a result
-/// whose rule id is the probe kind, whose message carries the fixed reason
-/// plus its remediation hint, and whose location is the case in the
-/// manifest.
+/// Render the report as a SARIF 2.1.0 log. Each failing case is an error
+/// result whose rule id is the probe kind, whose message carries the fixed
+/// reason plus its remediation hint, and whose location is the case in the
+/// manifest. Each readiness check that lost points is a warning under the
+/// rule `readiness/<reason>`, and each readiness floor shortfall an error
+/// under `readiness/floor`, both located at the manifest's first line.
 pub fn render_sarif(server: &str, report: &ProbeReport, manifest: &ManifestSource) -> String {
     let mut all_rules = Vec::new();
     let mut seen_kinds = std::collections::BTreeSet::new();
@@ -35,7 +37,7 @@ pub fn render_sarif(server: &str, report: &ProbeReport, manifest: &ManifestSourc
         }
     }
     let lines = manifest.text.map(case_lines).unwrap_or_default();
-    let results: Vec<serde_json::Value> = report
+    let mut results: Vec<serde_json::Value> = report
         .cases
         .iter()
         .filter_map(|case| {
@@ -67,6 +69,7 @@ pub fn render_sarif(server: &str, report: &ProbeReport, manifest: &ManifestSourc
             }))
         })
         .collect();
+    readiness_results(server, report, manifest, &mut all_rules, &mut results);
     let document = serde_json::json!({
         "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
         "version": "2.1.0",
@@ -198,6 +201,92 @@ fn case_lines(text: &str) -> BTreeMap<String, u64> {
         }
     }
     lines
+}
+
+/// Readiness results have no case to point at; they sit on the manifest's
+/// first line, or on the file when its text is unknown.
+fn manifest_location(manifest: &ManifestSource) -> serde_json::Value {
+    let mut physical_location = serde_json::json!({
+        "artifactLocation": {"uri": manifest.uri},
+    });
+    if manifest.text.is_some() {
+        physical_location["region"] = serde_json::json!({"startLine": 1});
+    }
+    serde_json::json!([{"physicalLocation": physical_location}])
+}
+
+fn readiness_results(
+    server: &str,
+    report: &ProbeReport,
+    manifest: &ManifestSource,
+    rules: &mut Vec<serde_json::Value>,
+    results: &mut Vec<serde_json::Value>,
+) {
+    let mut seen = std::collections::BTreeSet::new();
+    if let Some(readiness) = &report.readiness {
+        for check in readiness.areas.iter().flat_map(|area| &area.checks) {
+            let reason = check.reason.as_str();
+            let hint = crate::remediation::check_hint(check.reason);
+            let rule = format!("readiness/{reason}");
+            if seen.insert(rule.clone()) {
+                rules.push(serde_json::json!({
+                    "id": rule,
+                    "name": reason,
+                    "shortDescription": {"text": format!("MCP server loses readiness points: {reason}")},
+                    "help": {"text": hint},
+                    "helpUri": "https://github.com/cavi-ai/mcp-eval/blob/main/docs/mcp-eval/source/pages/guides/readiness-reporting.md",
+                }));
+            }
+            let tool = check.tool.as_deref();
+            results.push(serde_json::json!({
+                "ruleId": rule,
+                "level": "warning",
+                "message": {
+                    "text": format!(
+                        "{}{} scored {} ({}): {} — {}",
+                        check.id.as_str(),
+                        tool.map(|tool| format!(" on {tool}")).unwrap_or_default(),
+                        check.score,
+                        server,
+                        reason,
+                        hint
+                    )
+                },
+                "locations": manifest_location(manifest),
+                "partialFingerprints": {
+                    "mcpevalCheck": format!("{server}/{}/{}", check.id.as_str(), tool.unwrap_or("-"))
+                },
+            }));
+        }
+    }
+    let shortfalls = report
+        .readiness_gate
+        .as_ref()
+        .and_then(|gate| gate.shortfalls.as_ref());
+    for shortfall in shortfalls.into_iter().flatten() {
+        if seen.insert("readiness/floor".into()) {
+            rules.push(serde_json::json!({
+                "id": "readiness/floor",
+                "name": "readiness-floor",
+                "shortDescription": {"text": "MCP server scores under a declared readiness floor"},
+                "helpUri": "https://github.com/cavi-ai/mcp-eval/blob/main/docs/mcp-eval/source/pages/guides/continuous-integration.md",
+            }));
+        }
+        results.push(serde_json::json!({
+            "ruleId": "readiness/floor",
+            "level": "error",
+            "message": {
+                "text": format!(
+                    "readiness floor failed ({server}): {} {} < {}",
+                    shortfall.subject, shortfall.observed, shortfall.floor
+                )
+            },
+            "locations": manifest_location(manifest),
+            "partialFingerprints": {
+                "mcpevalFloor": format!("{server}/{}", shortfall.subject)
+            },
+        }));
+    }
 }
 
 fn rule_for(probe: &str) -> serde_json::Value {

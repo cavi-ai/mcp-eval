@@ -584,6 +584,7 @@ fn run_probe_tool_call(root: &std::path::Path, arguments: &Value) -> anyhow::Res
             standard: true,
             confirm_read_only: false,
             skip_tools: Vec::new(),
+            arguments: None,
         },
         &mut store,
     )?;
@@ -653,6 +654,7 @@ fn score_tool_call(arguments: &Value) -> anyhow::Result<Value> {
         allow_remote_http: false,
         confirm_read_only: args.confirm_read_only,
         skip_tools: args.skip_tools,
+        arguments: None,
     })?;
     Ok(report_result(&report, &server))
 }

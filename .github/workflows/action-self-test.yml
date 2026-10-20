@@ -274,8 +274,8 @@ jobs:
           cat located.txt
           grep -qx "$MANIFEST:5" located.txt
       # The action's own SARIF path, against the clean demo under its own
-      # category so it adds no alert: renders, then uploads when the token
-      # can write.
+      # category: no case alert, only a readiness warning per lost point.
+      # Renders, then uploads when the token can write.
       - id: action-sarif
         uses: ./
         with:
@@ -287,7 +287,9 @@ jobs:
         if: env.UPLOAD == 'true'
         env:
           SARIF: ${{ steps.action-sarif.outputs.sarif }}
+          REPORT: ${{ steps.action-sarif.outputs.report }}
         run: |
-          test "$SARIF" = mcpeval.sarif
+          test "$SARIF" = mcpeval.report.sarif
           test "$(jq -r '.runs[0].automationDetails.id' "$SARIF")" = mcpeval/demo-action/
-          test "$(jq '.runs[0].results | length' "$SARIF")" = 0
+          test "$(jq '[.runs[0].results[] | select(.level != "warning" or (.ruleId | startswith("readiness/") | not))] | length' "$SARIF")" = 0
+          test "$(jq '.runs[0].results | length' "$SARIF")" = "$(jq '[.readiness.areas[].checks[]] | length' "$REPORT")"

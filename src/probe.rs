@@ -40,6 +40,9 @@ pub struct ProbeOptions {
     pub confirm_read_only: bool,
     /// Tools the standard battery never calls (`--skip-tool`).
     pub skip_tools: Vec<String>,
+    /// Arguments the standard battery calls named tools with
+    /// (`--arguments`).
+    pub arguments: Option<crate::tool_arguments::ToolArguments>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -400,6 +403,10 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
     let mut report = ProbeReport {
         cases: reports,
         manifest_sha256: Some(manifest_sha256),
+        catalog: discovery
+            .incomplete
+            .is_none()
+            .then(|| crate::catalog_contract::CatalogContract::of(&catalog)),
         ..ProbeReport::default()
     };
     if options.standard && options.selected_probe.is_none() && options.selected_case.is_none() {
@@ -409,6 +416,7 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
             &crate::standard::StandardOptions {
                 confirm_read_only: options.confirm_read_only,
                 skip_tools: options.skip_tools,
+                arguments: options.arguments,
             },
         )?;
     }
@@ -422,6 +430,8 @@ pub struct ScoreOptions {
     pub allow_remote_http: bool,
     pub confirm_read_only: bool,
     pub skip_tools: Vec<String>,
+    /// Arguments the standard battery calls named tools with.
+    pub arguments: Option<crate::tool_arguments::ToolArguments>,
 }
 
 /// The standard battery alone: no manifest, no gate.
@@ -440,6 +450,7 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
         &crate::standard::StandardOptions {
             confirm_read_only: options.confirm_read_only,
             skip_tools: options.skip_tools,
+            arguments: options.arguments,
         },
     )?;
     Ok(report)
@@ -454,7 +465,10 @@ fn measure_standard(
     options: &crate::standard::StandardOptions,
 ) -> anyhow::Result<()> {
     match crate::standard::run(target, options) {
-        Ok(readiness) => report.readiness = Some(readiness),
+        Ok((readiness, contract)) => {
+            report.readiness = Some(readiness);
+            report.catalog.get_or_insert(contract);
+        }
         Err(error) if crate::exit::code(&error) == crate::exit::USAGE => return Err(error),
         Err(error) => {
             let reason = transport_reason(&error);
@@ -2141,6 +2155,7 @@ mod tests {
             &crate::standard::StandardOptions {
                 confirm_read_only: true,
                 skip_tools: vec![],
+                arguments: None,
             },
         )
         .unwrap();

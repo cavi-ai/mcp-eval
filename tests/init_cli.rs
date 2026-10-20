@@ -323,7 +323,13 @@ fn init_scaffolds_every_input_free_probe_kind_on_the_demo() {
         stdout,
         "wrote <manifest> (12 tools, 25 cases: discovery-cost 1, token-cost 1, pagination 1, \
          protocol-negotiation 1, surface-listing 1, schema-guessability 6, degradation-over-n 6, \
-         latency-budget 6, contention 1, payload-bounds 1) (2 tools skipped by annotations)\n\
+         latency-budget 6, contention 1, payload-bounds 1) (2 tools skipped by annotations)\n  \
+         skipped flaky_read: the call with {} failed\n  \
+         skipped break_session: destructiveHint\n  \
+         skipped recover_session: readOnlyHint=false\n  \
+         skipped sampled_read: the call with {} failed\n  \
+         skipped elicited_read: the call with {} failed\n  \
+         skipped publish_status: the call with {} failed\n\
          next: review budgets; add error-honesty, state-recovery, and instruction-fidelity cases \
          (they need expected inputs) and cancellation, sampling, elicitation, \
          resource-subscription, and completion cases where the server supports them, then run \
@@ -602,10 +608,13 @@ fn init_never_calls_annotated_writers_and_needs_attestation_for_unannotated_tool
             "describe_status",
             "flaky_read",
             "session_status",
-            "shared_read"
+            "shared_read",
+            "lookup"
         ]
     );
     let value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    // lookup's required key is built from its schema; its string field
+    // carries the payload case.
     assert_eq!(
         case_ids(&value),
         expected(
@@ -614,14 +623,16 @@ fn init_never_calls_annotated_writers_and_needs_attestation_for_unannotated_tool
                 "read_counter",
                 "describe_status",
                 "session_status",
-                "shared_read"
+                "shared_read",
+                "lookup"
             ],
             &[
                 ("read_counter-contention", "contention"),
-                ("read_counter-payload", "payload-bounds"),
+                ("lookup-payload", "payload-bounds"),
             ],
         )
     );
+    assert_eq!(case(&value, "lookup-payload")["field"], "key");
 }
 
 #[test]
@@ -651,7 +662,7 @@ fn init_dry_run_lists_decisions_without_calling_or_writing() {
          recover_session  skipped: readOnlyHint=false\n\
          session_status  needs --confirm-read-only\n\
          shared_read  needs --confirm-read-only\n\
-         lookup  skipped: required arguments\n\
+         lookup  needs --confirm-read-only\n\
          dry run: no tool was called and nothing was written\n"
     );
     assert!(!manifest.exists());
@@ -666,7 +677,7 @@ fn init_dry_run_lists_decisions_without_calling_or_writing() {
          recover_session  skipped: readOnlyHint=false\n\
          session_status  candidate (attested)\n\
          shared_read  candidate (attested)\n\
-         lookup  skipped: required arguments\n\
+         lookup  candidate (attested)\n\
          dry run: no tool was called and nothing was written\n"
     );
     // A selected tool that needs attestation is a usage error even under
@@ -758,21 +769,25 @@ fn init_tool_restricts_candidates_and_rejects_unknown_or_annotated_writers() {
     }
 
     let rejected2 = home.join("rejected2.manifest.json");
-    for (args, tool, reason) in [
+    // A required parameter the schema never defines cannot be built.
+    let incoherent = [demo(), "--broken", "schema"];
+    for (args, server, tool, reason) in [
         (
-            vec!["--confirm-read-only", "--tool", "lookup"],
-            "lookup",
-            "it declares required arguments, so init cannot call it with {}",
+            vec!["--tool", "describe_status"],
+            &incoherent[..],
+            "describe_status",
+            "it declares required arguments its schema cannot build; pass them with --arguments",
         ),
         (
             vec!["--tool", "describe_status"],
+            &ANNOTATED[..],
             "describe_status",
             "it carries no readOnlyHint annotation; pass --confirm-read-only to attest it is read-only",
         ),
     ] {
         let mut args = args;
         args.extend(["--output", rejected2.to_str().unwrap()]);
-        let (output, _) = init(&home, &args, &ANNOTATED);
+        let (output, _) = init(&home, &args, server);
         assert_eq!(output.status.code(), Some(2), "{tool}");
         let stderr = String::from_utf8(output.stderr).unwrap();
         assert!(

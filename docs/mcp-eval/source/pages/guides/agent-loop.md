@@ -50,9 +50,10 @@ before a store is shared. The tool is annotated as a non-idempotent local write.
   verdicts, measurements, and remediation hints. No argument combination
   enables sandboxed or mutating cases.
 - `scaffold` returns the same starter manifest JSON as `mcpeval init` without
-  writing files. Candidates are zero-required tools annotated
-  `readOnlyHint: true`; `confirm_read_only` attests that unannotated
-  zero-required tools are read-only and adds them. Tools annotated
+  writing files. Candidates are tools annotated `readOnlyHint: true`;
+  `confirm_read_only` attests that unannotated tools are read-only and adds
+  them. Tools with required parameters are called with values built from
+  their schema; it takes no arguments file. Tools annotated
   `destructiveHint: true` or `readOnlyHint: false` are never called. See
   [Scaffold a manifest](capture-and-probe.md#scaffold-a-manifest) for the cases
   it writes.

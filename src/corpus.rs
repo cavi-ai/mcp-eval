@@ -295,10 +295,11 @@ mod tests {
     #[test]
     fn readiness_placement_excludes_unknown_and_different_profiles() {
         let mut corpus = corpus(&[10, 50, 90]);
-        let profile = crate::measurement::MeasurementProfile::current(false, &[]);
+        let profile = crate::measurement::MeasurementProfile::current(false, &[], None);
         corpus.observations[0].measurement_profile = Some(profile.clone());
-        corpus.observations[1].measurement_profile =
-            Some(crate::measurement::MeasurementProfile::current(true, &[]));
+        corpus.observations[1].measurement_profile = Some(
+            crate::measurement::MeasurementProfile::current(true, &[], None),
+        );
         assert_eq!(corpus.placement_for(20, None), None);
         assert_eq!(
             corpus.placement_for(20, Some(&profile)),
@@ -451,14 +452,26 @@ mod tests {
     }
 
     #[test]
-    fn repository_corpus_loads_as_checked_in() {
-        let corpus =
-            Corpus::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("data/readiness-corpus.json"))
-                .unwrap();
-        // Historical observations must retain the standard that measured them.
-        assert_eq!(corpus.standard, "mcpeval-standard/1");
-        assert_ne!(corpus.standard, crate::score::STANDARD);
+    fn repository_corpus_is_collected_under_the_shipped_standard() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let corpus = Corpus::load(&root.join("data/readiness-corpus.json")).unwrap();
+        // A standard change recollects the corpus from its pinned targets:
+        // placement compares only scores under one standard.
+        assert_eq!(corpus.standard, crate::score::STANDARD);
+        assert_eq!(corpus.schema, PROVENANCE_SCHEMA);
         assert!(!corpus.observations.is_empty());
+        let document: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(root.join("data/readiness-corpus.json")).unwrap(),
+        )
+        .unwrap();
+        let targets = std::fs::read(root.join("data/corpus-targets.json")).unwrap();
+        let digest: String = <sha2::Sha256 as sha2::Digest>::digest(&targets)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(document["targets_sha256"], digest.as_str());
+        let pinned: serde_json::Value = serde_json::from_slice(&targets).unwrap();
+        assert_eq!(pinned["standard"], crate::score::STANDARD);
     }
 
     #[test]

@@ -30,7 +30,7 @@ fn provenance_corpus_places_only_observed_targets_and_rejects_inconsistent_popul
     // cannot establish a comparable readiness percentile.
     assert!(!String::from_utf8_lossy(&output.stdout).contains("standard corpus"));
     let mut valid: serde_json::Value = serde_json::from_str(fixture).unwrap();
-    let profile = mcpeval::measurement::MeasurementProfile::current(false, &[]);
+    let profile = mcpeval::measurement::MeasurementProfile::current(false, &[], None);
     valid["evaluator"]["version"] = profile.evaluator_version.clone().into();
     valid["observations"][0]["measurement_profile"] = serde_json::to_value(&profile).unwrap();
     std::fs::write(home.join("corpus.json"), valid.to_string()).unwrap();

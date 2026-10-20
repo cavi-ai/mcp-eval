@@ -46,6 +46,25 @@ has_url=false
 
 args=(probe --server "$INPUT_SERVER" --manifest "$manifest" --format json)
 [ "${INPUT_ALLOW_MUTATION:-false}" != true ] || args+=(--allow-mutation)
+
+floors=()
+[ -z "${INPUT_MIN_READINESS:-}" ] || floors+=(--min-readiness "$INPUT_MIN_READINESS")
+area_floors=()
+read -r -d '' -a area_floors <<<"${INPUT_MIN_AREA:-}" || true
+for floor in ${area_floors[@]+"${area_floors[@]}"}; do
+  floors+=(--min-area "$floor")
+done
+exclude_latency=${INPUT_EXCLUDE_LATENCY:-false}
+if [ "$exclude_latency" = true ] && [ "${#floors[@]}" -eq 0 ] && [ -z "${INPUT_MAX_READINESS_DROP:-}" ]; then
+  usage "exclude-latency applies to min-readiness, min-area, or max-readiness-drop"
+fi
+if [ -n "${INPUT_MAX_READINESS_DROP:-}" ] && [ -z "${INPUT_BASELINE:-}" ]; then
+  usage "max-readiness-drop needs a baseline"
+fi
+if [ "${#floors[@]}" -gt 0 ]; then
+  [ "$exclude_latency" != true ] || floors+=(--exclude-latency)
+  args+=("${floors[@]}")
+fi
 if [ "$has_url" = true ]; then
   args+=(--url "$INPUT_URL")
   [ "${INPUT_ALLOW_REMOTE_HTTP:-false}" != true ] || args+=(--allow-remote-http)
@@ -61,10 +80,21 @@ fi
 if [ "${INPUT_SARIF:-false}" = true ] && ! mcpeval report --help 2>&1 | grep -q -- --manifest; then
   usage "$(mcpeval --version) does not support sarif; set the version input to 0.3.0 or later"
 fi
+if [ "${#floors[@]}" -gt 0 ] && ! mcpeval probe --help 2>&1 | grep -q -- --min-readiness; then
+  usage "$(mcpeval --version) does not support readiness floors; set the version input to a release that does"
+fi
+if [ -n "${INPUT_MAX_READINESS_DROP:-}" ] && ! mcpeval diff --help 2>&1 | grep -q -- --max-readiness-drop; then
+  usage "$(mcpeval --version) does not support max-readiness-drop; set the version input to a release that does"
+fi
+if [ "${INPUT_FAIL_ON_BREAKING:-false}" = true ]; then
+  [ -n "${INPUT_BASELINE:-}" ] || usage "fail-on-breaking needs a baseline"
+  mcpeval diff --help 2>&1 | grep -q -- --fail-on-breaking \
+    || usage "$(mcpeval --version) does not support fail-on-breaking; set the version input to a release that does"
+fi
 
 case "$report" in
-  *.json) markdown="${report%.json}.md" ;;
-  *) markdown="$report.md" ;;
+  *.json) markdown="${report%.json}.md" sarif="${report%.json}.sarif" ;;
+  *) markdown="$report.md" sarif="$report.sarif" ;;
 esac
 
 mkdir -p "$(dirname "$report")"
@@ -76,7 +106,7 @@ passed=false
   echo "report=$report"
   echo "exit-code=$code"
   if [ -s "$report" ]; then
-    passed=$(jq -r '.passed' "$report")
+    passed=$(jq -r '.passed and (.readiness_gate.passed != false)' "$report")
     echo "readiness=$(jq -r '.readiness.score' "$report")"
   fi
   echo "passed=$passed"
@@ -92,13 +122,18 @@ diff_code=0
 if [ -n "${INPUT_BASELINE:-}" ] && [ -s "$report" ]; then
   diff_args=(diff "$INPUT_BASELINE" "$report" --format markdown --fail-on-regression)
   [ "${INPUT_FAIL_ON_CHANGE:-false}" != true ] || diff_args+=(--fail-on-change)
+  [ "${INPUT_FAIL_ON_BREAKING:-false}" != true ] || diff_args+=(--fail-on-breaking)
+  if [ -n "${INPUT_MAX_READINESS_DROP:-}" ]; then
+    diff_args+=(--max-readiness-drop "$INPUT_MAX_READINESS_DROP")
+    [ "$exclude_latency" != true ] || diff_args+=(--exclude-latency)
+  fi
   mcpeval "${diff_args[@]}" | tee -a "$markdown" >>"$GITHUB_STEP_SUMMARY" || diff_code=$?
   echo "diff-exit-code=$diff_code" >>"$GITHUB_OUTPUT"
 fi
 
 if [ "${INPUT_SARIF:-false}" = true ] && [ -s "$report" ]; then
-  render --format sarif --manifest "$manifest" >mcpeval.sarif
-  echo "sarif=mcpeval.sarif" >>"$GITHUB_OUTPUT"
+  render --format sarif --manifest "$manifest" >"$sarif"
+  echo "sarif=$sarif" >>"$GITHUB_OUTPUT"
 fi
 
 if [ "$code" -eq 0 ] && [ "$diff_code" -ne 0 ]; then

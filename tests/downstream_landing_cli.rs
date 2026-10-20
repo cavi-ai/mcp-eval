@@ -178,7 +178,8 @@ fn report_rerenders_a_committed_document_without_any_server() {
     assert!(stdout.contains("\ndemo gate 2/2 passed\n"), "{stdout}");
     assert!(stdout.contains("\ndemo readiness "), "{stdout}");
 
-    // SARIF re-render is valid SARIF with zero results.
+    // SARIF re-render is valid SARIF: no case results, and one warning per
+    // lost readiness point.
     let sarif = Command::new(bin())
         .args(["report", baseline.to_str().unwrap(), "--format", "sarif"])
         .env("MCPEVAL_HOME", &dir)
@@ -186,7 +187,19 @@ fn report_rerenders_a_committed_document_without_any_server() {
         .unwrap();
     let sarif: serde_json::Value = serde_json::from_slice(&sarif.stdout).unwrap();
     assert_eq!(sarif["version"], "2.1.0");
-    assert_eq!(sarif["runs"][0]["results"].as_array().unwrap().len(), 0);
+    let results = sarif["runs"][0]["results"].as_array().unwrap();
+    assert!(results.iter().all(|result| {
+        result["level"] == "warning" && result["ruleId"].as_str().unwrap().starts_with("readiness/")
+    }));
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&baseline).unwrap()).unwrap();
+    let lost: usize = document["readiness"]["areas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|area| area["checks"].as_array().unwrap().len())
+        .sum();
+    assert_eq!(results.len(), lost);
 
     // A failing baseline re-renders red and exits non-zero.
     let failing_manifest = write_manifest(

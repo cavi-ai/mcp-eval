@@ -148,6 +148,9 @@ fn render_probe_text(
         }
         (None, None, None) => println!("{server} readiness not measured"),
     }
+    if let Some(gate) = &report.readiness_gate {
+        println!("{server} {}", gate.text());
+    }
     if let Some(corpus) = corpus {
         if let Some(placement) = report
             .readiness
@@ -195,9 +198,34 @@ fn exit_for_report(report: &mcpeval::probe::ProbeReport) {
     if report.errored() {
         std::process::exit(mcpeval::exit::INFRASTRUCTURE);
     }
-    if !report.passed() {
+    if !report.passed() || report.below_floor() {
         std::process::exit(mcpeval::exit::VERDICT);
     }
+}
+
+/// The `--arguments` file, loaded; a malformed file is a usage error.
+fn load_arguments(
+    path: Option<std::path::PathBuf>,
+) -> anyhow::Result<Option<mcpeval::tool_arguments::ToolArguments>> {
+    path.map(|path| mcpeval::tool_arguments::ToolArguments::load(&path))
+        .transpose()
+        .map_err(mcpeval::exit::usage)
+}
+
+/// Floors as declared, rejected when they cannot be compared: a floor needs
+/// the standard battery's readiness.
+fn declared_floors(
+    floors: cli::FloorArgs,
+    standard: bool,
+) -> anyhow::Result<mcpeval::readiness_gate::Floors> {
+    let floors = floors.floors();
+    floors.validate().map_err(mcpeval::exit::usage)?;
+    if !floors.is_empty() && !standard {
+        return Err(mcpeval::exit::usage(anyhow::anyhow!(
+            "a readiness floor needs the standard battery; drop --gate-only and --probe"
+        )));
+    }
+    Ok(floors)
 }
 
 fn run() -> anyhow::Result<()> {
@@ -255,13 +283,17 @@ fn run() -> anyhow::Result<()> {
             gate_only,
             confirm_read_only,
             skip_tools,
+            arguments,
+            floors,
             url,
             allow_remote_http,
             cmd,
         } => {
             let full_battery = selected_probe.is_none();
+            let floors = declared_floors(floors, full_battery && !gate_only)?;
+            let arguments = load_arguments(arguments)?;
             let mut store = mcpeval::store::Store::open(None)?;
-            let report = mcpeval::probe::run(
+            let mut report = mcpeval::probe::run(
                 mcpeval::probe::ProbeOptions {
                     server: server.clone(),
                     manifest_path: manifest.clone(),
@@ -275,9 +307,13 @@ fn run() -> anyhow::Result<()> {
                     standard: !gate_only,
                     confirm_read_only,
                     skip_tools,
+                    arguments,
                 },
                 &mut store,
             )?;
+            if !floors.is_empty() {
+                report.readiness_gate = Some(floors.evaluate(report.readiness.as_ref()));
+            }
             // A trend point is a complete battery: an errored run would
             // record the transport, not the server.
             if full_battery && !report.errored() {
@@ -307,6 +343,9 @@ fn run() -> anyhow::Result<()> {
                 cli::ProbeFormat::Sarif => {
                     println!("{}", render_sarif(&server, &report, &manifest));
                 }
+                cli::ProbeFormat::Junit => {
+                    print!("{}", mcpeval::junit::render_junit(&server, &report));
+                }
                 cli::ProbeFormat::Text => {
                     render_probe_text(&server, &report, brief, corpus.as_ref(), price_per_mtok)
                 }
@@ -320,18 +359,25 @@ fn run() -> anyhow::Result<()> {
             brief,
             confirm_read_only,
             skip_tools,
+            arguments,
+            floors,
             url,
             allow_remote_http,
             cmd,
         } => {
-            let report = mcpeval::probe::score(mcpeval::probe::ScoreOptions {
+            let floors = declared_floors(floors, true)?;
+            let mut report = mcpeval::probe::score(mcpeval::probe::ScoreOptions {
                 server: server.clone(),
                 command: cmd,
                 http_url: url,
                 allow_remote_http,
                 confirm_read_only,
                 skip_tools,
+                arguments: load_arguments(arguments)?,
             })?;
+            if !floors.is_empty() {
+                report.readiness_gate = Some(floors.evaluate(report.readiness.as_ref()));
+            }
             let corpus = mcpeval::corpus::resolve(None, &mcpeval::store::Store::resolve_root(None));
             match format {
                 cli::ScoreFormat::Json => {
@@ -347,6 +393,9 @@ fn run() -> anyhow::Result<()> {
                 cli::ScoreFormat::Text => {
                     render_probe_text(&server, &report, brief, corpus.as_ref(), None)
                 }
+                cli::ScoreFormat::Junit => {
+                    print!("{}", mcpeval::junit::render_junit(&server, &report));
+                }
             }
             exit_for_report(&report);
             Ok(())
@@ -357,6 +406,7 @@ fn run() -> anyhow::Result<()> {
             force,
             confirm_read_only,
             tools,
+            arguments,
             dry_run,
             url,
             allow_remote_http,
@@ -368,6 +418,7 @@ fn run() -> anyhow::Result<()> {
                 force,
                 confirm_read_only,
                 tools,
+                arguments: load_arguments(arguments)?,
                 command: cmd,
                 http_url: url,
                 allow_remote_http,
@@ -397,6 +448,9 @@ fn run() -> anyhow::Result<()> {
                 summary.case_count,
                 kinds.join(", ")
             );
+            for (tool, reason) in &summary.skipped {
+                println!("  skipped {tool}: {reason}");
+            }
             println!(
                 "next: review budgets; add error-honesty, state-recovery, and instruction-fidelity \
                  cases (they need expected inputs) and cancellation, sampling, elicitation, \
@@ -530,6 +584,9 @@ fn run() -> anyhow::Result<()> {
             current,
             fail_on_regression,
             fail_on_change,
+            fail_on_breaking,
+            max_readiness_drop,
+            exclude_latency,
             format,
         } => {
             let baseline_document = mcpeval::diff::load_document(&baseline)
@@ -540,7 +597,28 @@ fn run() -> anyhow::Result<()> {
                 .map_err(mcpeval::exit::usage)?;
             mcpeval::diff::ensure_same_server(&baseline_document, &current_document)
                 .map_err(mcpeval::exit::usage)?;
-            let outcome = mcpeval::diff::diff(&baseline_document.report, &current_document.report);
+            let mut outcome =
+                mcpeval::diff::diff(&baseline_document.report, &current_document.report);
+            if let Some(max_drop) = max_readiness_drop {
+                outcome
+                    .gate_readiness_drop(max_drop, exclude_latency)
+                    .map_err(mcpeval::exit::usage)?;
+            }
+            let dropped = outcome
+                .readiness_gate
+                .as_ref()
+                .is_some_and(|gate| !gate.passed());
+            let breaking = if fail_on_breaking {
+                outcome
+                    .catalog_changes(mcpeval::catalog_contract::Severity::Breaking)
+                    .context(
+                        "a document carries no catalog contract; regenerate it with this mcpeval",
+                    )
+                    .map_err(mcpeval::exit::usage)?
+                    > 0
+            } else {
+                false
+            };
             match format {
                 cli::DiffFormat::Json => {
                     println!(
@@ -555,7 +633,10 @@ fn run() -> anyhow::Result<()> {
                     print!("{}", mcpeval::diff::render(&outcome));
                 }
             }
-            if (fail_on_regression && outcome.gated()) || (fail_on_change && outcome.changed() > 0)
+            if (fail_on_regression && outcome.gated())
+                || (fail_on_change && outcome.changed() > 0)
+                || dropped
+                || breaking
             {
                 std::process::exit(mcpeval::exit::VERDICT);
             }
@@ -618,6 +699,9 @@ fn run() -> anyhow::Result<()> {
                 ),
                 cli::ReportFormat::Sarif => {
                     println!("{}", render_sarif(&server, &report, &manifest));
+                }
+                cli::ReportFormat::Junit => {
+                    print!("{}", mcpeval::junit::render_junit(&server, &report));
                 }
             }
             exit_for_report(&report);

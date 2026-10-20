@@ -5,11 +5,11 @@ before using its verdict in CI. New collections use
 `mcpeval.readiness-corpus/v3` and record every target as observed, untested, or
 errored.
 
-- The shipped standard/1 snapshot lacks the provenance required for replay;
-  collecting today cannot recover its original execution inputs.
+- The shipped corpus is a v3 collection from `data/corpus-targets.json`: the
+  servers, labels, and arguments of the earlier collection script, each pinned
+  to the package version current when it was collected.
 - Historical `mcpeval.readiness-corpus/v2` data stays readable, but replay
   refuses it as a pinned collection.
-- No target list or package version is inferred from historical observations.
 
 Collection, replay, and offline checking are repository scripts. Run them from
 a reviewed checkout containing `scripts/corpus`; installing the CLI alone does

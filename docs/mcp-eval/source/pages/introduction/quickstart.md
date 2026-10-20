@@ -9,7 +9,7 @@ mcpeval probe --server demo \
   --manifest demo.manifest.json -- mcpeval-demo
 ```
 
-`init` writes every probe kind that needs no domain input: catalog budgets, pagination, protocol negotiation, and surface listing, plus per-tool cases for each candidate that answers a naive `{}` call. Candidates are tools annotated `readOnlyHint: true` and, after the read-only attestation, unannotated tools. Tools annotated `destructiveHint: true` or `readOnlyHint: false` are never called, and `--dry-run` lists each tool's decision without calling it. See [Scaffold a manifest](../guides/capture-and-probe.md#scaffold-a-manifest) for every case it writes.
+`init` writes every probe kind that needs no domain input: catalog budgets, pagination, protocol negotiation, and surface listing, plus per-tool cases for each candidate whose call succeeds, with `{}` or values built from its schema, and names every tool it left out. Candidates are tools annotated `readOnlyHint: true` and, after the read-only attestation, unannotated tools. Tools annotated `destructiveHint: true` or `readOnlyHint: false` are never called, and `--dry-run` lists each tool's decision without calling it. See [Scaffold a manifest](../guides/capture-and-probe.md#scaffold-a-manifest) for every case it writes.
 
 On the clean demo the gate passes 25/25 and readiness scores 91/100 under mcpeval's standard, with each area's score and every lost point. Flip one flag to watch a fixed failure reason appear:
 

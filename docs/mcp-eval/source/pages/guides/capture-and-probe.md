@@ -152,12 +152,17 @@ input. Server-level cases come first:
 - `protocol-negotiation`;
 - `surface-listing` when `initialize` declares `resources` or `prompts`.
 
-Candidates are zero-required tools annotated `readOnlyHint: true`. With
+Candidates are tools annotated `readOnlyHint: true`. With
 `--confirm-read-only`, an operator attestation that unannotated tools are
-read-only, unannotated zero-required tools are candidates too. A tool annotated
+read-only, unannotated tools are candidates too. A tool annotated
 `destructiveHint: true` or `readOnlyHint: false` is never called.
 
-`init` calls up to 20 candidates with `{}`. Each one that succeeds gets:
+`init` calls up to 20 candidates, each with its entry in `--arguments` when
+there is one, else `{}` when it declares no required parameter, else values
+built from its input schema the way the standard battery builds them. A tool
+whose required parameters no schema rule can build is not a candidate. Each
+candidate whose call succeeds gets these cases, with the arguments it was
+called with:
 
 - `schema-guessability`;
 - `degradation-over-n` with 5 attempts;
@@ -169,9 +174,23 @@ The first such tool also gets `contention`. One gets `payload-bounds`: a 1 MB
 string in its first string property, else in a `payload` field. A clean
 rejection passes.
 
+After the summary line, `init` names every tool left without cases and why: an
+annotation, a missing attestation, required parameters it cannot build, or a
+call that failed with the arguments it tried. A tool whose working inputs no
+schema implies, such as a path inside a root or an existing record ID, needs
+an `--arguments` file:
+
+```json
+{"read_file": {"path": "/srv/data/readme.txt"}, "get_record": {"id": "rec-1"}}
+```
+
+Each entry must name a tool the server lists and `init` may call, and satisfy
+its input schema; the values are written into that tool's cases. `score` and
+`probe` take the same file for the standard battery.
+
 `--tool <NAME>` (repeatable) restricts the candidates. A name the catalog
-lacks, or one `init` cannot call (a writer, required arguments, or unattested),
-is a usage error (exit 2).
+lacks, or one `init` cannot call (a writer, required arguments it cannot
+build, or unattested), is a usage error (exit 2).
 
 `--dry-run` stops after `initialize` and `tools/list`, calls no tool, writes no
 file, and skips the `--output` existence check. It prints one decision per tool:

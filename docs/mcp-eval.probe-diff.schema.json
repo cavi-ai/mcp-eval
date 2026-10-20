@@ -87,6 +87,114 @@
         }
       }
     },
+    "readiness_gate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "max_drop",
+            "exclude_latency",
+            "drop",
+            "passed"
+          ],
+          "properties": {
+            "max_drop": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "exclude_latency": {
+              "type": "boolean",
+              "description": "Both sides compared their score_without_latency."
+            },
+            "drop": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Points lost since the baseline; 0 when readiness held or rose."
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The --max-readiness-drop gate; null when none was declared."
+    },
+    "catalog": {
+      "type": "object",
+      "required": [
+        "comparable",
+        "changes"
+      ],
+      "properties": {
+        "comparable": {
+          "type": "boolean",
+          "description": "Both documents carry a catalog contract."
+        },
+        "changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "tool",
+              "change",
+              "severity",
+              "count"
+            ],
+            "properties": {
+              "tool": {
+                "type": "string"
+              },
+              "change": {
+                "enum": [
+                  "tool-removed",
+                  "tool-added",
+                  "parameter-required",
+                  "parameter-optional",
+                  "parameter-removed",
+                  "parameter-added",
+                  "parameter-changed",
+                  "class-changed",
+                  "output-schema-removed",
+                  "output-schema-added",
+                  "output-schema-changed"
+                ]
+              },
+              "severity": {
+                "enum": [
+                  "breaking",
+                  "review",
+                  "compatible"
+                ]
+              },
+              "count": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "from": {
+                "enum": [
+                  "read-only",
+                  "writer",
+                  "unannotated"
+                ]
+              },
+              "to": {
+                "enum": [
+                  "read-only",
+                  "writer",
+                  "unannotated"
+                ]
+              }
+            }
+          }
+        }
+      },
+      "description": "Catalog contract changes, breaking first."
+    },
     "summary": {
       "type": "object",
       "required": [
@@ -337,6 +445,11 @@
         "repeats": {
           "type": "integer",
           "minimum": 1
+        },
+        "arguments_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the --arguments file the standard battery called tools with; absent without one."
         }
       }
     }

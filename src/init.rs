@@ -17,6 +17,7 @@ use crate::manifest::ProbeKind;
 use crate::mcp_client::{McpClient, ToolCatalog, ToolDefinition};
 use crate::privacy;
 use crate::probe::estimate_tokens;
+use crate::tool_arguments::ToolArguments;
 
 const MAX_VERIFIED_TOOLS: usize = 20;
 const PAYLOAD_SIZE_BYTES: u64 = 1_000_000;
@@ -28,6 +29,8 @@ pub struct InitOptions {
     pub confirm_read_only: bool,
     /// Restrict candidates to these tools; empty selects every tool.
     pub tools: Vec<String>,
+    /// Arguments to call named tools with (`--arguments`).
+    pub arguments: Option<ToolArguments>,
     pub command: Vec<String>,
     pub http_url: Option<String>,
     pub allow_remote_http: bool,
@@ -41,6 +44,9 @@ pub struct InitSummary {
     pub kind_counts: Vec<(ProbeKind, usize)>,
     /// Tools never called because the server annotates them as writers.
     pub skipped_by_annotations: usize,
+    /// Every catalog tool without cases, and why, in catalog order; tools
+    /// left out by `--tool` are not listed.
+    pub skipped: Vec<(String, String)>,
 }
 
 /// Whether `init` calls and scaffolds a catalog tool, and why.
@@ -65,6 +71,20 @@ impl Decision {
             Self::NotReadOnly => "skipped: readOnlyHint=false",
             Self::RequiredArguments => "skipped: required arguments",
             Self::NotSelected => "skipped: not in --tool",
+        }
+    }
+
+    /// Why a tool that is not a candidate gets no cases.
+    fn reason(self) -> &'static str {
+        match self {
+            Self::ReadOnlyHint | Self::Attested => "a candidate",
+            Self::NeedsAttestation => "no readOnlyHint; pass --confirm-read-only to attest it",
+            Self::DestructiveHint => "destructiveHint",
+            Self::NotReadOnly => "readOnlyHint=false",
+            Self::RequiredArguments => {
+                "required arguments its schema cannot build; pass them with --arguments"
+            }
+            Self::NotSelected => "not in --tool",
         }
     }
 
@@ -127,11 +147,11 @@ impl InitClient {
     /// Read-only smoke call used to verify a candidate case can actually
     /// succeed before it is written into the manifest. Returns the call's
     /// latency in milliseconds when it succeeded.
-    fn naive_call(&mut self, tool: &str) -> anyhow::Result<Option<u64>> {
+    fn smoke_call(&mut self, tool: &str, arguments: &Value) -> anyhow::Result<Option<u64>> {
         let started = Instant::now();
         let response = match self {
-            Self::Stdio(client) => client.call_tool(tool, &serde_json::json!({})),
-            Self::Http(client) => client.call_tool(tool, &serde_json::json!({})),
+            Self::Stdio(client) => client.call_tool(tool, arguments),
+            Self::Http(client) => client.call_tool(tool, arguments),
         }?;
         let latency_ms = started.elapsed().as_millis() as u64;
         Ok(matches!(response, crate::mcp_client::ToolResponse::Success(_)).then_some(latency_ms))
@@ -174,16 +194,46 @@ fn round_up_to(value: u64, step: u64) -> u64 {
     value.div_ceil(step) * step
 }
 
+/// Where the arguments a tool is called with came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Source {
+    /// `{}` for a tool with no required parameters.
+    Empty,
+    Supplied,
+    Synthesized,
+}
+
+/// The arguments `init` calls a tool with: `--arguments` first, `{}` for a
+/// tool with no required parameters, else values built from its schema.
+fn call_arguments(
+    tool: &ToolDefinition,
+    supplied: Option<&ToolArguments>,
+) -> Option<(Value, Source)> {
+    if let Some(arguments) = supplied.and_then(|supplied| supplied.get(&tool.name)) {
+        return Some((arguments.clone(), Source::Supplied));
+    }
+    if zero_required(&tool.input_schema) {
+        return Some((Value::Object(serde_json::Map::new()), Source::Empty));
+    }
+    crate::standard::synthesize(&tool.input_schema)
+        .map(|arguments| (arguments, Source::Synthesized))
+}
+
 /// Annotations outrank the attestation: a tool the server marks
 /// destructive or not read-only is never called.
-fn decide(tool: &ToolDefinition, confirm_read_only: bool, selected: &[String]) -> Decision {
+fn decide(
+    tool: &ToolDefinition,
+    confirm_read_only: bool,
+    selected: &[String],
+    supplied: Option<&ToolArguments>,
+) -> Decision {
     if !selected.is_empty() && !selected.contains(&tool.name) {
         Decision::NotSelected
     } else if tool.destructive_hint == Some(true) {
         Decision::DestructiveHint
     } else if tool.read_only_hint == Some(false) {
         Decision::NotReadOnly
-    } else if !zero_required(&tool.input_schema) {
+    } else if call_arguments(tool, supplied).is_none() {
         Decision::RequiredArguments
     } else if tool.read_only_hint == Some(true) {
         Decision::ReadOnlyHint
@@ -201,11 +251,17 @@ fn decisions(
     catalog: &ToolCatalog,
     confirm_read_only: bool,
     selected: &[String],
+    supplied: Option<&ToolArguments>,
 ) -> anyhow::Result<Vec<Decision>> {
+    if let Some(supplied) = supplied {
+        supplied
+            .validate(catalog, confirm_read_only)
+            .map_err(crate::exit::usage)?;
+    }
     for name in selected {
         let reason = match catalog.tools.iter().find(|tool| &tool.name == name) {
             None => "not in the server's tool catalog",
-            Some(tool) => match decide(tool, confirm_read_only, selected) {
+            Some(tool) => match decide(tool, confirm_read_only, selected, supplied) {
                 Decision::DestructiveHint => {
                     "the server annotates it destructiveHint, so init never calls it"
                 }
@@ -213,7 +269,8 @@ fn decisions(
                     "the server annotates it readOnlyHint=false, so init never calls it"
                 }
                 Decision::RequiredArguments => {
-                    "it declares required arguments, so init cannot call it with {}"
+                    "it declares required arguments its schema cannot build; pass them with \
+                     --arguments"
                 }
                 Decision::NeedsAttestation => {
                     "it carries no readOnlyHint annotation; pass --confirm-read-only to attest \
@@ -229,16 +286,18 @@ fn decisions(
     Ok(catalog
         .tools
         .iter()
-        .map(|tool| decide(tool, confirm_read_only, selected))
+        .map(|tool| decide(tool, confirm_read_only, selected, supplied))
         .collect())
 }
 
+/// The manifest, and each candidate left without cases with the reason.
 fn scaffold(
     client: &mut InitClient,
     catalog: &ToolCatalog,
     decisions: &[Decision],
+    supplied: Option<&ToolArguments>,
     budget: &crate::evaluation_budget::Budget,
-) -> anyhow::Result<crate::manifest::Manifest> {
+) -> anyhow::Result<(crate::manifest::Manifest, Vec<(String, String)>)> {
     budget.check()?;
     use crate::manifest::{Access, Manifest, ProbeCase};
     let tool_count = catalog.tools.len() as u64;
@@ -291,23 +350,40 @@ fn scaffold(
         });
     }
 
-    let empty = || Value::Object(serde_json::Map::new());
-    let mut verified: Vec<&ToolDefinition> = Vec::new();
+    let mut verified: Vec<(&ToolDefinition, Value)> = Vec::new();
+    let mut skipped = Vec::new();
     for (tool, decision) in catalog.tools.iter().zip(decisions) {
         budget.check()?;
-        if verified.len() >= MAX_VERIFIED_TOOLS {
-            break;
-        }
         if !decision.is_candidate() {
             continue;
         }
+        if verified.len() >= MAX_VERIFIED_TOOLS {
+            skipped.push((
+                tool.name.clone(),
+                format!(
+                    "init scaffolds at most {MAX_VERIFIED_TOOLS} tools; select others with --tool"
+                ),
+            ));
+            continue;
+        }
+        let (arguments, source) =
+            call_arguments(tool, supplied).expect("a candidate has call arguments");
         // The server annotated the candidate read-only or the operator
         // attested it. Only declare calls that were just observed to
-        // accept naive `{}`.
-        let Ok(Some(latency_ms)) = client.naive_call(&tool.name) else {
+        // succeed with these arguments.
+        let Ok(Some(latency_ms)) = client.smoke_call(&tool.name, &arguments) else {
+            let reason = match source {
+                Source::Empty => "the call with {} failed",
+                Source::Supplied => "the call with its --arguments failed",
+                Source::Synthesized => {
+                    "the call with arguments built from its schema failed; pass working ones with \
+                     --arguments"
+                }
+            };
+            skipped.push((tool.name.clone(), reason.to_owned()));
             continue;
         };
-        verified.push(tool);
+        verified.push((tool, arguments.clone()));
         let ordinal = verified.len();
         probes.push(ProbeCase::SchemaGuessability {
             id: case_id(
@@ -319,14 +395,14 @@ fn scaffold(
             tool: tool.name.clone(),
             access: Access::ReadOnly,
             sandbox: None,
-            arguments: empty(),
+            arguments: arguments.clone(),
         });
         probes.push(ProbeCase::DegradationOverN {
             id: case_id(&tool.name, "repeat", ProbeKind::DegradationOverN, ordinal),
             tool: tool.name.clone(),
             access: Access::ReadOnly,
             sandbox: None,
-            arguments: empty(),
+            arguments: arguments.clone(),
             max_attempts: 5,
         });
         probes.push(ProbeCase::LatencyBudget {
@@ -334,7 +410,7 @@ fn scaffold(
             tool: tool.name.clone(),
             access: Access::ReadOnly,
             sandbox: None,
-            arguments: empty(),
+            arguments: arguments.clone(),
             attempts: 3,
             max_latency_ms: round_up_to(latency_ms * 4, 100).clamp(1000, 60_000),
         });
@@ -344,28 +420,28 @@ fn scaffold(
                 tool: tool.name.clone(),
                 access: Access::ReadOnly,
                 sandbox: None,
-                arguments: empty(),
+                arguments,
             });
         }
     }
-    if let Some(representative) = verified.first() {
+    if let Some((representative, representative_arguments)) = verified.first() {
         probes.push(ProbeCase::Contention {
             id: case_id(&representative.name, "contention", ProbeKind::Contention, 1),
             tool: representative.name.clone(),
             access: Access::ReadOnly,
             sandbox: None,
-            arguments: empty(),
+            arguments: representative_arguments.clone(),
         });
-        let (payload_tool, field) = verified
+        let (payload_tool, payload_arguments, field) = verified
             .iter()
-            .find_map(|tool| string_field(tool).map(|field| (*tool, field)))
-            .unwrap_or((representative, "payload"));
+            .find_map(|(tool, arguments)| string_field(tool).map(|field| (*tool, arguments, field)))
+            .unwrap_or((representative, representative_arguments, "payload"));
         probes.push(ProbeCase::PayloadBounds {
             id: case_id(&payload_tool.name, "payload", ProbeKind::PayloadBounds, 1),
             tool: payload_tool.name.clone(),
             access: Access::ReadOnly,
             sandbox: None,
-            arguments: empty(),
+            arguments: payload_arguments.clone(),
             field: field.to_owned(),
             size_bytes: PAYLOAD_SIZE_BYTES,
             expect_handled: false,
@@ -380,7 +456,7 @@ fn scaffold(
     };
     manifest.validate()?;
     budget.check()?;
-    Ok(manifest)
+    Ok((manifest, skipped))
 }
 
 /// Connect, handshake, and list the catalog every scaffolding path starts
@@ -406,7 +482,12 @@ fn open(
 /// tool and touches no file.
 pub fn dry_run(options: &InitOptions) -> anyhow::Result<Vec<(String, Decision)>> {
     let (_, catalog, budget) = open(options)?;
-    let decisions = decisions(&catalog, options.confirm_read_only, &options.tools)?;
+    let decisions = decisions(
+        &catalog,
+        options.confirm_read_only,
+        &options.tools,
+        options.arguments.as_ref(),
+    )?;
     budget.check()?;
     Ok(catalog
         .tools
@@ -419,9 +500,15 @@ pub fn dry_run(options: &InitOptions) -> anyhow::Result<Vec<(String, Decision)>>
 pub fn run(options: InitOptions) -> anyhow::Result<InitSummary> {
     write_guarded(&options.output, options.force)?;
     let (mut client, catalog, budget) = open(&options)?;
-    let decisions = decisions(&catalog, options.confirm_read_only, &options.tools)?;
+    let supplied = options.arguments.as_ref();
+    let decisions = decisions(
+        &catalog,
+        options.confirm_read_only,
+        &options.tools,
+        supplied,
+    )?;
     let tool_count = catalog.tools.len() as u64;
-    let manifest = scaffold(&mut client, &catalog, &decisions, &budget)?;
+    let (manifest, failed) = scaffold(&mut client, &catalog, &decisions, supplied, &budget)?;
     let body = serde_json::to_string_pretty(&manifest).context("serializing manifest")?;
     std::fs::write(&options.output, body + "\n").context("writing manifest")?;
     let mut kind_counts: Vec<(ProbeKind, usize)> = Vec::new();
@@ -443,6 +530,20 @@ pub fn run(options: InitOptions) -> anyhow::Result<InitSummary> {
             .iter()
             .filter(|decision| decision.by_annotations())
             .count(),
+        skipped: catalog
+            .tools
+            .iter()
+            .zip(&decisions)
+            .filter_map(|(tool, decision)| {
+                if *decision == Decision::NotSelected {
+                    None
+                } else if decision.is_candidate() {
+                    failed.iter().find(|(name, _)| *name == tool.name).cloned()
+                } else {
+                    Some((tool.name.clone(), decision.reason().to_owned()))
+                }
+            })
+            .collect(),
     })
 }
 
@@ -465,12 +566,13 @@ pub fn probe_scaffold(request: ScaffoldRequest) -> anyhow::Result<crate::manifes
         force: false,
         confirm_read_only: request.confirm_read_only,
         tools: Vec::new(),
+        arguments: None,
         command: request.command,
         http_url: request.http_url,
         allow_remote_http: request.allow_remote_http,
     })?;
-    let decisions = decisions(&catalog, request.confirm_read_only, &[])?;
-    scaffold(&mut client, &catalog, &decisions, &budget)
+    let decisions = decisions(&catalog, request.confirm_read_only, &[], None)?;
+    Ok(scaffold(&mut client, &catalog, &decisions, None, &budget)?.0)
 }
 
 fn write_guarded(path: &Path, force: bool) -> anyhow::Result<()> {
@@ -495,6 +597,7 @@ mod tests {
             force: false,
             confirm_read_only: true,
             tools: vec![],
+            arguments: None,
             command: vec![
                 "python3".into(),
                 concat!(
@@ -513,8 +616,8 @@ mod tests {
         let mut client = InitClient::connect(&options, &budget).unwrap();
         client.initialize().unwrap();
         let catalog = client.catalog().unwrap();
-        let decisions = decisions(&catalog, true, &[]).unwrap();
-        let error = scaffold(&mut client, &catalog, &decisions, &budget).unwrap_err();
+        let decisions = decisions(&catalog, true, &[], None).unwrap();
+        let error = scaffold(&mut client, &catalog, &decisions, None, &budget).unwrap_err();
         assert!(error
             .downcast_ref::<crate::evaluation_budget::Exhausted>()
             .is_some());

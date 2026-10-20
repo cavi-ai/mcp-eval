@@ -102,6 +102,7 @@ pub fn run(mut options: VerifyOptions, store: &mut Store) -> anyhow::Result<Veri
             standard: false,
             confirm_read_only: false,
             skip_tools: Vec::new(),
+            arguments: None,
         },
         store,
     )?;

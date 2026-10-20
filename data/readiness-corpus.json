@@ -1,442 +1,634 @@
 {
-  "schema": "mcpeval.readiness-corpus/v2",
-  "source": "mcpeval standard battery over popular public MCP servers, collected via scripts/corpus/collect.sh; servers requiring live credentials or services run without them",
-  "standard": "mcpeval-standard/1",
+  "schema": "mcpeval.readiness-corpus/v3",
+  "source": "Pinned package targets with declared prerequisites; collected by scripts/corpus/collect.mjs",
+  "standard": "mcpeval-standard/2",
   "platform": "darwin",
-  "observations": [
+  "evaluator": {
+    "version": "0.7.1",
+    "sha256": "60ab75ebaaadb589894f17548217de286d40cf0f503b3636212204040a1b83df"
+  },
+  "targets_sha256": "138951ec61dff3857643477299973d607f20313d85eaf7c6ad720ed6cd6c750b",
+  "population": [
     {
-      "server": "postgres",
-      "score": 31,
-      "areas": {
-        "protocol": 83,
-        "catalog": 20,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 1,
-      "catalog_tokens": 33
+      "server": "everything",
+      "status": "observed"
     },
     {
-      "server": "mermaid",
-      "score": 35,
-      "areas": {
-        "protocol": 100,
-        "catalog": 23,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 4,
-      "catalog_tokens": 411
+      "server": "memory",
+      "status": "observed"
     },
     {
-      "server": "ollama",
-      "score": 35,
-      "areas": {
-        "protocol": 100,
-        "catalog": 24,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 9,
-      "catalog_tokens": 775
+      "server": "filesystem",
+      "status": "observed"
     },
     {
-      "server": "todoist",
-      "score": 36,
-      "areas": {
-        "protocol": 100,
-        "catalog": 28,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 5,
-      "catalog_tokens": 408
-    },
-    {
-      "server": "github",
-      "score": 37,
-      "areas": {
-        "protocol": 100,
-        "catalog": 48,
-        "context": 83,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 26,
-      "catalog_tokens": 3967
-    },
-    {
-      "server": "playwright",
-      "score": 37,
-      "areas": {
-        "protocol": 100,
-        "catalog": 47,
-        "context": 86,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 33,
-      "catalog_tokens": 3467
-    },
-    {
-      "server": "sqlite-npx",
-      "score": 38,
-      "areas": {
-        "protocol": 100,
-        "catalog": 38,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 8,
-      "catalog_tokens": 775
-    },
-    {
-      "server": "wikipedia-npm",
-      "score": 38,
-      "areas": {
-        "protocol": 100,
-        "catalog": 40,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 2,
-      "catalog_tokens": 141
-    },
-    {
-      "server": "calculator",
-      "score": 39,
-      "areas": {
-        "protocol": 80,
-        "catalog": 60,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 1,
-      "catalog_tokens": 123
-    },
-    {
-      "server": "docker-mcp",
-      "score": 39,
-      "areas": {
-        "protocol": 100,
-        "catalog": 46,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 10,
-      "catalog_tokens": 906
-    },
-    {
-      "server": "fetch",
-      "score": 39,
-      "areas": {
-        "protocol": 83,
-        "catalog": 60,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 1,
-      "catalog_tokens": 276
-    },
-    {
-      "server": "sqlite",
-      "score": 39,
-      "areas": {
-        "protocol": 100,
-        "catalog": 46,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 10,
-      "catalog_tokens": 1186
-    },
-    {
-      "server": "pandoc",
-      "score": 40,
-      "areas": {
-        "protocol": 100,
-        "catalog": 60,
-        "context": 88,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 1,
-      "catalog_tokens": 1507
+      "server": "sequential-thinking",
+      "status": "untested",
+      "reason": "no-tool-calls"
     },
     {
       "server": "puppeteer",
-      "score": 40,
-      "areas": {
-        "protocol": 100,
-        "catalog": 49,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 7,
-      "catalog_tokens": 614
+      "status": "untested",
+      "reason": "no-tool-calls"
     },
     {
-      "server": "browserbase",
-      "score": 41,
-      "areas": {
-        "protocol": 100,
-        "catalog": 54,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 9,
-      "catalog_tokens": 1334
-    },
-    {
-      "server": "tavily",
-      "score": 41,
-      "areas": {
-        "protocol": 100,
-        "catalog": 60,
-        "context": 96,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 5,
-      "catalog_tokens": 1923
-    },
-    {
-      "server": "airbnb",
-      "score": 42,
-      "areas": {
-        "protocol": 100,
-        "catalog": 60,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 2,
-      "catalog_tokens": 538
-    },
-    {
-      "server": "docker",
-      "score": 42,
-      "areas": {
-        "protocol": 100,
-        "catalog": 60,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 1,
-      "catalog_tokens": 93
-    },
-    {
-      "server": "markitdown",
-      "score": 42,
-      "areas": {
-        "protocol": 100,
-        "catalog": 60,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 1,
-      "catalog_tokens": 105
-    },
-    {
-      "server": "terraform",
-      "score": 42,
-      "areas": {
-        "protocol": 100,
-        "catalog": 60,
-        "context": 100,
-        "error-honesty": 0,
-        "reliability": 0,
-        "coverage": 0
-      },
-      "tool_count": 10,
-      "catalog_tokens": 1618
+      "server": "github",
+      "status": "untested",
+      "reason": "no-tool-calls"
     },
     {
       "server": "notion",
-      "score": 65,
-      "areas": {
-        "protocol": 100,
-        "catalog": 64,
-        "context": 32,
-        "error-honesty": 0,
-        "reliability": 89,
-        "coverage": 100
-      },
-      "tool_count": 24,
-      "catalog_tokens": 19057
+      "status": "observed"
+    },
+    {
+      "server": "todoist",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "desktop-commander",
+      "status": "observed"
+    },
+    {
+      "server": "context7",
+      "status": "observed"
+    },
+    {
+      "server": "browserbase",
+      "status": "untested",
+      "reason": "no-tool-calls"
     },
     {
       "server": "kubernetes",
-      "score": 73,
+      "status": "observed"
+    },
+    {
+      "server": "playwright",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "postgres",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "airbnb",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "sqlite",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "sqlite-npx",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "docker",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "docker-mcp",
+      "status": "errored",
+      "reason": "evaluation-failed"
+    },
+    {
+      "server": "mermaid",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "terraform",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "tavily",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "ollama",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "calculator",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "wikipedia-npm",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "searxng",
+      "status": "observed"
+    },
+    {
+      "server": "fetch",
+      "status": "observed"
+    },
+    {
+      "server": "time",
+      "status": "observed"
+    },
+    {
+      "server": "markitdown",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "mcp-atlassian",
+      "status": "untested",
+      "reason": "no-tools"
+    },
+    {
+      "server": "pandoc",
+      "status": "untested",
+      "reason": "no-tool-calls"
+    },
+    {
+      "server": "git",
+      "status": "observed"
+    },
+    {
+      "server": "arxiv",
+      "status": "observed"
+    },
+    {
+      "server": "wikipedia-uvx",
+      "status": "observed"
+    }
+  ],
+  "observations": [
+    {
+      "server": "kubernetes",
+      "score": 52,
       "areas": {
         "protocol": 100,
         "catalog": 62,
         "context": 65,
         "error-honesty": 33,
-        "reliability": 100,
-        "coverage": 70
+        "reliability": 33,
+        "coverage": 20
       },
       "tool_count": 23,
-      "catalog_tokens": 5965
-    },
-    {
-      "server": "desktop-commander",
-      "score": 77,
-      "areas": {
-        "protocol": 100,
-        "catalog": 63,
-        "context": 36,
-        "error-honesty": 64,
-        "reliability": 99,
-        "coverage": 100
+      "catalog_tokens": 5965,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
       },
-      "tool_count": 26,
-      "catalog_tokens": 14361
+      "calls": {
+        "successful_calls": 6,
+        "tool_errors": 3,
+        "rpc_errors": 12,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 3
+      },
+      "provenance": {
+        "runtime": "npm",
+        "package": "mcp-server-kubernetes",
+        "version": "4.1.9",
+        "bin": "mcp-server-kubernetes",
+        "launch_sha256": "0b3efe03ddc9879c99d4a228ba4e29d49471e95b41c0676f536c46b08ddad1ed",
+        "report_sha256": "f79fd633621dbe26b31e0cbda3d8795fc2ac3890d71a8aea606ce0471ddcad65",
+        "prerequisites": []
+      }
     },
     {
       "server": "git",
-      "score": 87,
+      "score": 56,
       "areas": {
-        "protocol": 80,
-        "catalog": 52,
+        "protocol": 100,
+        "catalog": 54,
         "context": 100,
         "error-honesty": 100,
-        "reliability": 100,
-        "coverage": 100
+        "reliability": 0,
+        "coverage": 0
       },
       "tool_count": 12,
-      "catalog_tokens": 1479
+      "catalog_tokens": 1515,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 0,
+        "tool_errors": 21,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "uvx",
+        "package": "mcp-server-git",
+        "version": "2026.10.19",
+        "bin": "mcp-server-git",
+        "launch_sha256": "26014fa25dc81170cc2e0561d838f86344281e29ea66e6c5421b137d89246737",
+        "report_sha256": "7693eee68f68540fa634bf4990b0b751ddeb0c04a252478bfcd136d66843756d",
+        "prerequisites": []
+      }
+    },
+    {
+      "server": "time",
+      "score": 61,
+      "areas": {
+        "protocol": 100,
+        "catalog": 80,
+        "context": 100,
+        "error-honesty": 100,
+        "reliability": 0,
+        "coverage": 0
+      },
+      "tool_count": 2,
+      "catalog_tokens": 575,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 0,
+        "tool_errors": 6,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "uvx",
+        "package": "mcp-server-time",
+        "version": "2026.10.19",
+        "bin": "mcp-server-time",
+        "launch_sha256": "6754440fafb54a0341cf81ac509fcc4eb2cecebf343b7f867cc131abe4fc8997",
+        "report_sha256": "91e7b90e62fadb6705f74903c25a5baa8ed044c807100d9e3fce6f383e05c111",
+        "prerequisites": []
+      }
+    },
+    {
+      "server": "desktop-commander",
+      "score": 65,
+      "areas": {
+        "protocol": 100,
+        "catalog": 64,
+        "context": 39,
+        "error-honesty": 62,
+        "reliability": 66,
+        "coverage": 62
+      },
+      "tool_count": 25,
+      "catalog_tokens": 13341,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 24,
+        "tool_errors": 15,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "npm",
+        "package": "@wonderwhy-er/desktop-commander",
+        "version": "0.3.0",
+        "bin": "desktop-commander",
+        "launch_sha256": "59f20fde4498fd892b2f61905d97bd401aa111d1d7312986f01499d348ac55c9",
+        "report_sha256": "67d60e23dc1c0217f839c3be9cf9c319647f0e5ae374dd40388a51e43ad65838",
+        "prerequisites": []
+      }
     },
     {
       "server": "arxiv",
-      "score": 89,
+      "score": 66,
       "areas": {
         "protocol": 83,
         "catalog": 76,
         "context": 80,
         "error-honesty": 100,
-        "reliability": 97,
-        "coverage": 100
+        "reliability": 35,
+        "coverage": 27
       },
       "tool_count": 19,
-      "catalog_tokens": 4463
+      "catalog_tokens": 4463,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 9,
+        "tool_errors": 24,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "uvx",
+        "package": "arxiv-mcp-server",
+        "version": "0.8.2",
+        "bin": "arxiv-mcp-server",
+        "launch_sha256": "0cda9ec3f859370a0fb79bbf3d1e307a3029d56cebc884f712e71165cab498d2",
+        "report_sha256": "9907da8ebdb66976dace594489a92be7f7a7cf45d520f2f303d44f41f475a72e",
+        "prerequisites": []
+      }
     },
     {
-      "server": "time",
-      "score": 89,
+      "server": "notion",
+      "score": 66,
       "areas": {
-        "protocol": 80,
-        "catalog": 60,
-        "context": 100,
-        "error-honesty": 100,
-        "reliability": 100,
+        "protocol": 100,
+        "catalog": 64,
+        "context": 32,
+        "error-honesty": 0,
+        "reliability": 91,
         "coverage": 100
       },
-      "tool_count": 2,
-      "catalog_tokens": 307
+      "tool_count": 24,
+      "catalog_tokens": 19057,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 36,
+        "tool_errors": 0,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "npm",
+        "package": "@notionhq/notion-mcp-server",
+        "version": "2.5.2",
+        "bin": "notion-mcp-server",
+        "launch_sha256": "7f6625d387d64c318528aa4f681fd954cda02bb52ee68ce47b189f0ae68967b4",
+        "report_sha256": "5055abdb147fd4fea7d5623ed7f8d90c0da6e2747b77fe9768be61893c6e5e31",
+        "prerequisites": []
+      }
+    },
+    {
+      "server": "filesystem",
+      "score": 69,
+      "areas": {
+        "protocol": 100,
+        "catalog": 84,
+        "context": 89,
+        "error-honesty": 100,
+        "reliability": 27,
+        "coverage": 20
+      },
+      "tool_count": 14,
+      "catalog_tokens": 3139,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 6,
+        "tool_errors": 24,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "npm",
+        "package": "@modelcontextprotocol/server-filesystem",
+        "version": "2.0.0",
+        "bin": "mcp-server-filesystem",
+        "launch_sha256": "6614d8cc7cac2ab4f5e20bde54183a356608cbbf16c23b416dfda023917b9449",
+        "report_sha256": "73927f71836adebd7dc9a260d696072fa28f02218dd4612261b6a728ca0c5c24",
+        "prerequisites": []
+      }
     },
     {
       "server": "context7",
-      "score": 93,
+      "score": 81,
       "areas": {
         "protocol": 100,
         "catalog": 80,
         "context": 95,
         "error-honesty": 100,
-        "reliability": 91,
-        "coverage": 100
+        "reliability": 65,
+        "coverage": 50
       },
       "tool_count": 2,
-      "catalog_tokens": 1216
+      "catalog_tokens": 1305,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 3,
+        "tool_errors": 3,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "npm",
+        "package": "@upstash/context7-mcp",
+        "version": "4.4.4",
+        "bin": "context7-mcp",
+        "launch_sha256": "52621810f9b9da2457eb8512a0088b7db6c0d599677e08e8a2aa6ebe10bd883a",
+        "report_sha256": "c4df624ee3f570147672d69f3ce7d3614d1066e0d72eec953abf0fbeb9f72916",
+        "prerequisites": []
+      }
+    },
+    {
+      "server": "searxng",
+      "score": 81,
+      "areas": {
+        "protocol": 100,
+        "catalog": 80,
+        "context": 93,
+        "error-honesty": 100,
+        "reliability": 67,
+        "coverage": 50
+      },
+      "tool_count": 4,
+      "catalog_tokens": 1745,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 6,
+        "tool_errors": 6,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "npm",
+        "package": "mcp-searxng",
+        "version": "2.7.0",
+        "bin": "mcp-searxng",
+        "launch_sha256": "a01056ba000d9083cc37339d20aee5898702df697004a3f59410282b0b2a3a46",
+        "report_sha256": "f3edb138625f1224913e50c10434fe7b8229beab5a1f57adc9c05758fddc141b",
+        "prerequisites": []
+      }
     },
     {
       "server": "everything",
       "score": 93,
       "areas": {
         "protocol": 100,
-        "catalog": 72,
-        "context": 100,
+        "catalog": 74,
+        "context": 94,
         "error-honesty": 100,
-        "reliability": 95,
+        "reliability": 97,
         "coverage": 100
       },
-      "tool_count": 13,
-      "catalog_tokens": 1915
-    },
-    {
-      "server": "filesystem",
-      "score": 95,
-      "areas": {
-        "protocol": 100,
-        "catalog": 84,
-        "context": 88,
-        "error-honesty": 100,
-        "reliability": 100,
-        "coverage": 100
+      "tool_count": 16,
+      "catalog_tokens": 2536,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
       },
-      "tool_count": 14,
-      "catalog_tokens": 3246
+      "calls": {
+        "successful_calls": 39,
+        "tool_errors": 0,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "npm",
+        "package": "@modelcontextprotocol/server-everything",
+        "version": "2.0.0",
+        "bin": "mcp-server-everything",
+        "launch_sha256": "20953c12deec06051b446a029f204fba18cb807502d52394e1e3762819202396",
+        "report_sha256": "47b39eb38dd62d7a525889fc73dc1dc0e8919d053b3697896f2402af30af063c",
+        "prerequisites": []
+      }
     },
     {
-      "server": "searxng",
-      "score": 95,
+      "server": "fetch",
+      "score": 94,
       "areas": {
         "protocol": 100,
         "catalog": 80,
-        "context": 93,
-        "error-honesty": 100,
-        "reliability": 100,
-        "coverage": 100
-      },
-      "tool_count": 4,
-      "catalog_tokens": 1745
-    },
-    {
-      "server": "wikipedia-uvx",
-      "score": 96,
-      "areas": {
-        "protocol": 100,
-        "catalog": 83,
         "context": 100,
         "error-honesty": 100,
-        "reliability": 98,
+        "reliability": 92,
         "coverage": 100
       },
-      "tool_count": 7,
-      "catalog_tokens": 1021
+      "tool_count": 1,
+      "catalog_tokens": 287,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 3,
+        "tool_errors": 0,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "uvx",
+        "package": "mcp-server-fetch",
+        "version": "2026.10.19",
+        "bin": "mcp-server-fetch",
+        "launch_sha256": "bc1190c2621ef5cc0b71321d06e5a7b5a7e93cccd3cc48fefb8275f9a4b8a3d3",
+        "report_sha256": "28a35168d45b49ab4df02fe2c27c27a34bfe524cf51f8a3fb0ffdfda29a0e535",
+        "prerequisites": []
+      }
     },
     {
       "server": "memory",
@@ -444,27 +636,83 @@
       "areas": {
         "protocol": 100,
         "catalog": 89,
-        "context": 93,
+        "context": 92,
         "error-honesty": 100,
         "reliability": 100,
         "coverage": 100
       },
       "tool_count": 9,
-      "catalog_tokens": 2688
+      "catalog_tokens": 2699,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 9,
+        "tool_errors": 0,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "npm",
+        "package": "@modelcontextprotocol/server-memory",
+        "version": "2.0.0",
+        "bin": "mcp-server-memory",
+        "launch_sha256": "492baceadefbcde9b8e5eb9dad7d41690fa8ffbee8f8b2ae79630c71c0fdfc6c",
+        "report_sha256": "89fb9f3420225d87d9dbc5dd7caf96f02a46804a30763615a864092b476af4fa",
+        "prerequisites": []
+      }
     },
     {
-      "server": "sequential-thinking",
-      "score": 99,
+      "server": "wikipedia-uvx",
+      "score": 97,
       "areas": {
         "protocol": 100,
-        "catalog": 100,
-        "context": 91,
+        "catalog": 85,
+        "context": 100,
         "error-honesty": 100,
-        "reliability": 100,
+        "reliability": 98,
         "coverage": 100
       },
-      "tool_count": 1,
-      "catalog_tokens": 1160
+      "tool_count": 8,
+      "catalog_tokens": 1142,
+      "measurement_profile": {
+        "architecture": "aarch64",
+        "attested_read_only": false,
+        "call_timeout_ms": 15000,
+        "client_capabilities": "none",
+        "evaluator_version": "0.7.1",
+        "platform": "macos",
+        "repeats": 3,
+        "schema": "mcpeval.measurement-profile/v1",
+        "skip_tools": []
+      },
+      "calls": {
+        "successful_calls": 24,
+        "tool_errors": 0,
+        "rpc_errors": 0,
+        "rejected_calls": 0,
+        "transport_errors": 0,
+        "untested_tools": 0
+      },
+      "provenance": {
+        "runtime": "uvx",
+        "package": "mcp-server-wikipedia",
+        "version": "0.5.5",
+        "bin": "mcp-server-wikipedia",
+        "launch_sha256": "af0fe400514759dc6a46de663def69878307a0081017bacd36a34be2c7259875",
+        "report_sha256": "a221c937d486955b92d7bef26aa6400d94193086150ecd3bea1d34e6d2925cd6",
+        "prerequisites": []
+      }
     }
   ]
 }

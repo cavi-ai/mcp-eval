@@ -261,7 +261,9 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
              a resource the agent reads on demand"
         }
         CheckReason::ReliabilityCallFailed => {
-            "make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability"
+            "make valid read-only calls succeed; consistent tool errors are failures, not evidence \
+             of reliability. When a value built from the schema means nothing to the server (a \
+             path, an ID), declare examples that work, or pass working arguments with --arguments"
         }
         CheckReason::ReliabilityInconsistent => {
             "the same read-only call with the same arguments ended differently across three \
@@ -306,7 +308,9 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
         CheckReason::CoverageCallFailed => {
             "no call succeeded: each returned a tool or JSON-RPC error, timed out, closed the \
              connection, or broke the protocol exchange; a read-only tool must answer valid \
-             calls successfully within 15 seconds without ending the session"
+             calls successfully within 15 seconds without ending the session. When a value built \
+             from the schema means nothing to the server, declare examples that work, or pass \
+             working arguments with --arguments"
         }
         CheckReason::NoReadOnlyTools => {
             "the server declares no read-only tools, so behavior cannot be measured without \

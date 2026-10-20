@@ -9,23 +9,23 @@ class Mcpeval < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/cavi-ai/mcp-eval/releases/download/v0.7.0/mcpeval-aarch64-apple-darwin.tar.gz"
-      sha256 "0b637bcfbb17d309a28a9441c1124e0b99e69fa6208a96925b27c9297e8e0a8b"
+      url "https://github.com/cavi-ai/mcp-eval/releases/download/v0.8.0/mcpeval-aarch64-apple-darwin.tar.gz"
+      sha256 "e085bc6496d36ebb50b9e51ac756f4fff950de16cada207b5244fa51d06324fb"
     end
     on_intel do
-      url "https://github.com/cavi-ai/mcp-eval/releases/download/v0.7.0/mcpeval-x86_64-apple-darwin.tar.gz"
-      sha256 "67b8b5254acc7ddac780d7709ba0e200752d66884d557477a1b062ad5093b6d9"
+      url "https://github.com/cavi-ai/mcp-eval/releases/download/v0.8.0/mcpeval-x86_64-apple-darwin.tar.gz"
+      sha256 "910cc2b21448886a0b38eeee7b53e855db8a0bb8f6d027b32c1d6d001338939e"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/cavi-ai/mcp-eval/releases/download/v0.7.0/mcpeval-aarch64-unknown-linux-gnu.tar.gz"
-      sha256 "c345bc2d46bf7b0ab6e8e96fe25240d633eafe7342536ab578b5a5c519b1b1bf"
+      url "https://github.com/cavi-ai/mcp-eval/releases/download/v0.8.0/mcpeval-aarch64-unknown-linux-gnu.tar.gz"
+      sha256 "e9502bad2375255885e0ed8077bd1d10deb9638793471d420f3c14435c017ac2"
     end
     on_intel do
-      url "https://github.com/cavi-ai/mcp-eval/releases/download/v0.7.0/mcpeval-x86_64-unknown-linux-gnu.tar.gz"
-      sha256 "b950921bbef9e3b8e7dd024df6f94e35bde898ce2b63f1ab70a163f4691d67ed"
+      url "https://github.com/cavi-ai/mcp-eval/releases/download/v0.8.0/mcpeval-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "4506e92da2d5e118dc47d9beb46cba5231e8864082ca8ce0b18ff267327e2767"
     end
   end
 
@@ -35,7 +35,7 @@ class Mcpeval < Formula
   end
 
   test do
-    assert_match "mcpeval 0.7.0", shell_output("#{bin}/mcpeval --version")
+    assert_match "mcpeval 0.8.0", shell_output("#{bin}/mcpeval --version")
     assert_predicate bin/"mcpeval-demo", :executable?
   end
 end

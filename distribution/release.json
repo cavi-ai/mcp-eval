@@ -2,39 +2,39 @@
   "schemaVersion": 1,
   "package": "@cavi-ai/mcp-eval",
   "repository": "cavi-ai/mcp-eval",
-  "version": "0.7.0",
-  "tag": "v0.7.0",
-  "commit": "6f4f7f7113568fd15359c8944c105bab50340e4c",
+  "version": "0.8.0",
+  "tag": "v0.8.0",
+  "commit": "154cbaa943bb19e1dc94b5028240f8c1359d8c2b",
   "assets": {
     "darwin-arm64": {
       "target": "aarch64-apple-darwin",
       "archive": "mcpeval-aarch64-apple-darwin.tar.gz",
-      "size": 5351238,
-      "sha256": "0b637bcfbb17d309a28a9441c1124e0b99e69fa6208a96925b27c9297e8e0a8b"
+      "size": 5438769,
+      "sha256": "e085bc6496d36ebb50b9e51ac756f4fff950de16cada207b5244fa51d06324fb"
     },
     "darwin-x64": {
       "target": "x86_64-apple-darwin",
       "archive": "mcpeval-x86_64-apple-darwin.tar.gz",
-      "size": 5756606,
-      "sha256": "67b8b5254acc7ddac780d7709ba0e200752d66884d557477a1b062ad5093b6d9"
+      "size": 5860499,
+      "sha256": "910cc2b21448886a0b38eeee7b53e855db8a0bb8f6d027b32c1d6d001338939e"
     },
     "linux-arm64": {
       "target": "aarch64-unknown-linux-gnu",
       "archive": "mcpeval-aarch64-unknown-linux-gnu.tar.gz",
-      "size": 5633072,
-      "sha256": "c345bc2d46bf7b0ab6e8e96fe25240d633eafe7342536ab578b5a5c519b1b1bf"
+      "size": 5723539,
+      "sha256": "e9502bad2375255885e0ed8077bd1d10deb9638793471d420f3c14435c017ac2"
     },
     "linux-x64": {
       "target": "x86_64-unknown-linux-gnu",
       "archive": "mcpeval-x86_64-unknown-linux-gnu.tar.gz",
-      "size": 6060870,
-      "sha256": "b950921bbef9e3b8e7dd024df6f94e35bde898ce2b63f1ab70a163f4691d67ed"
+      "size": 6162355,
+      "sha256": "4506e92da2d5e118dc47d9beb46cba5231e8864082ca8ce0b18ff267327e2767"
     },
     "win32-x64": {
       "target": "x86_64-pc-windows-msvc",
       "archive": "mcpeval-x86_64-pc-windows-msvc.zip",
-      "size": 5933173,
-      "sha256": "f6ba92046caef6021a4c86d8338c8bb4f55dddbabbe0b6cc768da1bf59b626c4"
+      "size": 6053566,
+      "sha256": "6f2c6e0f133b5f99178bd715569ca15b5471f2592a6cd82f5628b91e89d40306"
     }
   }
 }

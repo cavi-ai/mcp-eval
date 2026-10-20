@@ -14,12 +14,30 @@ function assetFor(manifest, platform, arch) {
   return asset;
 }
 
-async function download(url, { maxBytes, expectedBytes } = {}) {
-  const response = await fetch(url, {
-    redirect: "follow",
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`mcp-eval: download failed (${response.status}) for ${url}`);
+/** Waits before each retry; a failure after the last one is final. */
+const RETRY_DELAYS_MS = [1_000, 3_000];
+
+/** A failure another attempt can cure: a dropped connection, a timeout, or a 408, 429, or 5xx answer. */
+class TransientDownloadError extends Error {}
+
+function transientStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+async function downloadOnce(url, { maxBytes, expectedBytes }) {
+  let response;
+  try {
+    response = await fetch(url, {
+      redirect: "follow",
+      signal: AbortSignal.timeout(30_000),
+    });
+  } catch (error) {
+    throw new TransientDownloadError(`mcp-eval: download failed (${error.message}) for ${url}`);
+  }
+  if (!response.ok) {
+    const message = `mcp-eval: download failed (${response.status}) for ${url}`;
+    throw transientStatus(response.status) ? new TransientDownloadError(message) : new Error(message);
+  }
 
   const contentLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(contentLength) && maxBytes !== undefined && contentLength > maxBytes) {
@@ -29,17 +47,39 @@ async function download(url, { maxBytes, expectedBytes } = {}) {
 
   const chunks = [];
   let total = 0;
-  for await (const chunk of response.body) {
-    total += chunk.byteLength;
-    if (maxBytes !== undefined && total > maxBytes) {
-      throw new Error(`mcp-eval: download exceeds the pinned size for ${url}`);
+  let oversized = false;
+  try {
+    for await (const chunk of response.body) {
+      total += chunk.byteLength;
+      if (maxBytes !== undefined && total > maxBytes) {
+        oversized = true;
+        break;
+      }
+      chunks.push(Buffer.from(chunk));
     }
-    chunks.push(Buffer.from(chunk));
+  } catch (error) {
+    throw new TransientDownloadError(`mcp-eval: download interrupted (${error.message}) for ${url}`);
   }
+  if (oversized) throw new Error(`mcp-eval: download exceeds the pinned size for ${url}`);
   if (expectedBytes !== undefined && total !== expectedBytes) {
     throw new Error(`mcp-eval: download size mismatch for ${url}: expected ${expectedBytes}, received ${total}`);
   }
   return Buffer.concat(chunks, total);
+}
+
+/** Integrity and 4xx failures are final; transient ones are retried after each delay in turn. */
+async function download(url, { maxBytes, expectedBytes, retryDelaysMs = RETRY_DELAYS_MS } = {}) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await downloadOnce(url, { maxBytes, expectedBytes });
+    } catch (error) {
+      if (!(error instanceof TransientDownloadError)) throw error;
+      if (attempt > retryDelaysMs.length) {
+        throw new Error(attempt > 1 ? `${error.message} after ${attempt} attempts` : error.message);
+      }
+      await new Promise((resolve) => setTimeout(resolve, retryDelaysMs[attempt - 1]));
+    }
+  }
 }
 
 function verifyCompanion(bytes, asset) {
@@ -70,6 +110,7 @@ export async function installRelease({
   platform = process.platform,
   arch = process.arch,
   downloadBaseUrl,
+  retryDelaysMs = RETRY_DELAYS_MS,
 }) {
   const asset = assetFor(manifest, platform, arch);
   const baseUrl = downloadBaseUrl
@@ -83,8 +124,8 @@ export async function installRelease({
   let installed = false;
 
   try {
-    verifyCompanion(await download(checksumUrl, { maxBytes: 1024 }), asset);
-    const archive = await download(assetUrl, { maxBytes: asset.size, expectedBytes: asset.size });
+    verifyCompanion(await download(checksumUrl, { maxBytes: 1024, retryDelaysMs }), asset);
+    const archive = await download(assetUrl, { maxBytes: asset.size, expectedBytes: asset.size, retryDelaysMs });
     const actual = createHash("sha256").update(archive).digest("hex");
     if (actual !== asset.sha256) {
       throw new Error(`mcp-eval: archive SHA-256 mismatch for ${asset.archive}`);

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, readdir, stat, symlink, writeFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat, symlink, writeFile, rm } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fixture, target, report } from "./fixtures/evidence-fixture.mjs";
@@ -89,9 +90,13 @@ test("replay artifacts bind original bytes, evaluator, policy, and individual re
   assert.notEqual(drifted.results[0].replay_report_sha256, accepted.results[0].replay_report_sha256);
 });
 
-test("historical corpus refusal happens before any package or evaluator execution", async () => {
+test("historical corpus refusal happens before any package or evaluator execution", async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpeval-historical-"));
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  const corpusPath = path.join(dir, "corpus.json");
+  await writeFile(corpusPath, JSON.stringify({ schema: "mcpeval.readiness-corpus/v2", source: "historical", standard: "mcpeval-standard/1", observations: [{ server: "a", score: 50 }] }));
   let launched = false;
-  await assert.rejects(verifyCorpus({ execute: () => { launched = true; throw new Error("must not launch"); } }), /historical/u);
+  await assert.rejects(verifyCorpus({ corpusPath, execute: () => { launched = true; throw new Error("must not launch"); } }), /historical/u);
   assert.equal(launched, false);
 });
 

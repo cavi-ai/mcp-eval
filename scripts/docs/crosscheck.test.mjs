@@ -18,8 +18,15 @@ function headlineCounts(observations) {
 
 test("readiness corpus follows its schema contract", async () => {
   const document = await corpus();
-  assert.equal(document.schema, "mcpeval.readiness-corpus/v2");
+  assert.equal(document.schema, "mcpeval.readiness-corpus/v3");
   assert.match(document.standard, /^mcpeval-standard\/\d+$/u);
+  const targets = JSON.parse(await readFile(path.join(ROOT, "data/corpus-targets.json"), "utf8"));
+  assert.equal(document.standard, targets.standard, "corpus and targets name one standard");
+  assert.deepEqual(
+    document.population.map((entry) => entry.server).toSorted(),
+    targets.targets.map((target) => target.server).toSorted(),
+    "the population is the pinned target list",
+  );
   assert.ok(Array.isArray(document.observations));
   assert.ok(document.observations.length >= 2, "corpus needs a distribution");
   const names = document.observations.map((observation) => observation.server);

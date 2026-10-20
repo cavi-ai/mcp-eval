@@ -11,6 +11,7 @@
 ### Changed
 
 - `init` calls tools with required parameters using values built from their schema, and names every tool it left without cases and why.
+- The readiness corpus is recollected under `mcpeval-standard/2` from the pinned public targets in `data/corpus-targets.json` (13 of 34 targets observed), so reports place readiness again.
 
 ## 0.7.1 - 2026-10-12
 

@@ -82,11 +82,24 @@ brew test cavi-ai/tap/mcpeval
 ## Corpus drift check
 
 Live corpus replay is a separately authorized pre-release check, not a CI
-gate. The checked-in standard/1 snapshot is historical and has no replayable
-deployment provenance. Keep it unchanged. Collect a candidate under the current
-standard using reviewed pinned targets and declared service prerequisites,
-then replay with the same evaluator binary and platform. Store target files,
-reports, and replay evidence privately:
+gate. The checked-in corpus is a v3 collection from the public pinned targets
+in `data/corpus-targets.json`. Reports place readiness only against
+observations with the same measurement profile, which names the evaluator
+version, so recollect it with the release binary before tagging:
+
+```sh
+cargo build --release --locked --bins
+scripts/corpus/collect.sh --targets data/corpus-targets.json \
+  --out /private/corpus.json
+```
+
+Review the population and outcomes, then copy the corpus to
+`data/readiness-corpus.json`. A new readiness standard also updates the
+`standard` of `data/corpus-targets.json`; the tests require both files to name
+the shipped standard. For release calibration with prepared deployments,
+collect under the current standard using reviewed pinned targets and declared
+service prerequisites, then replay with the same evaluator binary and
+platform. Store those target files, reports, and replay evidence privately:
 
 ```sh
 cargo build --release --locked --bins

@@ -1,101 +1,136 @@
 # State of MCP servers
 
-This page retains historical observations of popular public servers scored
-with mcpeval's read-only standard battery (`mcpeval score`, readiness standard
-`mcpeval-standard/1`). The snapshot lacks original package, evaluator, and
-report-artifact provenance, so today's CLI cannot replay it as an exact
-collection.
-
-These are historical observations under `mcpeval-standard/1`. Current scoring uses `mcpeval-standard/2`, which corrects success credit and output-schema validation. These scores are retained under their original standard and are not used for current readiness comparisons.
+This page reports popular public MCP servers scored with mcpeval's read-only
+standard battery (`mcpeval score`) under readiness standard
+`mcpeval-standard/2`. The corpus behind it, `data/readiness-corpus.json`, was
+collected on macOS from the pinned target file `data/corpus-targets.json` and
+records the evaluator, the target file's SHA-256, and each target's package,
+version, and outcome.
 
 ## The corpus
 
-{{PRODUCT_VERSION}} ships a corpus of **33 public MCP servers** collected across the npm and uvx ecosystems (the reference servers plus the most-downloaded community servers). Each server ran as installed, without credentials, with no Kubernetes context and no Docker daemon.
+The target file pins 34 servers from the npm and uvx ecosystems: the
+reference servers plus widely used community servers. Each server ran as
+installed, without credentials, with no Kubernetes context and no Docker
+daemon. A target is observed only when the battery called at least one of its
+tools; the rest stay in the corpus population with the reason. The corpus
+holds **13 public MCP servers** observed under the standard.
+
+| Outcome | Targets |
+| --- | --- |
+| Observed | 13 |
+| Untested: no tool the battery may call | 19 |
+| Untested: no tools listed without credentials (`mcp-atlassian`) | 1 |
+| Errored: the evaluation did not finish (`docker-mcp`) | 1 |
 
 | Observation | Count |
 | --- | --- |
 | Readiness 100/100 | 0 |
-| Readiness below 100 | 33 |
-| Median readiness | 42 |
-| Servers whose tools the battery may not call (no `readOnlyHint: true`) | 20 |
+| Readiness below 100 | 13 |
+| Median readiness | 69 |
 
 | Server | Readiness | Protocol | Catalog | Context | Error honesty | Reliability | Coverage | Tools | Catalog tokens |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `sequential-thinking` | 99 | 100 | 100 | 91 | 100 | 100 | 100 | 1 | 1160 |
-| `memory` | 97 | 100 | 89 | 93 | 100 | 100 | 100 | 9 | 2688 |
-| `wikipedia-uvx` | 96 | 100 | 83 | 100 | 100 | 98 | 100 | 7 | 1021 |
-| `filesystem` | 95 | 100 | 84 | 88 | 100 | 100 | 100 | 14 | 3246 |
-| `searxng` | 95 | 100 | 80 | 93 | 100 | 100 | 100 | 4 | 1745 |
-| `context7` | 93 | 100 | 80 | 95 | 100 | 91 | 100 | 2 | 1216 |
-| `everything` | 93 | 100 | 72 | 100 | 100 | 95 | 100 | 13 | 1915 |
-| `arxiv` | 89 | 83 | 76 | 80 | 100 | 97 | 100 | 19 | 4463 |
-| `time` | 89 | 80 | 60 | 100 | 100 | 100 | 100 | 2 | 307 |
-| `git` | 87 | 80 | 52 | 100 | 100 | 100 | 100 | 12 | 1479 |
-| `desktop-commander` | 77 | 100 | 63 | 36 | 64 | 99 | 100 | 26 | 14361 |
-| `kubernetes` | 73 | 100 | 62 | 65 | 33 | 100 | 70 | 23 | 5965 |
-| `notion` | 65 | 100 | 64 | 32 | 0 | 89 | 100 | 24 | 19057 |
-| `airbnb` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 2 | 538 |
-| `docker` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 1 | 93 |
-| `markitdown` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 1 | 105 |
-| `terraform` | 42 | 100 | 60 | 100 | 0 | 0 | 0 | 10 | 1618 |
-| `browserbase` | 41 | 100 | 54 | 100 | 0 | 0 | 0 | 9 | 1334 |
-| `tavily` | 41 | 100 | 60 | 96 | 0 | 0 | 0 | 5 | 1923 |
-| `pandoc` | 40 | 100 | 60 | 88 | 0 | 0 | 0 | 1 | 1507 |
-| `puppeteer` | 40 | 100 | 49 | 100 | 0 | 0 | 0 | 7 | 614 |
-| `calculator` | 39 | 80 | 60 | 100 | 0 | 0 | 0 | 1 | 123 |
-| `docker-mcp` | 39 | 100 | 46 | 100 | 0 | 0 | 0 | 10 | 906 |
-| `fetch` | 39 | 83 | 60 | 100 | 0 | 0 | 0 | 1 | 276 |
-| `sqlite` | 39 | 100 | 46 | 100 | 0 | 0 | 0 | 10 | 1186 |
-| `sqlite-npx` | 38 | 100 | 38 | 100 | 0 | 0 | 0 | 8 | 775 |
-| `wikipedia-npm` | 38 | 100 | 40 | 100 | 0 | 0 | 0 | 2 | 141 |
-| `github` | 37 | 100 | 48 | 83 | 0 | 0 | 0 | 26 | 3967 |
-| `playwright` | 37 | 100 | 47 | 86 | 0 | 0 | 0 | 33 | 3467 |
-| `todoist` | 36 | 100 | 28 | 100 | 0 | 0 | 0 | 5 | 408 |
-| `mermaid` | 35 | 100 | 23 | 100 | 0 | 0 | 0 | 4 | 411 |
-| `ollama` | 35 | 100 | 24 | 100 | 0 | 0 | 0 | 9 | 775 |
-| `postgres` | 31 | 83 | 20 | 100 | 0 | 0 | 0 | 1 | 33 |
+| `memory` | 97 | 100 | 89 | 92 | 100 | 100 | 100 | 9 | 2699 |
+| `wikipedia-uvx` | 97 | 100 | 85 | 100 | 100 | 98 | 100 | 8 | 1142 |
+| `fetch` | 94 | 100 | 80 | 100 | 100 | 92 | 100 | 1 | 287 |
+| `everything` | 93 | 100 | 74 | 94 | 100 | 97 | 100 | 16 | 2536 |
+| `context7` | 81 | 100 | 80 | 95 | 100 | 65 | 50 | 2 | 1305 |
+| `searxng` | 81 | 100 | 80 | 93 | 100 | 67 | 50 | 4 | 1745 |
+| `filesystem` | 69 | 100 | 84 | 89 | 100 | 27 | 20 | 14 | 3139 |
+| `arxiv` | 66 | 83 | 76 | 80 | 100 | 35 | 27 | 19 | 4463 |
+| `notion` | 66 | 100 | 64 | 32 | 0 | 91 | 100 | 24 | 19057 |
+| `desktop-commander` | 65 | 100 | 64 | 39 | 62 | 66 | 62 | 25 | 13341 |
+| `time` | 61 | 100 | 80 | 100 | 100 | 0 | 0 | 2 | 575 |
+| `git` | 56 | 100 | 54 | 100 | 100 | 0 | 0 | 12 | 1515 |
+| `kubernetes` | 52 | 100 | 62 | 65 | 33 | 33 | 20 | 23 | 5965 |
+
+Observed readiness ranges from 52 to 97, with a median of 69; no server scores
+100.
 
 ## What the data says
 
-**Missing annotations cost the most.** 20 of 33 servers mark no tool `readOnlyHint: true`, so the standard battery calls none of their tools: error honesty, reliability, and coverage score 0, and these servers land between 31 and 42. Across the corpus, 173 of 302 tools declare no `readOnlyHint` at all. The annotation is one line per tool, and it is what lets any client tell a read from a write.
+**Missing annotations decide whether a server can be measured.** 18 servers
+declare `readOnlyHint` on none of their tools, so the battery calls nothing and
+they are untested: `airbnb`, `browserbase`, `calculator`, `docker`, `github`,
+`markitdown`, `mermaid`, `ollama`, `pandoc`, `playwright`, `postgres`,
+`puppeteer`, `sqlite`, `sqlite-npx`, `tavily`, `terraform`, `todoist`, and
+`wikipedia-npm`. `sequential-thinking` 2.0.0 annotates its only tool as a
+writer. Across the 33 servers that answered, 162 of 295 tools declare no
+`readOnlyHint`. The annotation is one line per tool, and it is what lets any
+client tell a read from a write.
 
-**Where tools can be called, most servers behave.** The 13 servers with callable tools score 65 to 99. Ten of them refuse every schema-violating call with -32602 or an `isError` result that says why. `notion` accepted invalid arguments on 11 tools, `desktop-commander` on 5, and `kubernetes` refused 4 with a JSON-RPC code other than -32602.
+**Calls with values built from the schema often fail.** Reliability and
+coverage fall where a tool needs a real path, ID, or service: every call of
+`time` and `git` failed, as did most calls of `filesystem` and `arxiv`. Pass
+working values with `--arguments` to measure those tools; see
+[Readiness reporting](readiness-reporting.md).
 
-**Catalogs rarely describe their results.** 269 of 302 tools declare no `outputSchema`, and 27 of 33 servers declare none on any tool; 96 tools leave input parameters undescribed and 70 have descriptions under 40 characters. Only `sequential-thinking` scores 100 on the catalog area; the median is 60.
+**Most servers refuse invalid arguments honestly.** Ten of the 13 observed
+servers refuse every schema-violating call with -32602 or an `isError` result
+that says why. `notion` accepted invalid arguments on 11 tools,
+`desktop-commander` on 5, and `kubernetes` refused 4 with a JSON-RPC code
+other than -32602.
 
-**The catalog tax is universal — and measurable.** Every session pays the full `tools/list` catalog before the first tool call (deterministic estimate: encoded bytes / 4): the reference `everything` server costs 1,915 tokens with 13 tools, `notion` 19,057 with 24 tools, `desktop-commander` 14,361 with 26 tools, while `markitdown` costs 105 with one tool. The corpus median is 1,186 catalog tokens. At $3/Mtok, `notion`'s catalog is $0.057 per session — $57 per 1,000 sessions before any useful work happens.
+**Catalogs rarely describe their results.** 258 of 295 tools declare no
+`outputSchema`, and 25 of the 32 servers that list tools declare none on any
+tool. 95 tools leave input parameters undescribed and 64 have descriptions
+under 40 characters. No observed server scores 100 on the catalog area; the
+observed median is 80.
 
-**Protocol basics mostly hold.** 27 of 33 servers score 100 on the protocol area. `arxiv`, `fetch`, `git`, and `time` answer an unknown JSON-RPC method with a result instead of error -32601; `calculator` echoes a protocol version it does not support; `postgres` declares a surface whose listing does not answer.
+**The catalog tax is measurable.** Every session pays the full `tools/list`
+catalog before the first tool call (deterministic estimate: encoded bytes / 4):
+the reference `everything` server costs 2,536 tokens with 16 tools, `notion`
+19,057 with 24 tools, and `desktop-commander` 13,341 with 25 tools, while
+`markitdown` costs 105 with one tool. The corpus median is 2,536 catalog
+tokens. At $3/Mtok, `notion`'s catalog is $0.057 per session,
+$57 per 1,000 sessions, before any useful work happens.
 
-**The 2025-06-18 interactive surface is barely adopted.** A capability sweep over the corpus found `sampling` on zero servers, `elicitation` on zero servers, and `resources.subscribe` on two (the reference `everything` server and `memory`). The reference server's `instructions` string references `trigger-sampling-request` and `trigger-elicitation-request`, but those tools only enter the catalog when the client declares the matching capability (13 tools for a capability-less client, 16 with sampling and elicitation declared). Instructions that promise tools an agent cannot see in its own catalog are a coherence defect; the finding was filed upstream as [modelcontextprotocol/servers#4792](https://github.com/modelcontextprotocol/servers/issues/4792).
+**Protocol basics mostly hold.** 29 of the 33 servers that answered score 100
+on the protocol area. `arxiv` and `mcp-atlassian` answer an unknown JSON-RPC
+method with a result instead of error -32601; `calculator` echoes a protocol
+version it does not support; `postgres` declares a surface whose listing does
+not answer.
 
-## Collect a current corpus
+## Collect the corpus
 
-Collect new observations under the current evaluator standard from a reviewed
-repository checkout. Declare pinned targets in a private file and select a new
-private output path; this does not replace or reconstruct the historical
-snapshot:
+The corpus is collected from a reviewed repository checkout with the release
+binary built at that checkout:
 
 ```sh
 cargo build --release --locked --bins
-scripts/corpus/collect.sh --targets /absolute/private/targets.json \
+scripts/corpus/collect.sh --targets data/corpus-targets.json \
   --out /absolute/private/corpus.json
 ```
 
-Follow [Corpus collection and replay](corpus-replay.md) for prerequisites,
-minimum observation counts, saved evidence, offline checks, and CI consumption.
+A new readiness standard recollects the corpus: the repository's tests require
+`data/readiness-corpus.json` to name the standard the build scores under and
+the SHA-256 of `data/corpus-targets.json`. Follow
+[Corpus collection and replay](corpus-replay.md) for prerequisites, minimum
+observation counts, saved evidence, offline checks, and CI consumption.
 
-Text and markdown reports place a readiness score among these servers when it was scored under the same standard. This is a historical standard/1 placement example; standard/2 reports do not place readiness against this snapshot:
+Text and markdown reports place a readiness score among the observed servers
+when it was scored under the same standard and measurement profile:
 
 ```text
-  standard corpus (mcpeval-standard/1): above 26, tied 0, below 7 of 33 observed servers
+  standard corpus (mcpeval-standard/2): above 9, tied 0, below 4 of 13 observed servers
 ```
 
 ## Method notes
 
-- The standard battery is read-only: it calls only tools annotated `readOnlyHint: true` (never `readOnlyHint: false` or `destructiveHint: true`), with arguments synthesized from each tool's input schema, plus one schema-violating call per judged tool, protocol requests, and the paged listings. Unannotated tools count as unexercised. The readiness-reporting guide lists every area and check.
-- Servers that need credentials or backing services ran without them, so their tools may answer with errors; `mcp-atlassian` lists no tools without credentials and is not in the corpus.
-- Every server runs with an empty kubeconfig and an unreachable Docker host, so no call reaches a real cluster or container daemon.
-- Re-runs on one machine moved only reliability, by at most 3 points: latency bands depend on the machine and network, and they move more between machines. Some servers also describe their tools per operating system — `desktop-commander`'s descriptions name the platform and its shell — so the corpus records the platform it was collected on (macOS) and is re-scored there.
-- This snapshot lacks package-version, evaluator, and report-artifact provenance. Its original execution inputs cannot be recovered from these observations, so the current drift checker refuses to replay it using floating packages.
-- New v3 collections require an explicit pinned target file and declared credential/service checks. They retain every target outcome and distinguish untested targets from completed calls that failed. Verification requires the original platform, evaluator, target file, and report artifacts; unrun targets prevent a pass. Score differences do not establish their cause: transitive dependencies and backing-service state still need a separately locked environment.
+- The standard battery is read-only: it calls only tools annotated
+  `readOnlyHint: true` (never `readOnlyHint: false` or `destructiveHint: true`),
+  with arguments synthesized from each tool's input schema, plus one
+  schema-violating call per judged tool, protocol requests, and the paged
+  listings. Unannotated tools count as unexercised. The readiness-reporting
+  guide lists every area and check.
+- Servers that need credentials or backing services ran without them, so their
+  tools may answer with errors.
+- Every server runs with an empty kubeconfig, an unreachable Docker host, and
+  its own empty home directory, so no call reaches a real cluster, container
+  daemon, or user configuration.
+- Latency bands depend on the machine and network, and some servers describe
+  their tools per operating system, so the corpus records the platform it was
+  collected on.
+- Exact package pins do not lock transitive dependencies or backing-service
+  state. Score differences between collections do not establish their cause.

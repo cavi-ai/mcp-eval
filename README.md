@@ -73,7 +73,7 @@ walks through the rest.
 | Capture real agent sessions and promote findings | [Capture and probe](docs/mcp-eval/source/pages/guides/capture-and-probe.md), [Findings and verification](docs/mcp-eval/source/pages/guides/findings-and-verification.md) |
 | Let an agent probe, score, and verify over MCP | [Agent loop over MCP](docs/mcp-eval/source/pages/guides/agent-loop.md) |
 | Check that instructions match tool behavior | [Instruction coherence](docs/mcp-eval/source/pages/guides/instruction-coherence.md) |
-| See how 33 popular public servers score | [State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md) |
+| See how 13 popular public servers score | [State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md) |
 | Collect and replay your own corpus | [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md) |
 
 ## Safe by default

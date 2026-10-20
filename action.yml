@@ -39,8 +39,8 @@ inputs:
     description: >
       Release to install instead of the one pinned by this action's
       distribution/release.json, e.g. "0.2.0". The archive is verified against
-      that release's own release.json. Ignored when a preinstalled `mcpeval`
-      is already on PATH.
+      that release's own release.json. A preinstalled `mcpeval` is reused
+      only when its version matches this input.
     required: false
     default: ''
   baseline:

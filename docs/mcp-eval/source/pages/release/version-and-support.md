@@ -4,6 +4,23 @@ These pages describe MCP Eval {{PRODUCT_VERSION}}, released from tag `{{RELEASE_
 
 MCP Eval is under active development. Before 1.0, the CLI, on-disk schema, and manifest format may change. Keep manifests with the release that validates them and review the repository changelog before upgrading.
 
+## Upgrading to 0.8.0
+
+Readiness still uses `mcpeval-standard/2`, with unchanged scoring policy.
+CI can gate readiness floors, score regressions, and breaking catalog changes.
+Use `--arguments <FILE>` for tools that need working input values and
+`--format junit` for test results. See [Continuous integration](../guides/continuous-integration.md).
+
+Cancellation probes still require cancellation to be honored by default. Set
+`require_honored: false` for servers that permit an in-flight call to finish;
+the probe also checks that the session remains usable. Error probes accept
+`data.retryable` as well as the legacy top-level hint.
+
+Regenerate readiness baselines with this evaluator. The bundled corpus was
+collected with 0.7.1; its readiness placement requires matching measurement
+profiles, including the evaluator version. Its historical measurements are
+retained and do not provide a 0.8.0 readiness ranking.
+
 ## Upgrading to 0.7.0
 
 Readiness still uses `mcpeval-standard/2`, with unchanged scoring policy.

@@ -11,6 +11,7 @@ import test from "node:test";
 const ROOT = path.resolve(import.meta.dirname, "../..");
 const INSTALL = path.join(ROOT, "scripts/action/install.sh");
 const RUN = path.join(ROOT, "scripts/action/run.sh");
+const COMMENT = path.join(ROOT, "scripts/action/comment.sh");
 const RELEASE_BIN = path.join(ROOT, "target/release");
 const TAG = "v9.9.9";
 const LINUX_ARCHIVE = "mcpeval-x86_64-unknown-linux-gnu.tar.gz";
@@ -418,7 +419,7 @@ test("run renders SARIF located at the manifest when sarif is true", { skip: nee
   const workspace = await actionWorkspace();
   const result = await runAction(workspace, { server: "demo", command: "mcpeval-demo --broken stalled-cursor", sarif: "true" });
   assert.equal(result.status, 3, result.stderr);
-  assert.equal(result.outputs.sarif, "mcpeval.sarif");
+  assert.equal(result.outputs.sarif, "mcpeval.report.sarif");
   const sarif = JSON.parse(await readFile(path.join(workspace.directory, result.outputs.sarif), "utf8"));
   assert.ok(sarif.runs[0].results.length > 0);
   const pagination = sarif.runs[0].results.find((entry) => entry.ruleId === "pagination");
@@ -520,6 +521,98 @@ test("run forwards readiness floors and the readiness drop", async () => {
     assert.equal(refused.status, 2, JSON.stringify(inputs));
     assert.equal(refused.stderr, `::error::mcpeval action: ${message}\n`);
   }
+});
+
+test("run writes the SARIF beside the report", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpeval-action-sarif-path-"));
+  const stubs = path.join(directory, "stubs");
+  await mkdir(stubs);
+  await writeFile(
+    path.join(stubs, "mcpeval"),
+    `#!/bin/sh\ncase "$*" in *--help*) echo '--manifest'; exit 0;; esac\n` +
+      `[ "$1" = probe ] && printf '{"passed":true,"readiness":{"score":90}}'\n` +
+      `[ "$1" = report ] && printf 'rendered'\nexit 0\n`,
+  );
+  await chmod(path.join(stubs, "mcpeval"), 0o755);
+  const workspace = { directory, pathValue: [stubs, await pathWithoutMcpeval(directory)].join(path.delimiter) };
+  const result = await runAction(workspace, {
+    server: "a",
+    command: "server-a",
+    sarif: "true",
+    "report-path": "reports/a.json",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.outputs.sarif, "reports/a.sarif");
+  assert.equal(await readFile(path.join(directory, "reports/a.sarif"), "utf8"), "rendered");
+});
+
+// A stub `gh` that logs each call and its body file, and lists `listed` as
+// the pull request's comments.
+async function commentWorkspace(listed, failing = false) {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpeval-action-comment-"));
+  const stubs = path.join(directory, "stubs");
+  await mkdir(stubs);
+  const log = path.join(directory, "gh.log");
+  await writeFile(path.join(directory, "listed.json"), JSON.stringify(listed));
+  await writeFile(
+    path.join(stubs, "gh"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n` +
+      (failing ? "exit 1\n" : "") +
+      `for arg in "$@"; do case "$arg" in body=@*) cat "\${arg#body=@}" > '${directory}/body.md';; esac; done\n` +
+      `case "$*" in *--jq*) jq -r '.[] | select(.body | startswith("<!-- mcpeval:demo -->")) | .id' '${directory}/listed.json';; esac\n`,
+  );
+  await chmod(path.join(stubs, "gh"), 0o755);
+  const markdown = path.join(directory, "report.md");
+  await writeFile(markdown, "## mcp-eval report — demo\n");
+  const env = {
+    PATH: [stubs, await pathWithoutMcpeval(directory)].join(path.delimiter),
+    HOME: process.env.HOME,
+    INPUT_SERVER: "demo",
+    MARKDOWN: markdown,
+    PR_NUMBER: "7",
+    GITHUB_REPOSITORY: "owner/repo",
+    GH_TOKEN: "token",
+  };
+  const result = await runScript(COMMENT, env, directory);
+  const calls = existsSync(log) ? (await readFile(log, "utf8")).split("\n").filter(Boolean) : [];
+  const body = existsSync(path.join(directory, "body.md")) ? await readFile(path.join(directory, "body.md"), "utf8") : null;
+  return { result, calls, body, directory };
+}
+
+test("comment creates one marked comment and edits it on later runs", async () => {
+  const created = await commentWorkspace([{ id: 1, body: "unrelated" }]);
+  assert.equal(created.result.status, 0, created.result.stderr);
+  assert.equal(created.calls.length, 2);
+  assert.match(created.calls[0], /^api --paginate repos\/owner\/repo\/issues\/7\/comments --jq /u);
+  assert.match(created.calls[1], /^api --method POST repos\/owner\/repo\/issues\/7\/comments -F body=@/u);
+  assert.equal(created.body, "<!-- mcpeval:demo -->\n## mcp-eval report — demo\n");
+
+  const edited = await commentWorkspace([{ id: 1, body: "unrelated" }, { id: 42, body: "<!-- mcpeval:demo -->\nold" }]);
+  assert.equal(edited.result.status, 0, edited.result.stderr);
+  assert.match(edited.calls[1], /^api --method PATCH repos\/owner\/repo\/issues\/comments\/42 -F body=@/u);
+});
+
+test("comment truncates long reports and never fails the job", async () => {
+  const failing = await commentWorkspace([], true);
+  assert.equal(failing.result.status, 0);
+  assert.match(failing.result.stdout, /^::warning::mcpeval action: could not comment on the pull request/u);
+
+  const long = await commentWorkspace([]);
+  await writeFile(path.join(long.directory, "report.md"), "x".repeat(70000));
+  const env = {
+    PATH: [path.join(long.directory, "stubs"), await pathWithoutMcpeval(path.join(long.directory, "again"))].join(path.delimiter),
+    HOME: process.env.HOME,
+    INPUT_SERVER: "demo",
+    MARKDOWN: path.join(long.directory, "report.md"),
+    PR_NUMBER: "7",
+    GITHUB_REPOSITORY: "owner/repo",
+    GH_TOKEN: "token",
+  };
+  const result = await runScript(COMMENT, env, long.directory);
+  assert.equal(result.status, 0, result.stderr);
+  const body = await readFile(path.join(long.directory, "body.md"), "utf8");
+  assert.ok(body.length < 65536, String(body.length));
+  assert.match(body, /_Truncated; the full report is in the job summary._\n$/u);
 });
 
 test("run refuses a baseline when mcpeval does not support diff", async () => {

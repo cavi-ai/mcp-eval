@@ -93,8 +93,8 @@ if [ "${INPUT_FAIL_ON_BREAKING:-false}" = true ]; then
 fi
 
 case "$report" in
-  *.json) markdown="${report%.json}.md" ;;
-  *) markdown="$report.md" ;;
+  *.json) markdown="${report%.json}.md" sarif="${report%.json}.sarif" ;;
+  *) markdown="$report.md" sarif="$report.sarif" ;;
 esac
 
 mkdir -p "$(dirname "$report")"
@@ -132,8 +132,8 @@ if [ -n "${INPUT_BASELINE:-}" ] && [ -s "$report" ]; then
 fi
 
 if [ "${INPUT_SARIF:-false}" = true ] && [ -s "$report" ]; then
-  render --format sarif --manifest "$manifest" >mcpeval.sarif
-  echo "sarif=mcpeval.sarif" >>"$GITHUB_OUTPUT"
+  render --format sarif --manifest "$manifest" >"$sarif"
+  echo "sarif=$sarif" >>"$GITHUB_OUTPUT"
 fi
 
 if [ "$code" -eq 0 ] && [ "$diff_code" -ne 0 ]; then

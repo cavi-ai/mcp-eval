@@ -88,9 +88,29 @@ inputs:
     required: false
     default: 'false'
   report-path:
-    description: 'Where to write the JSON report.'
+    description: >
+      Where to write the JSON report. The markdown and SARIF renderings are
+      written beside it.
     required: false
     default: 'mcpeval.report.json'
+  comment:
+    description: >
+      On pull_request events, keep one comment per server on the pull request
+      with the rendered report and baseline diff, edited in place on later
+      runs ('true'/'false'). The job needs `pull-requests: write`.
+    required: false
+    default: 'false'
+  github-token:
+    description: 'Token used to write the pull-request comment.'
+    required: false
+    default: ${{ github.token }}
+  artifact:
+    description: >
+      Upload the JSON report, its markdown, and the SARIF document as the
+      workflow artifact `mcpeval-<server>`; the JSON report is the candidate
+      for the next committed baseline ('true'/'false').
+    required: false
+    default: 'false'
 
 outputs:
   passed:
@@ -147,6 +167,26 @@ runs:
       run: bash "$ACTION_PATH/scripts/action/run.sh"
     - name: Upload SARIF to code scanning
       if: ${{ !cancelled() && inputs.sarif == 'true' && steps.run.outputs.sarif != '' }}
-      uses: github/codeql-action/upload-sarif@v4
+      uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
       with:
         sarif_file: ${{ steps.run.outputs.sarif }}
+    - name: Comment on the pull request
+      if: ${{ !cancelled() && inputs.comment == 'true' && github.event_name == 'pull_request' && steps.run.outputs.markdown != '' }}
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        INPUT_SERVER: ${{ inputs.server }}
+        MARKDOWN: ${{ steps.run.outputs.markdown }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+      run: bash "$ACTION_PATH/scripts/action/comment.sh"
+    - name: Upload the report artifact
+      if: ${{ !cancelled() && inputs.artifact == 'true' && steps.run.outputs.report != '' }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: mcpeval-${{ inputs.server }}
+        path: |
+          ${{ steps.run.outputs.report }}
+          ${{ steps.run.outputs.markdown }}
+          ${{ steps.run.outputs.sarif }}
+        if-no-files-found: warn

@@ -50,7 +50,10 @@ used as is, so an earlier step can install a pinned or local build.
 | `max-readiness-drop` | | With `baseline`, fail when readiness fell by more than this many points |
 | `exclude-latency` | `false` | Compare floors and the drop with every latency check at full marks |
 | `sarif` | `false` | Render SARIF and upload it to code scanning |
-| `report-path` | `mcpeval.report.json` | Where the JSON report is written |
+| `report-path` | `mcpeval.report.json` | Where the JSON report is written; the markdown and SARIF go beside it |
+| `comment` | `false` | On pull requests, keep one comment per server with the report and baseline diff |
+| `github-token` | `github.token` | Token that writes the pull-request comment |
+| `artifact` | `false` | Upload the report, its markdown, and the SARIF as the artifact `mcpeval-<server>` |
 
 - `command` takes whitespace-separated words, with no quoting, or a JSON array
   of strings for arguments that contain spaces, such as
@@ -78,9 +81,19 @@ The report is rendered as markdown into the job summary and to `${report-path%.j
   `mcpeval diff --fail-on-regression` against the committed report (plus
   `--fail-on-change` with `fail-on-change: "true"`) and appends its markdown
   table to the job summary and the `markdown` output.
-- With `sarif: "true"`, it renders `mcpeval.sarif` located at the manifest's
-  failing cases and uploads it through `github/codeql-action/upload-sarif`, also
-  when the probe fails. The job needs `security-events: write`.
+- With `sarif: "true"`, it renders `${report-path%.json}.sarif` located at the
+  manifest's failing cases and uploads it through
+  `github/codeql-action/upload-sarif`, also when the probe fails. The job needs
+  `security-events: write`.
+- With `comment: "true"` on a `pull_request` event, it keeps one comment per
+  server on the pull request, marked `<!-- mcpeval:<server> -->`, holding the
+  rendered report and baseline diff; later runs edit it in place. The job needs
+  `pull-requests: write`. A comment that cannot be written, such as from a fork
+  whose token is read-only, is a warning, not a failure.
+- With `artifact: "true"`, it uploads the report, its markdown, and the SARIF as
+  the workflow artifact `mcpeval-<server>`. Download the JSON report from a run
+  you accept and commit it as the next baseline.
+- Third-party actions the composite action calls are pinned to commit SHAs.
 - The step exits with the probe's code, or with the diff's when the probe passed
   and the diff failed.
 
@@ -91,6 +104,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: cavi-ai/mcp-eval@main
@@ -99,6 +113,7 @@ jobs:
           command: python3 scripts/launch-mcp-server.py --stdio
           baseline: mcp-eval.baseline.json
           sarif: 'true'
+          comment: 'true'
 ```
 
 `baseline` and `sarif` need `mcpeval` 0.3.0 or later (`diff` and `report --manifest`); the action's pinned release has both. A `version` input older than 0.3.0 fails fast with a usage error naming the installed version.

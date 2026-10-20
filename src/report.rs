@@ -327,6 +327,9 @@ pub fn render_probe_markdown(
     if let Some((passed, total)) = report.gate() {
         writeln!(out, "**Gate:** {passed}/{total} cases passed\n").ok();
     }
+    if let Some(gate) = &report.readiness_gate {
+        writeln!(out, "**Floor:** {}\n", gate.text()).ok();
+    }
     if let Some(corpus) = corpus {
         if let Some(placement) = report
             .readiness

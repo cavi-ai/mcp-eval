@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 pub enum FindingsFormat {
@@ -84,6 +84,32 @@ pub enum DiffFormat {
     Markdown,
     /// Deterministic JSON diff document (mcpeval.probe-diff/v2).
     Json,
+}
+
+/// Readiness floors shared by `probe` and `score`.
+#[derive(Args, Debug)]
+pub struct FloorArgs {
+    /// Exit non-zero when readiness is under this score (0-100).
+    #[arg(long, value_name = "SCORE", value_parser = clap::value_parser!(u64).range(0..=100))]
+    pub min_readiness: Option<u64>,
+    /// Exit non-zero when one area scores under a floor, as AREA=SCORE.
+    /// Repeat for each area.
+    #[arg(long = "min-area", value_name = "AREA=SCORE", value_parser = mcpeval::readiness_gate::parse_area_floor)]
+    pub min_areas: Vec<(mcpeval::score::Area, u64)>,
+    /// Compare the floors with every latency check at full marks; latency
+    /// depends on the machine a run is on.
+    #[arg(long)]
+    pub exclude_latency: bool,
+}
+
+impl FloorArgs {
+    pub fn floors(self) -> mcpeval::readiness_gate::Floors {
+        mcpeval::readiness_gate::Floors {
+            min_score: self.min_readiness,
+            min_areas: self.min_areas,
+            exclude_latency: self.exclude_latency,
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -186,6 +212,8 @@ pub enum Command {
         /// unexercised. Repeat for each tool.
         #[arg(long = "skip-tool", value_name = "NAME")]
         skip_tools: Vec<String>,
+        #[command(flatten)]
+        floors: FloorArgs,
         /// Streamable HTTP endpoint instead of a stdio command.
         #[arg(long)]
         url: Option<String>,
@@ -216,6 +244,8 @@ pub enum Command {
         /// unexercised. Repeat for each tool.
         #[arg(long = "skip-tool", value_name = "NAME")]
         skip_tools: Vec<String>,
+        #[command(flatten)]
+        floors: FloorArgs,
         /// Streamable HTTP endpoint instead of a stdio command.
         #[arg(long)]
         url: Option<String>,
@@ -325,6 +355,15 @@ pub enum Command {
         /// the baseline.
         #[arg(long)]
         fail_on_change: bool,
+        /// Exit non-zero when readiness dropped by more than this many
+        /// points since the baseline. Both documents must carry readiness
+        /// under the same standard and measurement profile.
+        #[arg(long, value_name = "POINTS", value_parser = clap::value_parser!(u64).range(0..=100))]
+        max_readiness_drop: Option<u64>,
+        /// Compare readiness with every latency check at full marks;
+        /// latency depends on the machine a run is on.
+        #[arg(long, requires = "max_readiness_drop")]
+        exclude_latency: bool,
         /// Output format for the diff.
         #[arg(long, value_enum, default_value_t = DiffFormat::Text)]
         format: DiffFormat,

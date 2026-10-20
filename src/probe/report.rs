@@ -153,6 +153,9 @@ pub struct ProbeReport {
     pub readiness_error: Option<FailureReason>,
     /// A v1 document's manifest pass rate, kept for display only.
     pub legacy_score: Option<u64>,
+    /// Declared readiness floors and their outcome; None when the run
+    /// declared no floor.
+    pub readiness_gate: Option<crate::readiness_gate::FloorGate>,
 }
 
 impl ProbeReport {
@@ -252,7 +255,7 @@ impl ProbeReport {
                     .and_then(crate::mcp_client::CancellationOutcome::from_label),
             });
         }
-        let (readiness, readiness_error, legacy_score) = if v2 {
+        let (readiness, readiness_error, legacy_score, readiness_gate) = if v2 {
             let readiness = match document.get("readiness") {
                 None | Some(serde_json::Value::Null) => None,
                 Some(value) => Some(crate::score::Readiness::from_json(value)?),
@@ -266,13 +269,17 @@ impl ProbeReport {
                     .with_context(|| format!("unknown reason label {label}"))?,
                 ),
             };
-            (readiness, readiness_error, None)
+            let readiness_gate = match document.get("readiness_gate") {
+                None | Some(serde_json::Value::Null) => None,
+                Some(value) => Some(crate::readiness_gate::FloorGate::from_json(value)?),
+            };
+            (readiness, readiness_error, None, readiness_gate)
         } else {
             let legacy = document
                 .get("readiness")
                 .and_then(|readiness| readiness.get("score"))
                 .and_then(serde_json::Value::as_u64);
-            (None, None, legacy)
+            (None, None, legacy, None)
         };
         Ok(Self {
             cases: parsed,
@@ -283,11 +290,19 @@ impl ProbeReport {
             readiness,
             readiness_error,
             legacy_score,
+            readiness_gate,
         })
     }
 
     pub fn passed(&self) -> bool {
         self.cases.iter().all(CaseReport::passed)
+    }
+
+    /// A declared readiness floor was compared and not met.
+    pub fn below_floor(&self) -> bool {
+        self.readiness_gate
+            .as_ref()
+            .is_some_and(|gate| gate.passed() == Some(false))
     }
 
     /// Manifest cases passed and declared; None when no manifest ran.
@@ -378,6 +393,7 @@ impl ProbeReport {
             "gate": self.gate().map(|(passed, total)| serde_json::json!({"passed": passed, "total": total})),
             "readiness": self.readiness.as_ref().map(crate::score::Readiness::to_json),
             "readiness_error": self.readiness_error.map(|reason| reason.as_str()),
+            "readiness_gate": self.readiness_gate.as_ref().map(crate::readiness_gate::FloorGate::to_json),
             "cases": cases,
         })
     }

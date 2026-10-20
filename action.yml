@@ -53,6 +53,28 @@ inputs:
     description: "With `baseline`, also fail on changed failure reasons ('true'/'false')."
     required: false
     default: 'false'
+  min-readiness:
+    description: 'Fail when readiness is under this score (0-100).'
+    required: false
+    default: ''
+  min-area:
+    description: >
+      Area floors as whitespace-separated AREA=SCORE words, e.g.
+      "error-honesty=90 reliability=80". Fails when an area scores under its
+      floor.
+    required: false
+    default: ''
+  max-readiness-drop:
+    description: >
+      With `baseline`, fail when readiness fell by more than this many points.
+    required: false
+    default: ''
+  exclude-latency:
+    description: >
+      Compare readiness floors and the readiness drop with every latency check
+      at full marks ('true'/'false'); latency depends on the runner.
+    required: false
+    default: 'false'
   sarif:
     description: >
       Render the report as SARIF and upload it to code scanning
@@ -66,7 +88,7 @@ inputs:
 
 outputs:
   passed:
-    description: "'true' when every selected case passed."
+    description: "'true' when every selected case passed and every readiness floor held."
     value: ${{ steps.run.outputs.passed }}
   readiness:
     description: 'Readiness score (0-100) under the mcpeval standard the report names.'
@@ -109,6 +131,10 @@ runs:
         INPUT_ALLOW_REMOTE_HTTP: ${{ inputs.allow-remote-http }}
         INPUT_BASELINE: ${{ inputs.baseline }}
         INPUT_FAIL_ON_CHANGE: ${{ inputs.fail-on-change }}
+        INPUT_MIN_READINESS: ${{ inputs.min-readiness }}
+        INPUT_MIN_AREA: ${{ inputs.min-area }}
+        INPUT_MAX_READINESS_DROP: ${{ inputs.max-readiness-drop }}
+        INPUT_EXCLUDE_LATENCY: ${{ inputs.exclude-latency }}
         INPUT_SARIF: ${{ inputs.sarif }}
         INPUT_REPORT_PATH: ${{ inputs.report-path }}
       run: bash "$ACTION_PATH/scripts/action/run.sh"

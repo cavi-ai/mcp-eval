@@ -49,6 +49,15 @@ The default manifest path for `probe`, `verify`, and `report` is
   `destructiveHint` are read-only, so the standard battery calls them.
 - `--skip-tool <NAME>` (repeatable) is never called by the standard battery,
   and skipping never raises the score. A name the server does not list exits 2.
+- `--min-readiness <SCORE>` exits 1 when readiness is under the floor, even
+  when every manifest case passed.
+- `--min-area <AREA=SCORE>` (repeatable) exits 1 when that area scores under
+  its floor; `AREA` is `protocol`, `catalog`, `context`, `error-honesty`,
+  `reliability`, or `coverage`.
+- `--exclude-latency` compares the floors with every latency check at full
+  marks (`readiness.score_without_latency`); latency depends on the machine.
+  A floor needs the standard battery: with `--gate-only` or `--probe` it
+  exits 2.
 - `--allow-remote-http` permits an explicitly selected remote HTTPS endpoint.
 
 The five headline evaluation dimensions for `--probe` are `contention`,
@@ -66,7 +75,8 @@ version {{PRODUCT_VERSION}}.
 standard battery with no manifest and reports readiness under the named mcpeval
 standard, its areas, and every lost point. Supports
 `--format text|json|markdown`, `--brief`, `--confirm-read-only`,
-`--skip-tool <NAME>`, and `--allow-remote-http`.
+`--skip-tool <NAME>`, `--min-readiness <SCORE>`, `--min-area <AREA=SCORE>`,
+`--exclude-latency`, and `--allow-remote-http`, as for `probe`.
 
 ### `init`
 
@@ -136,6 +146,11 @@ reason), or unchanged. Documents naming different servers are rejected.
 
 - `--fail-on-regression` exits non-zero for regressions.
 - `--fail-on-change` exits non-zero for changed failure reasons.
+- `--max-readiness-drop <POINTS>` exits non-zero when readiness fell by more
+  than `POINTS` since the baseline. Readiness that is not comparable (another
+  standard or measurement profile, or a v1 document) exits 2.
+- `--exclude-latency` with `--max-readiness-drop` compares
+  `score_without_latency` on both sides; a document without it exits 2.
 - Fixes and manifest growth are informational.
 - `--format text|markdown|json`; JSON is `mcpeval.probe-diff/v2`.
 
@@ -228,7 +243,11 @@ packages nothing and exits `1`.
 - the `readiness` object: the standard's name, the surface, and each area's
   weight, score, and lost checks with fixed reason labels and hints. It is null
   under `--gate-only` or a selected probe; `readiness_error` names why when the
-  standard battery could not start.
+  standard battery could not start. `score_without_latency` is the score with
+  every latency check at full marks;
+- the `readiness_gate` object when a floor was declared: the floors, whether
+  latency was excluded, `passed`, and each shortfall (subject, observed,
+  floor). `report` exits 1 for a document whose floor failed.
 
 It excludes timestamps, sessions, arguments, response bodies, descriptions,
 schemas, and raw error text. `mcpeval schema report` and `mcpeval schema diff`
@@ -241,7 +260,7 @@ readiness not comparable across standards or against a v1 document.
 | Code | Meaning |
 | --- | --- |
 | `0` | The command succeeded; every selected case passed. |
-| `1` | The evaluation completed and a case failed its probe, or a gate such as `diff --fail-on-regression` or the `share` redaction sweep fired. |
+| `1` | The evaluation completed and a case failed its probe, or a gate such as a readiness floor, `diff --fail-on-regression`, `diff --max-readiness-drop`, or the `share` redaction sweep fired. |
 | `2` | Usage error: invalid arguments, manifest, or input document. Nothing was evaluated. |
 | `3` | The evaluation could not complete: the server was unreachable, a case lost its transport, or local I/O failed. |
 

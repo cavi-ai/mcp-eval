@@ -1,6 +1,6 @@
 # Continuous integration
 
-The probe battery is built for CI gating: deterministic verdicts, fixed failure reasons, and a versioned JSON report with no timestamps, sessions, or payloads. The manifest's cases are the gate that sets the exit code; the readiness score comes from mcpeval's standard battery and never changes the exit code.
+The probe battery is built for CI gating: deterministic verdicts, fixed failure reasons, and a versioned JSON report with no timestamps, sessions, or payloads. The manifest's cases are the gate that sets the exit code; the readiness score comes from mcpeval's standard battery and changes the exit code only through a declared [readiness floor](#readiness-floors).
 
 ## GitHub Actions
 
@@ -44,6 +44,10 @@ used as is, so an earlier step can install a pinned or local build.
 | `version` | | Release to install instead of the pinned one |
 | `baseline` | | Committed report to gate against with `mcpeval diff --fail-on-regression` |
 | `fail-on-change` | `false` | With `baseline`, also fail on changed failure reasons |
+| `min-readiness` | | Fail when readiness is under this score |
+| `min-area` | | Area floors as whitespace-separated `AREA=SCORE` words |
+| `max-readiness-drop` | | With `baseline`, fail when readiness fell by more than this many points |
+| `exclude-latency` | `false` | Compare floors and the drop with every latency check at full marks |
 | `sarif` | `false` | Render SARIF and upload it to code scanning |
 | `report-path` | `mcpeval.report.json` | Where the JSON report is written |
 
@@ -61,7 +65,7 @@ The report is rendered as markdown into the job summary and to `${report-path%.j
 
 | Output | Meaning |
 | --- | --- |
-| `passed` | `true` when every selected case passed |
+| `passed` | `true` when every selected case passed and every readiness floor held |
 | `readiness` | Readiness score (0-100) under the mcpeval standard the report names |
 | `report` | Path to the JSON report |
 | `markdown` | Path to the rendered markdown report |
@@ -156,6 +160,31 @@ with appropriate access controls. Do not upload raw evidence to public workflow
 artifacts. Follow
 [Corpus collection and replay](corpus-replay.md) to prepare and retain the files.
 
+## Readiness floors
+
+Manifest cases gate what you declared. A readiness floor gates what the
+standard battery measures, so a server that starts lying about its error codes
+fails the build even when every manifest case still passes:
+
+```sh
+mcpeval probe --server demo --manifest mcp-eval.manifest.json \
+  --min-readiness 85 --min-area error-honesty=90 -- your-mcp-server --flags
+# demo gate 25/25 passed
+# demo readiness 76/100 protocol=100 catalog=63 context=100 error-honesty=0 reliability=91 coverage=100 standard=mcpeval-standard/2
+# demo readiness floor failed: score 76 < 85, error-honesty 0 < 90
+```
+
+- `--min-readiness` and `--min-area` work on `probe` and `score` and exit 1
+  under the floor. The JSON report records the floors and each shortfall in
+  `readiness_gate`, and `mcpeval report` keeps that verdict.
+- Median latency is scored in coarse bands, and runners differ in speed. With
+  `--exclude-latency`, floors compare `readiness.score_without_latency`, the
+  score with every latency check at full marks. Gate latency itself with a
+  `latency-budget` manifest case.
+- Against a committed baseline, `mcpeval diff --max-readiness-drop <POINTS>`
+  fails when readiness fell by more than `POINTS`; add `--exclude-latency` to
+  compare the latency-free scores.
+
 ## Committed baselines
 
 The JSON report is deterministic, so it can be committed and diffed:
@@ -183,8 +212,9 @@ documents must name the same server.
 - `--fail-on-regression` exits non-zero only for regressions. Fixes and added
   cases are informational, since manifest growth is deliberate.
 - `--fail-on-change` also gates on changed failure reasons.
-- Without `--fail-on-regression` the diff is informational and always exits
-  zero.
+- `--max-readiness-drop <POINTS>` gates on readiness movement; readiness that
+  is not comparable exits 2.
+- Without a gate flag the diff is informational and always exits zero.
 - `--format json` emits a deterministic `mcpeval.probe-diff/v2` document;
   `--format markdown` renders a pull-request-ready table.
 

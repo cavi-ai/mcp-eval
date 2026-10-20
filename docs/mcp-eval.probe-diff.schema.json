@@ -87,6 +87,43 @@
         }
       }
     },
+    "readiness_gate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "max_drop",
+            "exclude_latency",
+            "drop",
+            "passed"
+          ],
+          "properties": {
+            "max_drop": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "exclude_latency": {
+              "type": "boolean",
+              "description": "Both sides compared their score_without_latency."
+            },
+            "drop": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100,
+              "description": "Points lost since the baseline; 0 when readiness held or rose."
+            },
+            "passed": {
+              "type": "boolean"
+            }
+          }
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "The --max-readiness-drop gate; null when none was declared."
+    },
     "summary": {
       "type": "object",
       "required": [

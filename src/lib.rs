@@ -24,6 +24,7 @@ pub mod measurement;
 pub mod privacy;
 pub mod probe;
 pub mod promote;
+pub mod readiness_gate;
 pub mod record;
 pub mod remediation;
 pub mod report;

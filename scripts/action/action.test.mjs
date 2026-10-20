@@ -457,6 +457,68 @@ test("run forwards url, mutation, and fail-on-change flags", async () => {
   ]);
 });
 
+test("run fails a readiness floor while every manifest case passes", { skip: needsBuild }, async () => {
+  const workspace = await actionWorkspace();
+  const result = await runAction(workspace, {
+    server: "demo",
+    command: "mcpeval-demo --broken lying-errors",
+    "min-readiness": "85",
+    "min-area": "error-honesty=90  protocol=100",
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.equal(result.outputs["exit-code"], "1");
+  assert.equal(result.outputs.passed, "false");
+  const report = JSON.parse(await readFile(path.join(workspace.directory, result.outputs.report), "utf8"));
+  assert.equal(report.passed, true);
+  assert.equal(report.readiness_gate.passed, false);
+  assert.deepEqual(report.readiness_gate.min_areas, { "error-honesty": 90, protocol: 100 });
+  assert.match(result.summary, /^\*\*Floor:\*\* readiness floor failed: score \d+ < 85/mu);
+});
+
+test("run forwards readiness floors and the readiness drop", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpeval-action-floors-"));
+  const stubs = path.join(directory, "stubs");
+  await mkdir(stubs);
+  const log = path.join(directory, "argv.log");
+  await writeFile(
+    path.join(stubs, "mcpeval"),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n` +
+      `case "$*" in *--help*) echo '--manifest --min-readiness --max-readiness-drop'; exit 0;; esac\n` +
+      `[ "$1" = probe ] && printf '{"passed":true,"readiness":{"score":90},"readiness_gate":{"passed":true}}'\nexit 0\n`,
+  );
+  await chmod(path.join(stubs, "mcpeval"), 0o755);
+  await writeFile(path.join(directory, "baseline.json"), "{}");
+  const workspace = { directory, pathValue: [stubs, await pathWithoutMcpeval(directory)].join(path.delimiter) };
+  const result = await runAction(workspace, {
+    server: "demo",
+    command: "mcpeval-demo",
+    baseline: "baseline.json",
+    "min-readiness": "80",
+    "min-area": "reliability=70\ncoverage=50",
+    "max-readiness-drop": "3",
+    "exclude-latency": "true",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.outputs.passed, "true");
+  assert.deepEqual((await readFile(log, "utf8")).split("\n").filter(Boolean), [
+    "diff --help",
+    "probe --help",
+    "diff --help",
+    "probe --server demo --manifest mcp-eval.manifest.json --format json --min-readiness 80 --min-area reliability=70 --min-area coverage=50 --exclude-latency -- mcpeval-demo",
+    "report mcpeval.report.json --format markdown",
+    "diff baseline.json mcpeval.report.json --format markdown --fail-on-regression --max-readiness-drop 3 --exclude-latency",
+  ]);
+
+  for (const [inputs, message] of [
+    [{ "exclude-latency": "true" }, "exclude-latency applies to min-readiness, min-area, or max-readiness-drop"],
+    [{ "max-readiness-drop": "3" }, "max-readiness-drop needs a baseline"],
+  ]) {
+    const refused = await runAction(workspace, { server: "demo", command: "mcpeval-demo", ...inputs });
+    assert.equal(refused.status, 2, JSON.stringify(inputs));
+    assert.equal(refused.stderr, `::error::mcpeval action: ${message}\n`);
+  }
+});
+
 test("run refuses a baseline when mcpeval does not support diff", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpeval-action-nodiff-"));
   const stubs = path.join(directory, "stubs");

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- Readiness gates: `probe` and `score` fail under `--min-readiness` or a `--min-area` floor, `diff` fails a drop over `--max-readiness-drop`, `--exclude-latency` compares `readiness.score_without_latency`, and the action takes each as an input.
+
 ## 0.7.1 - 2026-10-12
 
 ### Changed

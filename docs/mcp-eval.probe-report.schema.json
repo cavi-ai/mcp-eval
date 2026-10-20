@@ -101,12 +101,114 @@
         }
       ],
       "description": "Why the standard battery could not finish."
+    },
+    "readiness_gate": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/readiness_gate"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "Declared readiness floors and their outcome; null when the run declared none."
     }
   },
   "$defs": {
     "count": {
       "type": "integer",
       "minimum": 0
+    },
+    "score": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "readiness_gate": {
+      "type": "object",
+      "required": [
+        "min_score",
+        "min_areas",
+        "exclude_latency",
+        "passed",
+        "shortfalls"
+      ],
+      "properties": {
+        "min_score": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/score"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_areas": {
+          "type": "object",
+          "propertyNames": {
+            "enum": [
+              "protocol",
+              "catalog",
+              "context",
+              "error-honesty",
+              "reliability",
+              "coverage"
+            ]
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/score"
+          }
+        },
+        "exclude_latency": {
+          "type": "boolean",
+          "description": "Floors compared scores with every latency check at full marks."
+        },
+        "passed": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "null when the run measured no readiness to compare."
+        },
+        "shortfalls": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "subject",
+                  "observed",
+                  "floor"
+                ],
+                "properties": {
+                  "subject": {
+                    "enum": [
+                      "score",
+                      "protocol",
+                      "catalog",
+                      "context",
+                      "error-honesty",
+                      "reliability",
+                      "coverage"
+                    ]
+                  },
+                  "observed": {
+                    "$ref": "#/$defs/score"
+                  },
+                  "floor": {
+                    "$ref": "#/$defs/score"
+                  }
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
     },
     "reason": {
       "enum": [
@@ -180,6 +282,10 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 100
+        },
+        "score_without_latency": {
+          "$ref": "#/$defs/score",
+          "description": "The score with every reliability.latency check at full marks: the part that does not depend on the machine."
         },
         "badge": {
           "type": "string",

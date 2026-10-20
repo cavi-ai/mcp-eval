@@ -53,6 +53,9 @@ pub struct CaseDiff {
 pub struct ReadinessMovement {
     pub baseline: Option<u64>,
     pub current: Option<u64>,
+    /// Each side's score with every latency check at full marks.
+    pub baseline_without_latency: Option<u64>,
+    pub current_without_latency: Option<u64>,
     pub baseline_standard: Option<String>,
     pub current_standard: Option<String>,
     pub baseline_profile: Option<crate::measurement::MeasurementProfile>,
@@ -67,9 +70,13 @@ impl ReadinessMovement {
         };
         let (baseline_score, baseline_standard) = side(baseline);
         let (current_score, current_standard) = side(current);
+        let without_latency =
+            |report: &ProbeReport| report.readiness.as_ref()?.score_without_latency;
         Self {
             baseline: baseline_score,
             current: current_score,
+            baseline_without_latency: without_latency(baseline),
+            current_without_latency: without_latency(current),
             baseline_standard,
             current_standard,
             baseline_profile: baseline
@@ -110,10 +117,40 @@ impl ReadinessMovement {
     }
 }
 
+/// How far readiness may fall from the baseline, and how far it fell.
+#[derive(Debug, PartialEq, Eq)]
+pub struct DropGate {
+    pub max_drop: u64,
+    pub exclude_latency: bool,
+    /// Points lost since the baseline; 0 when readiness held or rose.
+    pub drop: u64,
+}
+
+impl DropGate {
+    pub fn passed(&self) -> bool {
+        self.drop <= self.max_drop
+    }
+
+    pub fn text(&self) -> String {
+        let latency = if self.exclude_latency {
+            " (latency excluded)"
+        } else {
+            ""
+        };
+        let verdict = if self.passed() { "within" } else { "exceeds" };
+        format!(
+            "readiness drop {} {verdict} {}{latency}",
+            self.drop, self.max_drop
+        )
+    }
+}
+
 /// The full comparison of two report documents.
 pub struct Diff {
     pub cases: Vec<CaseDiff>,
     pub readiness: ReadinessMovement,
+    /// The readiness-drop gate, when one was declared.
+    pub readiness_gate: Option<DropGate>,
     /// Case IDs present only in the baseline.
     pub missing: Vec<String>,
     /// Case IDs present only in the current run.
@@ -157,6 +194,45 @@ impl Diff {
     /// and the committed baseline is regenerated deliberately.
     pub fn gated(&self) -> bool {
         self.regressed() > 0
+    }
+
+    /// Declare how far readiness may fall. Readiness must be comparable on
+    /// both sides, and with `exclude_latency` both documents must carry the
+    /// score without latency.
+    pub fn gate_readiness_drop(
+        &mut self,
+        max_drop: u64,
+        exclude_latency: bool,
+    ) -> anyhow::Result<&DropGate> {
+        let movement = &self.readiness;
+        if !movement.comparable() {
+            bail!(
+                "readiness is {}; regenerate the baseline with this mcpeval",
+                movement.text()
+            );
+        }
+        let (baseline, current) = if exclude_latency {
+            match (
+                movement.baseline_without_latency,
+                movement.current_without_latency,
+            ) {
+                (Some(baseline), Some(current)) => (baseline, current),
+                (None, _) => bail!(
+                    "the baseline carries no score_without_latency; regenerate it with this mcpeval"
+                ),
+                (_, None) => bail!("the current report carries no score_without_latency"),
+            }
+        } else {
+            match (movement.baseline, movement.current) {
+                (Some(baseline), Some(current)) => (baseline, current),
+                _ => bail!("readiness is missing from a document"),
+            }
+        };
+        Ok(self.readiness_gate.insert(DropGate {
+            max_drop,
+            exclude_latency,
+            drop: baseline.saturating_sub(current),
+        }))
     }
 }
 
@@ -251,6 +327,7 @@ pub fn diff(baseline: &ProbeReport, current: &ProbeReport) -> Diff {
         .collect();
     Diff {
         readiness: ReadinessMovement::of(baseline, current),
+        readiness_gate: None,
         cases,
         missing,
         added,
@@ -336,6 +413,12 @@ pub fn to_json(outcome: &Diff) -> serde_json::Value {
             "baseline_profile": outcome.readiness.baseline_profile,
             "current_profile": outcome.readiness.current_profile,
         },
+        "readiness_gate": outcome.readiness_gate.as_ref().map(|gate| serde_json::json!({
+            "max_drop": gate.max_drop,
+            "exclude_latency": gate.exclude_latency,
+            "drop": gate.drop,
+            "passed": gate.passed(),
+        })),
         "summary": {
             "regressed": outcome.regressed(),
             "fixed": outcome.fixed(),
@@ -417,6 +500,9 @@ pub fn render(outcome: &Diff) -> String {
         out.push_str(&format!("{:<width$}  added\n", id, width = width));
     }
     out.push_str(&format!("readiness  {}\n", outcome.readiness.text()));
+    if let Some(gate) = &outcome.readiness_gate {
+        out.push_str(&format!("{}\n", gate.text()));
+    }
     out.push_str(&format!(
         "{} regressed, {} fixed, {} changed, {} unchanged, {} removed, {} added\n",
         outcome.regressed(),
@@ -433,6 +519,10 @@ pub fn render_markdown(outcome: &Diff) -> String {
     let mut out = String::new();
     out.push_str("## mcp-eval baseline diff\n\n");
     out.push_str(&format!("Readiness: {}\n\n", outcome.readiness.text()));
+    if let Some(gate) = &outcome.readiness_gate {
+        let mark = if gate.passed() { "" } else { "**" };
+        out.push_str(&format!("{mark}{}{mark}\n\n", gate.text()));
+    }
     out.push_str("| Case | Verdict | Baseline | Current |\n");
     out.push_str("| --- | --- | --- | --- |\n");
     for case in &outcome.cases {

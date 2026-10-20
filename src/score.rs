@@ -359,6 +359,10 @@ impl Surface {
 pub struct Readiness {
     pub standard: String,
     pub score: u64,
+    /// The score with every latency check at full marks: the part of the
+    /// score that does not depend on the machine. None for a document that
+    /// predates it.
+    pub score_without_latency: Option<u64>,
     pub attested_read_only: bool,
     pub surface: Surface,
     pub areas: Vec<AreaScore>,
@@ -368,25 +372,30 @@ pub struct Readiness {
 /// Fold the standard battery's observations into readiness. Every area in
 /// [`Area::ALL`] is always scored: none drops out of the denominator.
 pub fn fold(observations: &Observations) -> Readiness {
-    let areas: Vec<AreaScore> = Area::ALL
+    let mut areas: Vec<AreaScore> = Area::ALL
         .iter()
         .map(|area| match area {
             Area::Protocol => protocol(&observations.protocol),
             Area::Catalog => catalog(&observations.tools),
             Area::Context => context(&observations.tools),
             Area::ErrorHonesty => error_honesty(&observations.tools),
-            Area::Reliability => reliability(observations),
+            Area::Reliability => reliability(observations, Latency::Banded),
             Area::Coverage => coverage(&observations.tools),
         })
         .collect();
-    let weights: u64 = areas.iter().map(|area| area.area.weight()).sum();
-    let weighted: u64 = areas
-        .iter()
-        .map(|area| area.area.weight() * area.score)
-        .sum();
+    let reliability_without_latency = reliability(observations, Latency::FullMarks).score;
+    let score = weighted_score(&areas, None);
+    let score_without_latency = weighted_score(&areas, Some(reliability_without_latency));
+    if let Some(area) = areas.iter_mut().find(|area| area.area == Area::Reliability) {
+        area.measurements.insert(
+            "score_without_latency".into(),
+            reliability_without_latency.into(),
+        );
+    }
     Readiness {
         standard: STANDARD.to_owned(),
-        score: round(weighted as f64 / weights as f64),
+        score,
+        score_without_latency: Some(score_without_latency),
         attested_read_only: observations.attested_read_only,
         surface: Surface::of(&observations.tools),
         areas,
@@ -394,8 +403,34 @@ pub fn fold(observations: &Observations) -> Readiness {
     }
 }
 
+/// The weighted mean of the area scores, with the reliability score
+/// replaced when `reliability` is given.
+fn weighted_score(areas: &[AreaScore], reliability: Option<u64>) -> u64 {
+    let weights: u64 = areas.iter().map(|area| area.area.weight()).sum();
+    let weighted: u64 = areas
+        .iter()
+        .map(|area| {
+            let score = match (area.area, reliability) {
+                (Area::Reliability, Some(score)) => score,
+                _ => area.score,
+            };
+            area.area.weight() * score
+        })
+        .sum();
+    round(weighted as f64 / weights as f64)
+}
+
 fn round(value: f64) -> u64 {
     value.round().clamp(0.0, 100.0) as u64
+}
+
+/// Whether reliability scores median latency by its band, or gives every
+/// latency check full marks: latency is the one input that depends on the
+/// machine a run is on.
+#[derive(Clone, Copy, PartialEq)]
+enum Latency {
+    Banded,
+    FullMarks,
 }
 
 /// 100 at or under `full`, 0 at or over `zero`, logarithmic between.
@@ -644,7 +679,7 @@ fn error_honesty(tools: &[ToolObservation]) -> AreaScore {
     }
 }
 
-fn reliability(observations: &Observations) -> AreaScore {
+fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore {
     let mut entries: Vec<f64> = Vec::new();
     let mut checks = Vec::new();
     // A skipped tool the battery would have called scores 0, and so do the
@@ -701,7 +736,10 @@ fn reliability(observations: &Observations) -> AreaScore {
             CheckReason::ReliabilityCallFailed,
         ));
         let consistency = if *consistent { 100.0 } else { 0.0 };
-        let latency = latency_band(*median_latency_ms) as f64;
+        let latency = match latency_mode {
+            Latency::Banded => latency_band(*median_latency_ms) as f64,
+            Latency::FullMarks => 100.0,
+        };
         checks.extend(lost(
             CheckId::ReliabilityConsistent,
             name,
@@ -871,6 +909,9 @@ impl Readiness {
                 })).collect::<Vec<_>>(),
             })).collect::<Vec<_>>(),
         });
+        if let Some(score) = self.score_without_latency {
+            document["score_without_latency"] = json!(score);
+        }
         if let Some(profile) = &self.measurement_profile {
             document["measurement_profile"] = json!(profile);
         }
@@ -952,6 +993,15 @@ impl Readiness {
                 .context("readiness is missing standard")?
                 .to_owned(),
             score: count(value, "score")?,
+            score_without_latency: value
+                .get("score_without_latency")
+                .map(|score| {
+                    score
+                        .as_u64()
+                        .filter(|score| *score <= 100)
+                        .context("score_without_latency must be 0-100")
+                })
+                .transpose()?,
             attested_read_only: value
                 .get("attested_read_only")
                 .and_then(Value::as_bool)
@@ -1296,6 +1346,35 @@ mod tests {
                 (CheckId::ReliabilityLatency, Some("slow_read"), 50),
             ]
         );
+    }
+
+    #[test]
+    fn the_score_without_latency_gives_every_latency_check_full_marks() {
+        let readiness = fold(&clean_demo());
+        let reliability = area(&readiness, Area::Reliability);
+        assert_eq!(reliability.measurements["score_without_latency"], 93);
+        assert_eq!(readiness.score_without_latency, Some(91));
+        // Every exercised tool in the slowest band: reliability keeps only
+        // what does not depend on the machine.
+        let mut slow = clean_demo();
+        for tool in &mut slow.tools {
+            if let Some(Exercise::Exercised {
+                median_latency_ms, ..
+            }) = &mut tool.exercise
+            {
+                *median_latency_ms = 5_000;
+            }
+        }
+        let readiness = fold(&slow);
+        assert_eq!(area(&readiness, Area::Reliability).score, 54);
+        assert_eq!(
+            area(&readiness, Area::Reliability).measurements["score_without_latency"],
+            93
+        );
+        assert_eq!(readiness.score, 83);
+        assert_eq!(readiness.score_without_latency, Some(91));
+        let round_trip = Readiness::from_json(&readiness.to_json()).unwrap();
+        assert_eq!(round_trip.score_without_latency, Some(91));
     }
 
     #[test]

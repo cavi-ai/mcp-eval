@@ -213,7 +213,7 @@ fn constraints(schema: &Value, root: &Value, depth: usize, names: bool) -> Value
 
 /// Serialize with keys in sorted order regardless of how the map stores
 /// them.
-fn canonical(value: &Value, out: &mut String) {
+pub(crate) fn canonical(value: &Value, out: &mut String) {
     match value {
         Value::Object(map) => {
             let sorted: BTreeMap<&String, &Value> = map.iter().collect();

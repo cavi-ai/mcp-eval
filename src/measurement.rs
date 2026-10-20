@@ -13,10 +13,17 @@ pub struct MeasurementProfile {
     pub skip_tools: Vec<String>,
     pub call_timeout_ms: u64,
     pub repeats: usize,
+    /// SHA-256 of the `--arguments` file the battery called tools with.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arguments_sha256: Option<String>,
 }
 
 impl MeasurementProfile {
-    pub fn current(attested_read_only: bool, skip_tools: &[String]) -> Self {
+    pub fn current(
+        attested_read_only: bool,
+        skip_tools: &[String],
+        arguments_sha256: Option<&str>,
+    ) -> Self {
         let mut skip_tools = skip_tools.to_vec();
         skip_tools.sort();
         skip_tools.dedup();
@@ -30,6 +37,7 @@ impl MeasurementProfile {
             skip_tools,
             call_timeout_ms: crate::standard::CALL_TIMEOUT.as_millis() as u64,
             repeats: crate::standard::REPEATS,
+            arguments_sha256: arguments_sha256.map(str::to_owned),
         }
     }
 
@@ -63,6 +71,15 @@ impl MeasurementProfile {
                 .all(|tool| crate::privacy::valid_tool(tool))
                 && self.skip_tools.windows(2).all(|pair| pair[0] < pair[1]),
             "invalid measurement skip tools"
+        );
+        anyhow::ensure!(
+            self.arguments_sha256.as_ref().is_none_or(|digest| {
+                digest.len() == 64
+                    && digest
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            }),
+            "invalid measurement arguments digest"
         );
         Ok(())
     }

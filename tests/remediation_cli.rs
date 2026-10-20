@@ -235,6 +235,7 @@ fn calibration_context_appears_when_the_corpus_resolves() {
     let profile = serde_json::to_string(&mcpeval::measurement::MeasurementProfile::current(
         false,
         &[],
+        None,
     ))
     .unwrap();
     std::fs::write(

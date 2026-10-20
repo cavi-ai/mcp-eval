@@ -78,6 +78,7 @@ fn options(home: &TestHome, mode: &str, selected_probe: Option<ProbeKind>) -> Pr
         standard: false,
         confirm_read_only: false,
         skip_tools: Vec::new(),
+        arguments: None,
     }
 }
 
@@ -181,6 +182,7 @@ fn token_cost_options(
         standard: false,
         confirm_read_only: false,
         skip_tools: Vec::new(),
+        arguments: None,
     }
 }
 

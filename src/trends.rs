@@ -195,7 +195,11 @@ mod tests {
             score,
             manifest_sha256: Some(manifest.into()),
             standard: standard.map(str::to_owned),
-            measurement_profile: Some(crate::measurement::MeasurementProfile::current(false, &[])),
+            measurement_profile: Some(crate::measurement::MeasurementProfile::current(
+                false,
+                &[],
+                None,
+            )),
         }
     }
 

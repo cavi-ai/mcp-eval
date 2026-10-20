@@ -41,5 +41,6 @@ pub mod standard;
 mod stdio;
 pub mod store;
 mod target_identity;
+pub mod tool_arguments;
 pub mod trends;
 pub mod verify;

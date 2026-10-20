@@ -445,6 +445,11 @@
         "repeats": {
           "type": "integer",
           "minimum": 1
+        },
+        "arguments_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the --arguments file the standard battery called tools with; absent without one."
         }
       }
     }

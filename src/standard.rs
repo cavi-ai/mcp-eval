@@ -33,6 +33,8 @@ pub struct StandardOptions {
     pub confirm_read_only: bool,
     /// Tools never to call; each must be one the server lists.
     pub skip_tools: Vec<String>,
+    /// Arguments to call named tools with instead of synthesized ones.
+    pub arguments: Option<crate::tool_arguments::ToolArguments>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -210,6 +212,10 @@ pub(crate) fn run(
     readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
         options.confirm_read_only,
         &options.skip_tools,
+        options
+            .arguments
+            .as_ref()
+            .map(crate::tool_arguments::ToolArguments::sha256),
     ));
     Ok((readiness, contract))
 }
@@ -240,6 +246,11 @@ fn observe(
             "--skip-tool {name} is not a tool the server lists"
         )));
     }
+    if let Some(arguments) = &options.arguments {
+        arguments
+            .validate(&catalog, options.confirm_read_only)
+            .map_err(crate::exit::usage)?;
+    }
     let mut tools = Vec::with_capacity(catalog.tools.len());
     // Tools whose three calls all succeeded, with the arguments used: the
     // server-level cases run on the first of them.
@@ -269,7 +280,13 @@ fn observe(
             ToolClass::Unannotated if !options.confirm_read_only => {
                 Some(Exercise::NotExercised(CheckReason::CoverageUnannotated))
             }
-            _ => match synthesize(&tool.input_schema) {
+            _ => match options
+                .arguments
+                .as_ref()
+                .and_then(|arguments| arguments.get(&tool.name))
+                .cloned()
+                .or_else(|| synthesize(&tool.input_schema))
+            {
                 Some(_) if skipped => Some(Exercise::NotExercised(CheckReason::CoverageSkipped)),
                 Some(arguments) => {
                     let (exercise, measured_calls) =

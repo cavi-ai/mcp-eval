@@ -40,6 +40,9 @@ pub struct ProbeOptions {
     pub confirm_read_only: bool,
     /// Tools the standard battery never calls (`--skip-tool`).
     pub skip_tools: Vec<String>,
+    /// Arguments the standard battery calls named tools with
+    /// (`--arguments`).
+    pub arguments: Option<crate::tool_arguments::ToolArguments>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -413,6 +416,7 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
             &crate::standard::StandardOptions {
                 confirm_read_only: options.confirm_read_only,
                 skip_tools: options.skip_tools,
+                arguments: options.arguments,
             },
         )?;
     }
@@ -426,6 +430,8 @@ pub struct ScoreOptions {
     pub allow_remote_http: bool,
     pub confirm_read_only: bool,
     pub skip_tools: Vec<String>,
+    /// Arguments the standard battery calls named tools with.
+    pub arguments: Option<crate::tool_arguments::ToolArguments>,
 }
 
 /// The standard battery alone: no manifest, no gate.
@@ -444,6 +450,7 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
         &crate::standard::StandardOptions {
             confirm_read_only: options.confirm_read_only,
             skip_tools: options.skip_tools,
+            arguments: options.arguments,
         },
     )?;
     Ok(report)
@@ -2148,6 +2155,7 @@ mod tests {
             &crate::standard::StandardOptions {
                 confirm_read_only: true,
                 skip_tools: vec![],
+                arguments: None,
             },
         )
         .unwrap();

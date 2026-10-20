@@ -51,7 +51,7 @@ fn fresh(root: &Path, last: usize) -> Vec<(String, String, u64)> {
 
 #[test]
 fn invalid_measurement_profiles_do_not_create_or_extend_history() {
-    let valid = mcpeval::measurement::MeasurementProfile::current(false, &[]);
+    let valid = mcpeval::measurement::MeasurementProfile::current(false, &[], None);
     let mut invalid = Vec::new();
     let mut profile = valid.clone();
     profile.schema = "synthetic-profile-canary".into();
@@ -282,7 +282,7 @@ fn oversized_and_invalid_profile_appends_preserve_prior_cache() {
             file.write_all(&vec![b' '; 4 * 1024 * 1024 + 1]).unwrap();
             file.write_all(b"\n").unwrap();
         } else {
-            let mut profile = mcpeval::measurement::MeasurementProfile::current(false, &[]);
+            let mut profile = mcpeval::measurement::MeasurementProfile::current(false, &[], None);
             profile.schema = "mcpeval.measurement-profile/v999".into();
             let record = serde_json::json!({"server":"demo","ts":"02","score":20,
                 "passed":true,"cases_total":1,"cases_passed":1,"measurement_profile":profile});

@@ -1718,9 +1718,23 @@ mod tests {
         readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
             readiness.attested_read_only,
             &[],
+            None,
         ));
         let document = readiness.to_json();
         assert_eq!(Readiness::from_json(&document).unwrap(), readiness);
+        assert!(document["measurement_profile"]
+            .get("arguments_sha256")
+            .is_none());
+        let digest = "0".repeat(64);
+        readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
+            readiness.attested_read_only,
+            &[],
+            Some(&digest),
+        ));
+        assert_eq!(
+            Readiness::from_json(&readiness.to_json()).unwrap(),
+            readiness
+        );
         assert_eq!(
             document["assessment"]["semantic_correctness"],
             "requires-reviewed-oracle"

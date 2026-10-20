@@ -49,6 +49,12 @@ The default manifest path for `probe`, `verify`, and `report` is
   `destructiveHint` are read-only, so the standard battery calls them.
 - `--skip-tool <NAME>` (repeatable) is never called by the standard battery,
   and skipping never raises the score. A name the server does not list exits 2.
+- `--arguments <FILE>` is a JSON object mapping tool names to the arguments
+  the standard battery calls them with, for tools whose working inputs (a
+  path, an ID) the schema does not imply. Each entry must name a listed tool
+  the battery may call and satisfy its input schema, or the run exits 2. The
+  measurement profile records the file's SHA-256, so readiness is comparable
+  only between runs with the same file; the values never reach the report.
 - `--min-readiness <SCORE>` exits 1 when readiness is under the floor, even
   when every manifest case passed.
 - `--min-area <AREA=SCORE>` (repeatable) exits 1 when that area scores under
@@ -75,25 +81,29 @@ version {{PRODUCT_VERSION}}.
 standard battery with no manifest and reports readiness under the named mcpeval
 standard, its areas, and every lost point. Supports
 `--format text|json|markdown`, `--brief`, `--confirm-read-only`,
-`--skip-tool <NAME>`, `--min-readiness <SCORE>`, `--min-area <AREA=SCORE>`,
-`--exclude-latency`, and `--allow-remote-http`, as for `probe`.
+`--skip-tool <NAME>`, `--arguments <FILE>`, `--min-readiness <SCORE>`,
+`--min-area <AREA=SCORE>`, `--exclude-latency`, and `--allow-remote-http`, as
+for `probe`.
 
 ### `init`
 
 `mcpeval init --server <SERVER>` plus `-- <CMD>...` or `--url <URL>`. Scaffolds
-server-level cases and per-tool cases for candidates answering `{}`; see
+server-level cases and per-tool cases for each candidate whose call succeeds,
+and names every tool left without cases and why; see
 [Scaffold a manifest](../guides/capture-and-probe.md#scaffold-a-manifest).
 
 - `--output <PATH>` sets the manifest path (default `mcp-eval.manifest.json`);
   `--force` replaces an existing manifest.
 - `--allow-remote-http` permits an explicitly selected remote HTTPS endpoint.
-- Candidates are zero-required tools annotated `readOnlyHint: true`;
-  `--confirm-read-only` attests that unannotated zero-required tools are
-  read-only and adds them. Tools annotated `destructiveHint: true` or
-  `readOnlyHint: false` are never called.
+- Candidates are tools annotated `readOnlyHint: true`; `--confirm-read-only`
+  attests that unannotated tools are read-only and adds them. Tools annotated
+  `destructiveHint: true` or `readOnlyHint: false` are never called.
+- `--arguments <FILE>` supplies the arguments named tools are called with and
+  written into their cases. Other candidates are called with `{}`, or with
+  values built from their schema when they declare required parameters.
 - `--tool <NAME>` (repeatable) restricts candidates. A name the catalog lacks,
-  or one `init` cannot call (a writer, required arguments, or unattested),
-  exits 2.
+  or one `init` cannot call (a writer, required arguments it cannot build, or
+  unattested), exits 2.
 - `--dry-run` prints each tool's decision without calling any tool or writing
   the manifest.
 

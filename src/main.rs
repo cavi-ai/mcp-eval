@@ -203,6 +203,15 @@ fn exit_for_report(report: &mcpeval::probe::ProbeReport) {
     }
 }
 
+/// The `--arguments` file, loaded; a malformed file is a usage error.
+fn load_arguments(
+    path: Option<std::path::PathBuf>,
+) -> anyhow::Result<Option<mcpeval::tool_arguments::ToolArguments>> {
+    path.map(|path| mcpeval::tool_arguments::ToolArguments::load(&path))
+        .transpose()
+        .map_err(mcpeval::exit::usage)
+}
+
 /// Floors as declared, rejected when they cannot be compared: a floor needs
 /// the standard battery's readiness.
 fn declared_floors(
@@ -274,6 +283,7 @@ fn run() -> anyhow::Result<()> {
             gate_only,
             confirm_read_only,
             skip_tools,
+            arguments,
             floors,
             url,
             allow_remote_http,
@@ -281,6 +291,7 @@ fn run() -> anyhow::Result<()> {
         } => {
             let full_battery = selected_probe.is_none();
             let floors = declared_floors(floors, full_battery && !gate_only)?;
+            let arguments = load_arguments(arguments)?;
             let mut store = mcpeval::store::Store::open(None)?;
             let mut report = mcpeval::probe::run(
                 mcpeval::probe::ProbeOptions {
@@ -296,6 +307,7 @@ fn run() -> anyhow::Result<()> {
                     standard: !gate_only,
                     confirm_read_only,
                     skip_tools,
+                    arguments,
                 },
                 &mut store,
             )?;
@@ -344,6 +356,7 @@ fn run() -> anyhow::Result<()> {
             brief,
             confirm_read_only,
             skip_tools,
+            arguments,
             floors,
             url,
             allow_remote_http,
@@ -357,6 +370,7 @@ fn run() -> anyhow::Result<()> {
                 allow_remote_http,
                 confirm_read_only,
                 skip_tools,
+                arguments: load_arguments(arguments)?,
             })?;
             if !floors.is_empty() {
                 report.readiness_gate = Some(floors.evaluate(report.readiness.as_ref()));
@@ -386,6 +400,7 @@ fn run() -> anyhow::Result<()> {
             force,
             confirm_read_only,
             tools,
+            arguments,
             dry_run,
             url,
             allow_remote_http,
@@ -397,6 +412,7 @@ fn run() -> anyhow::Result<()> {
                 force,
                 confirm_read_only,
                 tools,
+                arguments: load_arguments(arguments)?,
                 command: cmd,
                 http_url: url,
                 allow_remote_http,
@@ -426,6 +442,9 @@ fn run() -> anyhow::Result<()> {
                 summary.case_count,
                 kinds.join(", ")
             );
+            for (tool, reason) in &summary.skipped {
+                println!("  skipped {tool}: {reason}");
+            }
             println!(
                 "next: review budgets; add error-honesty, state-recovery, and instruction-fidelity \
                  cases (they need expected inputs) and cancellation, sampling, elicitation, \

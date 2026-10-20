@@ -98,6 +98,7 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Com
                 standard: options.standard,
                 confirm_read_only: false,
                 skip_tools: Vec::new(),
+                arguments: None,
             },
             &mut store,
         )

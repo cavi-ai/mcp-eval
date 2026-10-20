@@ -212,6 +212,11 @@ pub enum Command {
         /// unexercised. Repeat for each tool.
         #[arg(long = "skip-tool", value_name = "NAME")]
         skip_tools: Vec<String>,
+        /// JSON object mapping tool names to the arguments the standard
+        /// battery calls them with, for tools whose working inputs (a path,
+        /// an ID) the schema does not imply. Reports carry only its digest.
+        #[arg(long, value_name = "FILE")]
+        arguments: Option<std::path::PathBuf>,
         #[command(flatten)]
         floors: FloorArgs,
         /// Streamable HTTP endpoint instead of a stdio command.
@@ -244,6 +249,11 @@ pub enum Command {
         /// unexercised. Repeat for each tool.
         #[arg(long = "skip-tool", value_name = "NAME")]
         skip_tools: Vec<String>,
+        /// JSON object mapping tool names to the arguments the standard
+        /// battery calls them with, for tools whose working inputs (a path,
+        /// an ID) the schema does not imply. Reports carry only its digest.
+        #[arg(long, value_name = "FILE")]
+        arguments: Option<std::path::PathBuf>,
         #[command(flatten)]
         floors: FloorArgs,
         /// Streamable HTTP endpoint instead of a stdio command.
@@ -277,6 +287,12 @@ pub enum Command {
         /// Scaffold only this tool; repeat for each tool.
         #[arg(long = "tool", value_name = "NAME")]
         tools: Vec<String>,
+        /// JSON object mapping tool names to the arguments init calls them
+        /// with and writes into their cases. Tools without an entry are
+        /// called with `{}`, or with arguments built from their schema when
+        /// they declare required parameters.
+        #[arg(long, value_name = "FILE")]
+        arguments: Option<std::path::PathBuf>,
         /// Print each tool's decision without calling any tool or writing
         /// the manifest.
         #[arg(long)]

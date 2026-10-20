@@ -295,10 +295,11 @@ mod tests {
     #[test]
     fn readiness_placement_excludes_unknown_and_different_profiles() {
         let mut corpus = corpus(&[10, 50, 90]);
-        let profile = crate::measurement::MeasurementProfile::current(false, &[]);
+        let profile = crate::measurement::MeasurementProfile::current(false, &[], None);
         corpus.observations[0].measurement_profile = Some(profile.clone());
-        corpus.observations[1].measurement_profile =
-            Some(crate::measurement::MeasurementProfile::current(true, &[]));
+        corpus.observations[1].measurement_profile = Some(
+            crate::measurement::MeasurementProfile::current(true, &[], None),
+        );
         assert_eq!(corpus.placement_for(20, None), None);
         assert_eq!(
             corpus.placement_for(20, Some(&profile)),

@@ -220,15 +220,37 @@ fn standard_of(stdout: &str) -> String {
 
 #[test]
 fn calibration_context_appears_when_the_corpus_resolves() {
-    // The repository corpus resolves even from a bare temp home and was
-    // collected under the shipped standard, so readiness is placed too.
+    // The repository corpus resolves even from a bare temp home. It places
+    // readiness only under its own measurement profile, which names the
+    // platform and architecture it was collected on; catalog measurements
+    // are placed everywhere.
     let dir = home();
     let (passed, stdout) = probe_demo(&dir, DISCOVERY, &[]);
     assert!(passed, "{stdout}");
     assert!(stdout.contains("\ndemo gate 1/1 passed\n"), "{stdout}");
     let standard = standard_of(&stdout);
-    assert!(
+    let corpus: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/data/readiness-corpus.json"
+        ))
+        .unwrap(),
+    )
+    .unwrap();
+    let here = serde_json::to_value(mcpeval::measurement::MeasurementProfile::current(
+        false,
+        &[],
+        None,
+    ))
+    .unwrap();
+    let placed = corpus["observations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|observation| observation["measurement_profile"] == here);
+    assert_eq!(
         stdout.contains(&format!("\n  standard corpus ({standard}): ")),
+        placed,
         "{stdout}"
     );
     assert!(stdout.contains("\n  catalog: "), "{stdout}");

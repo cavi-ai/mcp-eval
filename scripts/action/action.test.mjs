@@ -255,6 +255,31 @@ test("install with a version pins to that release's own release.json", async () 
   assert.equal(mislabeled.githubPath, "");
 });
 
+test("an explicit version replaces a mismatched preinstalled evaluator", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpeval-action-stub-"));
+  const preinstalled = path.join(directory, "preinstalled");
+  await mkdir(preinstalled);
+  await writeFile(path.join(preinstalled, "mcpeval"), "#!/bin/sh\nprintf 'mcpeval 1.2.3\\n'\n");
+  await chmod(path.join(preinstalled, "mcpeval"), 0o755);
+  const stub = await stubArchive(directory, { version: "9.9.9" });
+  const manifest = manifestFor(TAG, LINUX_ARCHIVE, "linux-x64", stub);
+  const routes = releaseRoutes(TAG, LINUX_ARCHIVE, stub);
+  routes.set(`/${TAG}/release.json`, JSON.stringify(manifest));
+  const pathValue = [preinstalled, await pathWithoutMcpeval(directory)].join(path.delimiter);
+  for (const version of ["9.9.9", "v9.9.9"]) {
+    const result = await install({ manifest, routes, pathValue, env: { MCPEVAL_VERSION: version } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /^installed mcpeval 9\.9\.9 /u);
+    const [entry] = result.githubPath.trim().split("\n");
+    assert.equal(spawnSync(path.join(entry, "mcpeval"), ["--version"], { encoding: "utf8" }).stdout, "mcpeval 9.9.9\n");
+  }
+  const matching = await install({ manifest, routes, pathValue, env: { MCPEVAL_VERSION: "v1.2.3" } });
+  assert.equal(matching.status, 0, matching.stderr);
+  assert.equal(matching.stdout, "using preinstalled mcpeval 1.2.3\n");
+  assert.deepEqual(matching.requests, []);
+  assert.equal(matching.githubPath, "");
+});
+
 const bsdtar = /bsdtar/u.test(spawnSync("tar", ["--version"], { encoding: "utf8" }).stdout ?? "");
 
 test("install extracts the Windows zip archive", { skip: !bsdtar && "needs a tar that reads zip" }, async () => {

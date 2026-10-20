@@ -85,7 +85,8 @@ Live corpus replay is a separately authorized pre-release check, not a CI
 gate. The checked-in corpus is a v3 collection from the public pinned targets
 in `data/corpus-targets.json`. Reports place readiness only against
 observations with the same measurement profile, which names the evaluator
-version, so recollect it with the release binary before tagging:
+version. To supply a new release baseline, recollect it with the release
+binary before tagging:
 
 ```sh
 cargo build --release --locked --bins

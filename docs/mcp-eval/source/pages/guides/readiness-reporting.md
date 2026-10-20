@@ -283,7 +283,9 @@ Target deployments and backing state must still be controlled by the operator.
 The shipped corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v3`)
 is collected under `mcpeval-standard/2` from the pinned targets in
 `data/corpus-targets.json`, and retains the evaluator, target-file hash, and
-each target's package, version, and outcome; see
+each target's package, version, and outcome. It was measured with evaluator
+0.7.1; readiness placement is unavailable for other evaluator versions unless
+a matching corpus is supplied. See
 [State of MCP servers](state-of-mcp-servers.md) and
 [Corpus collection and replay](corpus-replay.md).
 

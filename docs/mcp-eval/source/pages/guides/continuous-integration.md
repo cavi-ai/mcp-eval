@@ -31,7 +31,8 @@ The action installs the release pinned by its own `distribution/release.json`:
 
 `version: 0.2.0` installs that release instead, verified against that release's
 own `release.json` rather than the action's. A `mcpeval` already on `PATH` is
-used as is, so an earlier step can install a pinned or local build.
+reused only when its version matches an explicit `version` input. With no
+`version` input, an earlier step can supply a pinned or local build.
 
 | Input | Default | Meaning |
 | --- | --- | --- |

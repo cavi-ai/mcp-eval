@@ -10,8 +10,11 @@ fail() {
 }
 
 if command -v mcpeval >/dev/null 2>&1; then
-  echo "using preinstalled $(mcpeval --version)"
-  exit 0
+  installed_version=$(mcpeval --version 2>/dev/null || true)
+  if [ -z "${MCPEVAL_VERSION:-}" ] || [ "$installed_version" = "mcpeval ${MCPEVAL_VERSION#v}" ]; then
+    echo "using preinstalled $installed_version"
+    exit 0
+  fi
 fi
 
 case "${RUNNER_OS:-}" in

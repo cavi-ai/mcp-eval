@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 - 2026-10-20
 
 ### Added
 
@@ -13,9 +13,17 @@
 ### Changed
 
 - `init` calls tools with required parameters using values built from their schema, and names every tool it left without cases and why.
-- The readiness corpus is recollected under `mcpeval-standard/2` from the pinned public targets in `data/corpus-targets.json` (13 of 34 targets observed), so reports place readiness again.
+- The readiness corpus is recollected under `mcpeval-standard/2` from the pinned public targets in `data/corpus-targets.json` (13 of 34 targets observed), using evaluator 0.7.1. Readiness placement requires a matching evaluator version and measurement profile.
 - SARIF output adds a warning per lost readiness point (`readiness/<reason>`) and an error per readiness floor shortfall (`readiness/floor`).
 - The action writes SARIF beside `report-path` instead of `mcpeval.sarif` and pins `upload-sarif` to a commit SHA.
+
+### Fixed
+
+- Cancellation probes support optional cancellation while requiring the session to remain usable; completed tool errors still fail.
+- Stdio payload probes accept bounded null-ID protocol errors and require recovery on the same session.
+- Error probes recognize `data.retryable` and reject malformed or conflicting retryability hints.
+- npm installation retries transient archive download failures.
+- The action replaces a preinstalled evaluator when it differs from the explicitly requested version.
 
 ## 0.7.1 - 2026-10-12
 

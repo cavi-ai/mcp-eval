@@ -3,7 +3,7 @@
 This page reports popular public MCP servers scored with mcpeval's read-only
 standard battery (`mcpeval score`) under readiness standard
 `mcpeval-standard/2`. The corpus behind it, `data/readiness-corpus.json`, was
-collected on macOS from the pinned target file `data/corpus-targets.json` and
+collected with MCP Eval 0.7.1 on macOS from the pinned target file `data/corpus-targets.json` and
 records the evaluator, the target file's SHA-256, and each target's package,
 version, and outcome.
 

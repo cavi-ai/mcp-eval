@@ -64,7 +64,10 @@ fn junit_counts(dir: &Path, xml: &[u8]) -> String {
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    String::from_utf8(output.stdout).unwrap()
+    // Python prints CRLF on Windows.
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .replace("\r\n", "\n")
 }
 
 #[test]

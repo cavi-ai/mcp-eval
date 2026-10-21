@@ -11,7 +11,7 @@ keywords = ["mcp", "evaluation", "observability", "privacy"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
-jsonschema = { version = "0.58", default-features = false }
+jsonschema = { version = "0.59", default-features = false }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }

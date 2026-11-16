@@ -1,110 +1,75 @@
-# mcp-eval
+# MCP Eval
 
-[![CI](https://github.com/cavi-ai/mcp-eval/actions/workflows/ci.yml/badge.svg)](https://github.com/cavi-ai/mcp-eval/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/@cavi-ai/mcp-eval)](https://www.npmjs.com/package/@cavi-ai/mcp-eval)
-[![crates.io](https://img.shields.io/crates/v/mcpeval)](https://crates.io/crates/mcpeval)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![npm weekly downloads](https://img.shields.io/npm/dw/@cavi-ai/mcp-eval?label=npm%20downloads%2Fweek)](https://www.npmjs.com/package/@cavi-ai/mcp-eval)
 
-**Measure how well an MCP server works for agents, gate it in CI, and turn real agent friction into findings you can fix.**
+![A corgi detective catches the same bug in disguise. Catch the repeat offenders. Reproduce the failure. Verify the fix.](assets/mcp-eval-hero.png)
 
-`mcpeval` scores any MCP server, over stdio or Streamable HTTP, with a
-deterministic read-only battery. No LLM is in the loop: the same server and
-manifest give the same result. Every lost point comes with the server-side fix.
+**Find the failures your MCP server keeps sending back to agents.**
 
-A privacy-preserving shim records what real agent sessions cost, and repeated
-failures become findings. A finding closes after three consecutive green
-verification runs and reopens on regression.
+MCP Eval turns recurring tool errors from real sessions into findings you can reproduce, investigate and verify. Run a read-only readiness battery against a server, or capture session traffic to see which failures keep coming back. Findings include a server-side fix hint; they close after three consecutive passing verification runs and reopen if the problem returns.
 
-> **Pre-1.0.** The CLI, on-disk schema, and manifest format can change between
-> minor versions. Read the [changelog](CHANGELOG.md) before upgrading.
+## Try it
 
-## Install
+Install the CLI with one of these package managers:
 
 ```sh
 brew install cavi-ai/tap/mcpeval
+# or
 npm install --global @cavi-ai/mcp-eval
+# or
 cargo install mcpeval --locked
 ```
 
-Each installs `mcpeval` and the demo server `mcpeval-demo`. Homebrew covers
-macOS and Linux; npm also covers Windows x64. Both install the release archive
-after checking its pinned SHA-256. See [Installation](docs/mcp-eval/source/pages/introduction/installation.md)
-for release archives and source builds.
-
-## First run
-
-Score the bundled demo server against mcpeval's standard:
+Each installs `mcpeval` and `mcpeval-demo`. Run the included server through the readiness battery:
 
 ```sh
 mcpeval score --server demo -- mcpeval-demo
-# demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/2
 ```
 
-Scaffold a manifest from the live catalog, then gate on it:
+The report breaks down protocol, catalog, context, error honesty, reliability and coverage, with findings and suggested fixes. Replace `mcpeval-demo` with your server command, or use `--url http://127.0.0.1:8080/mcp` for a Streamable HTTP server. See [Installation](docs/mcp-eval/source/pages/introduction/installation.md) for platform support and other install options, and [Quickstart](docs/mcp-eval/source/pages/introduction/quickstart.md) for the next steps.
+
+## Turn recurring failures into fixes
+
+Wrap a stdio server in your MCP client's configuration so MCP Eval can observe its calls:
+
+```json
+{
+  "command": "/path/to/mcpeval",
+  "args": ["shim", "--server", "myserver", "--", "/path/to/server", "serve"]
+}
+```
+
+After sessions have run, index the records and promote recurring issues:
 
 ```sh
-mcpeval init --server demo --confirm-read-only \
-  --output demo.manifest.json -- mcpeval-demo
-mcpeval probe --server demo --manifest demo.manifest.json -- mcpeval-demo
-# demo gate 25/25 passed
+mcpeval index
+mcpeval promote
+mcpeval findings --format md
 ```
 
-Break one behavior and read the fixed failure reason and its fix:
+Promotion requires an issue to appear in at least two distinct sessions and meet the configured threshold. Use the resulting findings to investigate failures, create cases and verify a fix. The [capture guide](docs/mcp-eval/source/pages/guides/capture-and-probe.md) covers stdio and Streamable HTTP; [Findings and verification](docs/mcp-eval/source/pages/guides/findings-and-verification.md) explains the lifecycle.
 
-```sh
-mcpeval probe --server demo --manifest demo.manifest.json \
-  -- mcpeval-demo --broken stalled-cursor
-# catalog-pagination pagination fail ... reason=pagination-stalled-cursor ...
-mcpeval explain pagination-stalled-cursor
-```
+## Evaluate on your terms
 
-Replace `mcpeval-demo` with your server's command, or pass
-`--url http://127.0.0.1:8080/mcp`. The [Quickstart](docs/mcp-eval/source/pages/introduction/quickstart.md)
-walks through the rest.
+- Run the deterministic, read-only standard battery over stdio or Streamable HTTP. It does not use an LLM grader.
+- Define manifest cases, probe a server and use the results in CI. Start with [Capture and probe](docs/mcp-eval/source/pages/guides/capture-and-probe.md) and [Continuous integration](docs/mcp-eval/source/pages/guides/continuous-integration.md).
+- Give an MCP client access to evaluation tools for an agent-led workflow. Starting a server requires explicit spawn permission; see [Agent loop over MCP](docs/mcp-eval/source/pages/guides/agent-loop.md).
+- Compare servers on one manifest, check instruction coherence, or collect and replay a corpus. See [Readiness reporting](docs/mcp-eval/source/pages/guides/readiness-reporting.md), [Instruction coherence](docs/mcp-eval/source/pages/guides/instruction-coherence.md) and [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md).
 
-## What you can do
+## Privacy and authorization
 
-| Goal | Guide |
-| --- | --- |
-| Score readiness and fix every lost point | [Readiness reporting](docs/mcp-eval/source/pages/guides/readiness-reporting.md) |
-| Write and run manifest cases | [Capture and probe](docs/mcp-eval/source/pages/guides/capture-and-probe.md), [Manifest](docs/mcp-eval/source/pages/reference/manifest.md) |
-| Gate pull requests and upload SARIF alerts | [Continuous integration](docs/mcp-eval/source/pages/guides/continuous-integration.md) |
-| Compare servers or deployments on one manifest | [Comparing servers](docs/mcp-eval/source/pages/guides/readiness-reporting.md#comparing-servers) |
-| Capture real agent sessions and promote findings | [Capture and probe](docs/mcp-eval/source/pages/guides/capture-and-probe.md), [Findings and verification](docs/mcp-eval/source/pages/guides/findings-and-verification.md) |
-| Let an agent probe, score, and verify over MCP | [Agent loop over MCP](docs/mcp-eval/source/pages/guides/agent-loop.md) |
-| Check that instructions match tool behavior | [Instruction coherence](docs/mcp-eval/source/pages/guides/instruction-coherence.md) |
-| See how 13 popular public servers score | [State of MCP servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md) |
-| Collect and replay your own corpus | [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md) |
+The standard battery is read-only and does not call tools annotated as writers. A mutating case requires a declared sandbox and `--allow-mutation`. Capture and probe records retain shaped arguments, fixed labels and counts, rather than raw argument values, response bodies or error prose.
 
-## Safe by default
-
-Probes are read-only. A mutating case needs a declared sandbox and
-`--allow-mutation`, and the standard battery never calls a tool annotated as a
-writer. Capture and probe records keep shaped arguments, fixed labels, and
-counts, never raw argument values, response bodies, or error prose.
-
-Records under `<MCPEVAL_HOME>/store/` are content-minimized, but annotation
-notes are free-form prose: review or remove them before sharing, or use
-`mcpeval share`, which omits them by default and refuses a snapshot its
-redaction sweep flags. The salt, databases, manifests, and corpus files stay
-private. See [Privacy and authorization](docs/mcp-eval/source/pages/security/privacy-and-authorization.md).
+Annotation notes are free-form text. Review or remove them before sharing; `mcpeval share` omits notes by default and refuses a snapshot flagged by its redaction sweep. Keep salts, databases, manifests and corpus files private. Read [Privacy and authorization](docs/mcp-eval/source/pages/security/privacy-and-authorization.md) before capturing or sharing records.
 
 ## Documentation
 
-Hosted at [cavi-ai.xyz/docs/mcp-eval](https://cavi-ai.xyz/docs/mcp-eval/).
+Browse the [hosted documentation](https://cavi-ai.xyz/docs/mcp-eval/) or start with [Overview](docs/mcp-eval/source/pages/introduction/overview.md), [CLI reference](docs/mcp-eval/source/pages/reference/cli.md), [Manifest reference](docs/mcp-eval/source/pages/reference/manifest.md), [Evaluation dimensions](docs/mcp-eval/source/pages/reference/evaluation-dimensions.md) and [Troubleshooting](docs/mcp-eval/source/pages/guides/troubleshooting.md).
 
-- Start: [Overview](docs/mcp-eval/source/pages/introduction/overview.md), [Installation](docs/mcp-eval/source/pages/introduction/installation.md), [Quickstart](docs/mcp-eval/source/pages/introduction/quickstart.md)
-- Guides: [Capture and probe](docs/mcp-eval/source/pages/guides/capture-and-probe.md), [Readiness reporting](docs/mcp-eval/source/pages/guides/readiness-reporting.md), [Findings and verification](docs/mcp-eval/source/pages/guides/findings-and-verification.md), [Agent loop over MCP](docs/mcp-eval/source/pages/guides/agent-loop.md), [Continuous integration](docs/mcp-eval/source/pages/guides/continuous-integration.md), [Instruction coherence](docs/mcp-eval/source/pages/guides/instruction-coherence.md), [Corpus collection and replay](docs/mcp-eval/source/pages/guides/corpus-replay.md), [Troubleshooting](docs/mcp-eval/source/pages/guides/troubleshooting.md)
-- Reference: [CLI](docs/mcp-eval/source/pages/reference/cli.md), [Manifest](docs/mcp-eval/source/pages/reference/manifest.md), [Evaluation dimensions](docs/mcp-eval/source/pages/reference/evaluation-dimensions.md)
-- Security and release: [Privacy and authorization](docs/mcp-eval/source/pages/security/privacy-and-authorization.md), [Version and support](docs/mcp-eval/source/pages/release/version-and-support.md)
-
-Packages: [GitHub releases](https://github.com/cavi-ai/mcp-eval/releases/latest), [npm](https://www.npmjs.com/package/@cavi-ai/mcp-eval), [crates.io](https://crates.io/crates/mcpeval), [Homebrew tap](https://github.com/cavi-ai/homebrew-tap).
+MCP Eval is pre-1.0: CLI, on-disk schema and manifest formats can change between minor versions. Read the [changelog](CHANGELOG.md) before upgrading.
 
 ## Contributing
 
-Bug reports and focused pull requests are welcome. [CONTRIBUTING.md](CONTRIBUTING.md)
-covers development setup, quality gates, and the privacy rules for fixtures and
-tests; [`.pr-gates`](.pr-gates) lists the commands CI runs. Report
-vulnerabilities through [SECURITY.md](SECURITY.md).
+Bug reports and focused pull requests are welcome. [Contributing](CONTRIBUTING.md) covers development setup and privacy rules for fixtures and tests. Report vulnerabilities through [Security](SECURITY.md).
 
 Distributed under the [MIT License](LICENSE).

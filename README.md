@@ -64,6 +64,8 @@ Annotation notes are free-form text. Review or remove them before sharing; `mcpe
 
 ## Documentation
 
+See how [13 popular public servers](docs/mcp-eval/source/pages/guides/state-of-mcp-servers.md) score against the readiness standard.
+
 Browse the [hosted documentation](https://cavi-ai.xyz/docs/mcp-eval/) or start with [Overview](docs/mcp-eval/source/pages/introduction/overview.md), [CLI reference](docs/mcp-eval/source/pages/reference/cli.md), [Manifest reference](docs/mcp-eval/source/pages/reference/manifest.md), [Evaluation dimensions](docs/mcp-eval/source/pages/reference/evaluation-dimensions.md) and [Troubleshooting](docs/mcp-eval/source/pages/guides/troubleshooting.md).
 
 MCP Eval is pre-1.0: CLI, on-disk schema and manifest formats can change between minor versions. Read the [changelog](CHANGELOG.md) before upgrading.

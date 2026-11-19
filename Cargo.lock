@@ -921,9 +921,9 @@ dependencies = [
 
 [[package]]
 name = "psl2"
-version = "0.1.36"
+version = "0.1.38"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25a9e3857dd99f3007747c14db009c1c78f4f179264f1aa2c827e9534468a947"
+checksum = "e9f41cd75f9f42f0fae1e6c48c4aed75c3ffe605f3786a30b8ccc5a931765c8d"
 dependencies = [
  "idna",
 ]

@@ -663,6 +663,8 @@
             "protocol.unknown-tool",
             "protocol.pagination",
             "protocol.surfaces",
+            "protocol.origin",
+            "protocol.auth-challenge",
             "error-honesty.invalid-arguments",
             "error-honesty.untestable"
           ]
@@ -717,6 +719,9 @@
             "protocol-unknown-tool-accepted",
             "protocol-pagination-invalid",
             "protocol-surface-invalid",
+            "protocol-origin-accepted",
+            "protocol-auth-no-challenge",
+            "protocol-auth-no-metadata",
             "protocol-call-failed",
             "honesty-accepted-invalid",
             "honesty-empty-error",

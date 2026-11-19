@@ -371,6 +371,20 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
             "a declared resources or prompts capability did not list cleanly; list what the \
              capability declares, or stop declaring it"
         }
+        CheckReason::ProtocolOriginAccepted => {
+            "a loopback server accepted a request with a foreign Origin; validate Origin and \
+             answer an untrusted one with HTTP 403 to block DNS rebinding"
+        }
+        CheckReason::ProtocolAuthNoChallenge => {
+            "a request without credentials got 401 with no Bearer challenge; send \
+             WWW-Authenticate: Bearer with resource_metadata naming the protected resource \
+             metadata URL"
+        }
+        CheckReason::ProtocolAuthNoMetadata => {
+            "no OAuth protected resource metadata (RFC 9728) named an authorization server; \
+             serve it at resource_metadata or /.well-known/oauth-protected-resource with \
+             authorization_servers"
+        }
         CheckReason::HonestyAcceptedInvalid => {
             "the tool accepted arguments that violate its input schema; validate arguments and \
              refuse invalid ones with an isError result whose text names the parameter and what \

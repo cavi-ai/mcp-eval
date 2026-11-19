@@ -158,7 +158,14 @@ The share of these checks passed:
 - `tools/list` pages with finite cursors and valid, distinct entries;
 - a declared resources or prompts capability lists cleanly (only when declared);
 - `initialize` with an unknown version answers a date-shaped version the server
-  supports and will echo.
+  supports and will echo;
+- over HTTP to a loopback endpoint, `initialize` with a foreign `Origin` is
+  refused with 403 (`protocol-origin-accepted`);
+- over HTTP with credentials configured, when `initialize` without them gets
+  401, the 401 carries a `Bearer` challenge (`protocol-auth-no-challenge`) and
+  OAuth protected resource metadata (RFC 9728) at its `resource_metadata` URL
+  or `/.well-known/oauth-protected-resource` names an authorization server
+  (`protocol-auth-no-metadata`).
 
 ### catalog
 

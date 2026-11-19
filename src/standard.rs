@@ -1155,6 +1155,67 @@ fn protocol_checks(
             },
         ),
     ));
+    if let Some((endpoint, allow_remote)) = target.http_endpoint() {
+        results.extend(http_checks(target, endpoint, allow_remote));
+    }
+    results
+}
+
+/// The foreign origin a loopback server must refuse.
+const FOREIGN_ORIGIN: &str = "https://mcpeval.invalid";
+
+/// Streamable HTTP transport security, each on a fresh `initialize`:
+/// - a loopback server refuses a foreign `Origin` with 403, against DNS
+///   rebinding;
+/// - when credentials are configured and a request without them gets 401,
+///   the 401 carries a `Bearer` challenge and protected resource metadata
+///   (RFC 9728) names an authorization server.
+fn http_checks(
+    target: &ClientTarget,
+    endpoint: &str,
+    allow_remote: bool,
+) -> Vec<(CheckId, Option<CheckReason>)> {
+    let mut results = Vec::new();
+    let status = |origin, credentials| {
+        target.budget.check().ok()?;
+        crate::http_client::initialize_status(
+            endpoint,
+            allow_remote,
+            origin,
+            credentials,
+            CALL_TIMEOUT,
+        )
+        .ok()
+    };
+    if crate::http_client::is_loopback_endpoint(endpoint) {
+        let reason = match status(Some(FOREIGN_ORIGIN), true) {
+            Some((403, _)) => None,
+            Some(_) => Some(CheckReason::ProtocolOriginAccepted),
+            None => Some(CheckReason::ProtocolCallFailed),
+        };
+        results.push((CheckId::ProtocolOrigin, reason));
+    }
+    let credentialed =
+        crate::http_client::credential_headers().is_ok_and(|headers| !headers.is_empty());
+    if credentialed {
+        if let Some((401, challenge)) = status(None, false) {
+            let (bearer, metadata) = challenge
+                .as_deref()
+                .map_or((false, None), crate::http_client::bearer_challenge);
+            let reason = if !bearer {
+                Some(CheckReason::ProtocolAuthNoChallenge)
+            } else if !crate::http_client::has_resource_metadata(
+                endpoint,
+                metadata.as_deref(),
+                CALL_TIMEOUT,
+            ) {
+                Some(CheckReason::ProtocolAuthNoMetadata)
+            } else {
+                None
+            };
+            results.push((CheckId::ProtocolAuthChallenge, reason));
+        }
+    }
     results
 }
 

@@ -65,6 +65,17 @@ impl ClientTarget {
         Ok(self)
     }
 
+    /// The endpoint and remote permission of an HTTP target.
+    pub(crate) fn http_endpoint(&self) -> Option<(&str, bool)> {
+        match &self.transport {
+            TargetTransport::Http {
+                endpoint,
+                allow_remote,
+            } => Some((endpoint.as_str(), *allow_remote)),
+            TargetTransport::Stdio { .. } => None,
+        }
+    }
+
     pub(super) fn from_options(options: &ProbeOptions) -> anyhow::Result<Self> {
         Self::new(
             options.command.clone(),

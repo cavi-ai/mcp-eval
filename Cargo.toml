@@ -26,7 +26,7 @@ ureq = { version = "2.12", default-features = false, features = ["json", "tls"] 
 uuid = { version = "1", features = ["v4", "serde"] }
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", features = ["poll"] }
+nix = { version = "0.32", features = ["poll"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_IO"] }

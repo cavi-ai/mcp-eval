@@ -7,6 +7,13 @@ pub enum FindingsFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum FrictionFormat {
+    Text,
+    /// Deterministic JSON document (mcpeval.friction/v1).
+    Json,
+}
+
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum ProbeFormat {
     /// Human-readable one-line-per-case summary.
@@ -528,6 +535,14 @@ pub enum Command {
         /// Output format for agents, people, or structured consumers.
         #[arg(long, value_enum, default_value_t = FindingsFormat::Agent)]
         format: FindingsFormat,
+    },
+    /// Count session-path friction in indexed captures: retry storms,
+    /// corrected calls, a wrong tool before the right one, and failed calls
+    /// before the first success.
+    #[command(display_order = 14)]
+    Friction {
+        #[arg(long, value_enum, default_value_t = FrictionFormat::Text)]
+        format: FrictionFormat,
     },
     /// Record an agent-authored observation about a call, identified by
     /// event ID or legacy (session, seq): a documented path was blocked, a call reported

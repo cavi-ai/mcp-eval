@@ -842,6 +842,20 @@ fn run() -> anyhow::Result<()> {
             print!("{}", mcpeval::report::render(&findings, format)?);
             Ok(())
         }
+        cli::Command::Friction { format } => {
+            let store = mcpeval::store::Store::open(None)?;
+            let servers = mcpeval::friction::load(store.root())?;
+            if servers.is_empty() {
+                eprintln!("no indexed tools/call records; capture with mcpeval shim, then run mcpeval index");
+            }
+            match format {
+                cli::FrictionFormat::Text => print!("{}", mcpeval::friction::render_text(&servers)),
+                cli::FrictionFormat::Json => {
+                    print!("{}", mcpeval::friction::render_json(&servers)?)
+                }
+            }
+            Ok(())
+        }
         cli::Command::Annotate {
             event_id,
             session,

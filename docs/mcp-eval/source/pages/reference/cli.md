@@ -20,6 +20,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary. Use
 | `index` | Loads JSONL records and derives failure windows |
 | `promote` | Aggregates indexed failures and promotes supported findings |
 | `findings` | Renders sanitized findings |
+| `friction` | Counts session-path friction in indexed captures |
 | `annotate` | Records a bounded observation about a captured call |
 | `generate` | Writes a one-case read-only manifest for a finding |
 | `verify` | Runs one manifest case and updates the finding lifecycle |
@@ -200,6 +201,7 @@ probe runs, at most `--last` runs per server (default 10).
 | `index` | `[--rebuild]` | Loads JSONL records and derives failure windows; `--rebuild` ignores cached checkpoints and reconstructs every derived row |
 | `promote` | `[--threshold <THRESHOLD>]` | Promotes supported findings |
 | `findings` | `[--format agent\|md\|json]` | Default format is `agent` |
+| `friction` | `[--format text\|json]` | Retry storms, corrections, wrong-tool switches, and failed calls before the first success per server; needs `index` |
 | `annotate` | `--event-id <UUID>` or `--session <SESSION> --seq <SEQ>`, plus `--kind <KIND> --note <NOTE>` | Unknown or ambiguous targets stay unlinked |
 | `export-issues` | `--dir <DIR> [--include-closed] [--force]` | Content-free markdown drafts for open promoted findings; `--include-closed` adds fix-claimed, verifying, and closed findings; `--force` replaces existing files |
 

@@ -10,6 +10,7 @@ mod evaluation_budget;
 pub mod exit;
 pub mod fingerprint;
 pub mod frame;
+pub mod friction;
 pub mod generate;
 pub mod guidance;
 pub mod http_client;

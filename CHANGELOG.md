@@ -6,6 +6,7 @@
 
 - `score --sandbox` runs a stdio server on macOS in a disposable directory with writes outside it denied, no inherited credentials, and no network (`--sandbox-network` allows it), and calls every tool, writers included; the measurement profile records `sandboxed`.
 - The standard battery calls a tool whose synthesized arguments failed once more with values other tools returned, such as a listed ID; coverage reports `chained_tools`.
+- `mcpeval friction` counts session-path friction in indexed captures: retry storms, corrections, a failed tool followed by a different successful one, and failed calls before the first success.
 - `MCPEVAL_HTTP_HEADERS` sends extra credential headers to HTTP servers, one `Name: value` per line, never persisted or printed.
 - Protocol checks for HTTP servers: a loopback server must refuse a foreign `Origin` with 403 (`protocol.origin`), and with credentials configured a 401 must carry a `Bearer` challenge and RFC 9728 protected resource metadata (`protocol.auth-challenge`).
 

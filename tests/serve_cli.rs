@@ -253,7 +253,7 @@ fn a_dangling_index_link_is_unavailable_not_empty() {
 }
 
 #[test]
-fn invalid_tool_arguments_are_refused_with_32602_naming_the_path_without_values() {
+fn invalid_tool_arguments_return_a_tool_error_naming_the_path_without_values() {
     let dir = home();
     let (_server, port) = start_serve(&dir, &[]);
     let endpoint = format!("http://127.0.0.1:{port}/mcp");
@@ -282,8 +282,7 @@ fn invalid_tool_arguments_are_refused_with_32602_naming_the_path_without_values(
     ] {
         let (status, response) = call(&endpoint, tool, arguments);
         assert_eq!(status, 200);
-        assert_eq!(response["error"]["code"], -32602, "{response}");
-        let message = response["error"]["message"].as_str().unwrap().to_owned();
+        let message = tool_error(&response).to_owned();
         assert!(message.contains(needle), "{response}");
         if canary {
             assert!(!response.to_string().contains("CANARY_7Q"), "{response}");
@@ -736,11 +735,13 @@ fn shipped_service_passes_ping_and_exercises_its_read_only_contract_over_http() 
         }
     }
     let (_, invalid) = call(&http, "list_findings", json!({"state": 42}));
+    assert_eq!(invalid["result"]["isError"], true, "{invalid}");
     assert!(
-        invalid.get("error").is_some(),
-        "invalid declared input was accepted: {invalid}"
+        invalid["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|text| text.contains("/state")),
+        "the refusal does not name the parameter: {invalid}"
     );
-    assert_eq!(invalid["error"]["code"], -32602, "{invalid}");
     let honesty = report["readiness"]["areas"]
         .as_array()
         .unwrap()

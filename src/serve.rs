@@ -441,8 +441,9 @@ fn handle_call(message: &Value, server: &Server) -> anyhow::Result<Value> {
     // These tools already validate typed arguments or the CLI's annotation
     // contract, preserving their more specific error messages.
     if !matches!(name, "record_annotation" | "score" | "verify_finding") {
+        // An isError result naming the parameter lets the model correct its call.
         if let Some(reason) = crate::schema::violation(&declared["inputSchema"], &arguments) {
-            return Err(InvalidParams(reason).into());
+            return Err(anyhow::anyhow!(reason));
         }
     }
     // Keep spare HTTP workers available to data queries. Concurrent

@@ -721,6 +721,8 @@
             "honesty-accepted-invalid",
             "honesty-empty-error",
             "honesty-wrong-code",
+            "honesty-protocol-error",
+            "honesty-unnamed-parameter",
             "honesty-call-failed",
             "honesty-untestable"
           ]

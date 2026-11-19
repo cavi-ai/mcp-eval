@@ -373,15 +373,25 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
         }
         CheckReason::HonestyAcceptedInvalid => {
             "the tool accepted arguments that violate its input schema; validate arguments and \
-             refuse invalid ones with -32602 or an isError result that says what is wrong"
+             refuse invalid ones with an isError result whose text names the parameter and what \
+             is wrong with it"
         }
         CheckReason::HonestyEmptyError => {
-            "the tool refused invalid arguments without saying why; put the reason in the \
-             isError result's text content"
+            "the tool refused invalid arguments without saying why; put the parameter and the \
+             reason in the isError result's text content"
         }
         CheckReason::HonestyWrongCode => {
-            "invalid arguments were refused with a JSON-RPC code other than -32602; use -32602 \
-             (invalid params) or an isError result"
+            "invalid arguments were refused with an unrelated JSON-RPC error; return an isError \
+             result whose text names the parameter and what is wrong with it"
+        }
+        CheckReason::HonestyProtocolError => {
+            "invalid arguments were refused with JSON-RPC -32602, which most clients do not show \
+             the model; return an isError result whose text names the parameter so the model can \
+             correct its call"
+        }
+        CheckReason::HonestyUnnamedParameter => {
+            "the isError text does not name the offending parameter; say which parameter is \
+             missing or invalid and what it expects"
         }
         CheckReason::HonestyCallFailed => {
             "invalid arguments hung the call, closed the connection, or left the session unable \

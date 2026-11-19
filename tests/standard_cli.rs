@@ -746,7 +746,16 @@ fn a_refusal_counts_even_when_the_server_lacks_ping() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(area(&document, "error-honesty"), 100, "{document:#}");
+    // The -32602 refusal earns partial credit, not the zero of a failed call.
+    assert_eq!(area(&document, "error-honesty"), 50, "{document:#}");
+    assert_eq!(
+        lost_in(&document, "error-honesty"),
+        owned(&[(
+            "error-honesty.invalid-arguments",
+            Some("lookup"),
+            "honesty-protocol-error"
+        )])
+    );
     assert!(lost_in(&document, "protocol")
         .contains(&owned(&[("protocol.ping", None, "protocol-ping-failed")])[0]));
 }
@@ -818,7 +827,8 @@ fn synthesized_arguments_reach_required_argument_tools() {
     );
     assert_eq!(document["readiness"]["surface"]["exercised"], 4);
     assert_eq!(area(&document, "coverage"), 80);
-    assert_eq!(area(&document, "error-honesty"), 100);
+    // The fixture refuses with -32602, which earns half.
+    assert_eq!(area(&document, "error-honesty"), 50);
     assert_eq!(
         lost_in(&document, "coverage"),
         owned(&[(

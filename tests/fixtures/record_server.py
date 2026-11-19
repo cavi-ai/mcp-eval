@@ -73,7 +73,7 @@ for line in sys.stdin:
             else:
                 emit(request_id, result=text("unknown record", error=True))
         elif name in ("get_record", "delete_record"):
-            emit(request_id, error={"code": -32602, "message": "id must be a string"})
+            emit(request_id, result=text("id must be a string", error=True))
         else:
             emit(request_id, error={"code": -32602, "message": "unknown tool"})
     else:

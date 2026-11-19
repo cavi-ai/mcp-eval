@@ -212,6 +212,8 @@ pub enum CheckReason {
     HonestyAcceptedInvalid,
     HonestyEmptyError,
     HonestyWrongCode,
+    HonestyProtocolError,
+    HonestyUnnamedParameter,
     HonestyCallFailed,
     HonestyUntestable,
 }
@@ -252,6 +254,8 @@ impl CheckReason {
         Self::HonestyAcceptedInvalid,
         Self::HonestyEmptyError,
         Self::HonestyWrongCode,
+        Self::HonestyProtocolError,
+        Self::HonestyUnnamedParameter,
         Self::HonestyCallFailed,
         Self::HonestyUntestable,
     ];
@@ -294,6 +298,8 @@ impl CheckReason {
             Self::HonestyAcceptedInvalid => "honesty-accepted-invalid",
             Self::HonestyEmptyError => "honesty-empty-error",
             Self::HonestyWrongCode => "honesty-wrong-code",
+            Self::HonestyProtocolError => "honesty-protocol-error",
+            Self::HonestyUnnamedParameter => "honesty-unnamed-parameter",
             Self::HonestyCallFailed => "honesty-call-failed",
             Self::HonestyUntestable => "honesty-untestable",
         }
@@ -630,23 +636,36 @@ fn context(tools: &[ToolObservation]) -> AreaScore {
     }
 }
 
-/// The share of judged tools that refused schema-violating arguments with
-/// words. Read-only tools whose schema admits every input are not judged;
-/// when none can be judged, the area scores 0 with one visible loss.
+/// What a refusal the model can act on only in part earns: a protocol error
+/// most clients never show the model, or tool-error text that does not name
+/// the offending parameter.
+pub const HONESTY_PARTIAL: f64 = 50.0;
+
+/// The mean over judged tools of how actionable their refusal of
+/// schema-violating arguments was. Read-only tools whose schema admits every
+/// input are not judged; when none can be judged, the area scores 0 with one
+/// visible loss.
 fn error_honesty(tools: &[ToolObservation]) -> AreaScore {
     let judged: Vec<(&ToolObservation, Honesty)> = tools
         .iter()
         .filter_map(|tool| tool.honesty.map(|honesty| (tool, honesty)))
         .collect();
     let mut checks = Vec::new();
+    let mut earned = 0.0;
     for (tool, honesty) in &judged {
-        if let Honesty::Dishonest(reason) = honesty {
+        let (value, reason) = match honesty {
+            Honesty::Honest => (100.0, None),
+            Honesty::Partial(reason) => (HONESTY_PARTIAL, Some(*reason)),
+            Honesty::Dishonest(reason) => (0.0, Some(*reason)),
+        };
+        earned += value;
+        if let Some(reason) = reason {
             checks.extend(lost(
                 CheckId::ErrorHonestyInvalidArguments,
                 Some(tool.name.as_str()),
-                0.0,
+                value,
                 None,
-                *reason,
+                reason,
             ));
         }
     }
@@ -665,11 +684,7 @@ fn error_honesty(tools: &[ToolObservation]) -> AreaScore {
         ));
         0
     } else {
-        let honest = judged
-            .iter()
-            .filter(|(_, honesty)| *honesty == Honesty::Honest)
-            .count();
-        round(100.0 * honest as f64 / judged.len() as f64)
+        round(earned / judged.len() as f64)
     };
     AreaScore {
         area: Area::ErrorHonesty,
@@ -1520,6 +1535,38 @@ mod tests {
                 observed: None,
                 reason: CheckReason::ProtocolCallFailed,
             }]
+        );
+    }
+
+    #[test]
+    fn error_honesty_gives_half_credit_to_refusals_the_model_cannot_act_on() {
+        let with = |name: &str, honesty| ToolObservation {
+            honesty: Some(honesty),
+            ..tool(name, 10, ToolClass::ReadOnly, exercised(true, 1))
+        };
+        let readiness = fold(&Observations {
+            tools: vec![
+                with("a", Honesty::Honest),
+                with("b", Honesty::Partial(CheckReason::HonestyProtocolError)),
+                with("c", Honesty::Partial(CheckReason::HonestyUnnamedParameter)),
+                with("d", Honesty::Dishonest(CheckReason::HonestyAcceptedInvalid)),
+            ],
+            ..Observations::default()
+        });
+        let honesty = area(&readiness, Area::ErrorHonesty);
+        assert_eq!(honesty.score, 50);
+        let lost: Vec<(&str, u64, CheckReason)> = honesty
+            .checks
+            .iter()
+            .map(|check| (check.tool.as_deref().unwrap(), check.score, check.reason))
+            .collect();
+        assert_eq!(
+            lost,
+            [
+                ("b", 50, CheckReason::HonestyProtocolError),
+                ("c", 50, CheckReason::HonestyUnnamedParameter),
+                ("d", 0, CheckReason::HonestyAcceptedInvalid),
+            ]
         );
     }
 

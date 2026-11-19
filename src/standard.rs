@@ -156,7 +156,10 @@ impl CallCounts {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Honesty {
+    /// An `isError` result whose text names the offending parameter.
     Honest,
+    /// A refusal the model can act on only in part.
+    Partial(CheckReason),
     Dishonest(CheckReason),
 }
 
@@ -623,11 +626,56 @@ pub fn invalid_arguments(schema: &Value) -> Option<Value> {
         .then(|| json!({"mcpeval_unknown": 1}))
 }
 
-/// Invalid arguments must be refused with -32602, or with an `isError`
-/// result that says why.
-fn honesty_of(response: &ToolResponse) -> Honesty {
+/// The parameters a refusal of `arguments` should name: the required ones
+/// when the call omitted them all, otherwise the ones it sent.
+fn cited_parameters(schema: &Value, arguments: &Value) -> Vec<String> {
+    let sent: Vec<String> = arguments
+        .as_object()
+        .into_iter()
+        .flat_map(|object| object.keys().cloned())
+        .collect();
+    if !sent.is_empty() {
+        return sent;
+    }
+    schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Whether `message` contains one of `names` as a whole identifier, ASCII
+/// case-insensitively. The message is read in memory and never kept.
+fn names_parameter(message: &str, names: &[String]) -> bool {
+    let haystack = message.to_ascii_lowercase();
+    let identifier = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    names.iter().any(|name| {
+        let needle = name.to_ascii_lowercase();
+        !needle.is_empty()
+            && haystack.match_indices(&needle).any(|(start, _)| {
+                let end = start + needle.len();
+                let before = start
+                    .checked_sub(1)
+                    .and_then(|index| haystack.as_bytes().get(index));
+                let after = haystack.as_bytes().get(end);
+                !before.is_some_and(|byte| identifier(*byte))
+                    && !after.is_some_and(|byte| identifier(*byte))
+            })
+    })
+}
+
+/// Invalid arguments must be refused with an `isError` result whose text
+/// names the offending parameter, so the model can correct its call. A
+/// -32602 protocol error, which most clients do not show the model, or text
+/// that names no parameter earns partial credit.
+fn honesty_of(response: &ToolResponse, cited: &[String]) -> Honesty {
     match response {
-        ToolResponse::Error { code: -32602, .. } => Honesty::Honest,
+        ToolResponse::Error { code: -32602, .. } => {
+            Honesty::Partial(CheckReason::HonestyProtocolError)
+        }
         ToolResponse::Error { payload, .. }
             if payload.get("code").and_then(Value::as_str) == Some("tool-error") =>
         {
@@ -637,8 +685,10 @@ fn honesty_of(response: &ToolResponse) -> Honesty {
                 .unwrap_or_default();
             if message.is_empty() || message == crate::mcp_client::UNTEXTED_TOOL_ERROR {
                 Honesty::Dishonest(CheckReason::HonestyEmptyError)
-            } else {
+            } else if names_parameter(message, cited) {
                 Honesty::Honest
+            } else {
+                Honesty::Partial(CheckReason::HonestyUnnamedParameter)
             }
         }
         ToolResponse::Error { .. } => Honesty::Dishonest(CheckReason::HonestyWrongCode),
@@ -675,7 +725,10 @@ fn probe_honesty(
         *client = connect(target).ok();
         return failed;
     }
-    Some(honesty_of(&response))
+    Some(honesty_of(
+        &response,
+        &cited_parameters(&tool.input_schema, &arguments),
+    ))
 }
 
 /// Three calls with `arguments`. A call that does not complete costs this
@@ -1182,18 +1235,34 @@ mod tests {
 
     #[test]
     fn honesty_needs_a_refusal_with_words() {
+        let cited = ["city".to_owned()];
         let judge = |envelope: Value| {
-            honesty_of(&crate::mcp_client::classify_tool_response(&envelope).unwrap())
+            honesty_of(
+                &crate::mcp_client::classify_tool_response(&envelope).unwrap(),
+                &cited,
+            )
         };
         assert_eq!(
-            judge(json!({"error": {"code": -32602, "message": "bad"}})),
+            judge(json!({"error": {"code": -32602, "message": "city must be a string"}})),
+            Honesty::Partial(CheckReason::HonestyProtocolError)
+        );
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [
+                {"type": "text", "text": "City must be a string"}
+            ]}})),
             Honesty::Honest
         );
         assert_eq!(
             judge(json!({"result": {"isError": true, "content": [
-                {"type": "text", "text": "city must be a string"}
+                {"type": "text", "text": "invalid arguments at /city: wrong type"}
             ]}})),
             Honesty::Honest
+        );
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [
+                {"type": "text", "text": "the velocity argument is invalid"}
+            ]}})),
+            Honesty::Partial(CheckReason::HonestyUnnamedParameter)
         );
         assert_eq!(
             judge(json!({"result": {"isError": true, "content": []}})),
@@ -1211,6 +1280,16 @@ mod tests {
             judge(json!({"error": {"code": -32603, "message": "boom"}})),
             Honesty::Dishonest(CheckReason::HonestyWrongCode)
         );
+    }
+
+    #[test]
+    fn a_refusal_should_name_what_the_call_sent_or_the_required_fields_it_omitted() {
+        let schema = json!({"type": "object", "required": ["a", "b"], "properties": {
+            "a": {"type": "string"}, "b": {"type": "integer"}
+        }});
+        assert_eq!(cited_parameters(&schema, &json!({})), ["a", "b"]);
+        assert_eq!(cited_parameters(&schema, &json!({"b": "x"})), ["b"]);
+        assert!(cited_parameters(&json!({"type": "object"}), &json!({})).is_empty());
     }
 
     #[test]

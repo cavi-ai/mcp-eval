@@ -195,9 +195,13 @@ payload-bounds case.
 
 ### error-honesty
 
-The share of judged read-only tools that refuse one call with schema-violating
-arguments and still answer the next request. A refusal is error -32602 or an
-`isError` result whose text says why. The violation is the first that applies:
+The mean over judged read-only tools of how they refuse one call with
+schema-violating arguments and still answer the next request. An `isError`
+result whose text names the offending parameter earns full credit. JSON-RPC
+error -32602, which most clients do not show the model, or `isError` text that
+names no parameter earns half (`honesty-protocol-error`,
+`honesty-unnamed-parameter`). Accepting the call, an empty error, or another
+error code earns none. The violation is the first that applies:
 
 - the required properties omitted;
 - the first typed property, by name, given the wrong type;

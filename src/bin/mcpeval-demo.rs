@@ -639,7 +639,11 @@ fn call_tool(
     // The defect under test skips validation: invalid input "succeeds".
     if broken != Some(Aspect::LyingErrors) {
         if let Some(message) = invalid_argument(&name, &arguments, broken) {
-            return Err((-32602, message, false));
+            // An isError result naming the parameter lets the model correct its call.
+            return Ok(json!({
+                "content": [{"type": "text", "text": message}],
+                "isError": true
+            }));
         }
     }
     *calls += 1;

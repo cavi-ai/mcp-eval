@@ -261,6 +261,19 @@ unexercised. External schema references are disabled; local references are
 supported. A required string with only a `pattern`, or a property with no rule,
 leaves the tool unexercised (`coverage-unsynthesizable`).
 
+A tool whose synthesized arguments fail every call is called once more with
+values other tools returned, for example an ID a list tool printed:
+
+- Values come from `structuredContent` and from text content that is a JSON
+  object or array; other text contributes each line without whitespace.
+- A required parameter takes the first value the input schema accepts there:
+  one found under the same key, then one under a key sharing its last word when
+  either key is that word alone (`id` and `record_id`), then a bare line when
+  the name ends in `id`, `uri`, `url`, `path`, `name`, `key`, or `slug`.
+- The new calls replace the failed ones only when one succeeds; the coverage
+  area then reports `chained_tools`. Values stay in memory and never reach the
+  report.
+
 `--skip-tool <NAME>` (repeatable) never calls that tool. A skipped tool the
 battery would have called scores 0 for reliability (`reliability.skipped`) and
 error honesty. Any skip scores the contention and payload cases 0, so skipping

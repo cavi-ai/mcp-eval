@@ -854,6 +854,7 @@ fn coverage(observations: &Observations) -> AreaScore {
     let surface = callable_surface(observations);
     let mut checks = Vec::new();
     let mut exercised = 0usize;
+    let mut chained = 0usize;
     for tool in observations
         .tools
         .iter()
@@ -861,6 +862,7 @@ fn coverage(observations: &Observations) -> AreaScore {
     {
         if tool.calls.successful > 0 {
             exercised += 1;
+            chained += usize::from(tool.chained);
             continue;
         }
         match &tool.exercise {
@@ -893,11 +895,16 @@ fn coverage(observations: &Observations) -> AreaScore {
     } else {
         round(100.0 * exercised as f64 / surface as f64)
     };
+    // Tools exercised only with values another tool returned.
+    let mut measurements = serde_json::Map::new();
+    if chained > 0 {
+        measurements.insert("chained_tools".into(), chained.into());
+    }
     AreaScore {
         area: Area::Coverage,
         score,
         checks,
-        measurements: serde_json::Map::new(),
+        measurements,
     }
 }
 
@@ -1158,6 +1165,7 @@ mod tests {
             catalog: CatalogFacts::default(),
             honesty: None,
             calls,
+            chained: false,
         }
     }
 

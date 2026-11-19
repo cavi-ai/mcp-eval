@@ -5,6 +5,7 @@
 ### Added
 
 - `score --sandbox` runs a stdio server on macOS in a disposable directory with writes outside it denied, no inherited credentials, and no network (`--sandbox-network` allows it), and calls every tool, writers included; the measurement profile records `sandboxed`.
+- The standard battery calls a tool whose synthesized arguments failed once more with values other tools returned, such as a listed ID; coverage reports `chained_tools`.
 
 ### Changed
 

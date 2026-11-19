@@ -134,6 +134,9 @@ pub struct ToolObservation {
     /// `exercise` is None for writers outside a sandbox.
     pub honesty: Option<Honesty>,
     pub calls: CallCounts,
+    /// The counted calls used values another tool returned, after the
+    /// arguments built from the schema failed every call.
+    pub chained: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -267,6 +270,9 @@ fn observe(
     // Tools whose three calls all succeeded, with the arguments used: the
     // server-level cases run on the first of them.
     let mut succeeded: Vec<(&ToolDefinition, Value)> = Vec::new();
+    let mut harvest = Harvest::default();
+    // Tools whose synthesized arguments failed every call, by catalog index.
+    let mut unfed: Vec<(usize, Value)> = Vec::new();
     for tool in &catalog.tools {
         target.budget.check()?;
         let mut calls = CallCounts::default();
@@ -293,25 +299,31 @@ fn observe(
             ToolClass::Unannotated if !callable => {
                 Some(Exercise::NotExercised(CheckReason::CoverageUnannotated))
             }
-            _ => match options
-                .arguments
-                .as_ref()
-                .and_then(|arguments| arguments.get(&tool.name))
-                .cloned()
-                .or_else(|| synthesize(&tool.input_schema))
-            {
-                Some(_) if skipped => Some(Exercise::NotExercised(CheckReason::CoverageSkipped)),
-                Some(arguments) => {
-                    let (exercise, measured_calls) =
-                        exercise_tool(&mut client, target, tool, &arguments);
-                    calls = measured_calls;
-                    if calls.successful == REPEATS as u64 {
-                        succeeded.push((tool, arguments));
+            _ => {
+                let supplied = options
+                    .arguments
+                    .as_ref()
+                    .and_then(|arguments| arguments.get(&tool.name))
+                    .cloned();
+                let synthesized = supplied.is_none();
+                match supplied.or_else(|| synthesize(&tool.input_schema)) {
+                    Some(_) if skipped => {
+                        Some(Exercise::NotExercised(CheckReason::CoverageSkipped))
                     }
-                    Some(exercise)
+                    Some(arguments) => {
+                        let (exercise, measured_calls) =
+                            exercise_tool(&mut client, target, tool, &arguments, &mut harvest);
+                        calls = measured_calls;
+                        if calls.successful == REPEATS as u64 {
+                            succeeded.push((tool, arguments));
+                        } else if calls.successful == 0 && synthesized {
+                            unfed.push((tools.len(), arguments));
+                        }
+                        Some(exercise)
+                    }
+                    None => Some(Exercise::NotExercised(CheckReason::CoverageUnsynthesizable)),
                 }
-                None => Some(Exercise::NotExercised(CheckReason::CoverageUnsynthesizable)),
-            },
+            }
         };
         tools.push(ToolObservation {
             name: tool.name.clone(),
@@ -321,7 +333,29 @@ fn observe(
             catalog: CatalogFacts::of(tool),
             honesty,
             calls,
+            chained: false,
         });
+    }
+    // A tool the schema alone cannot feed is called once more with values
+    // other tools returned, such as an ID a list tool printed. The new
+    // calls count only when one succeeds.
+    for (index, synthesized) in unfed {
+        target.budget.check()?;
+        let tool = &catalog.tools[index];
+        let Some(arguments) = harvest.feed(&tool.input_schema, &synthesized) else {
+            continue;
+        };
+        let (exercise, calls) = exercise_tool(&mut client, target, tool, &arguments, &mut harvest);
+        if calls.successful == 0 {
+            continue;
+        }
+        if calls.successful == REPEATS as u64 {
+            succeeded.push((tool, arguments));
+        }
+        let observation = &mut tools[index];
+        observation.exercise = Some(exercise);
+        observation.calls = calls;
+        observation.chained = true;
     }
     // With a tool skipped, the server-level cases score 0 (score.rs) and
     // are not run.
@@ -742,14 +776,183 @@ fn probe_honesty(
     ))
 }
 
+/// Most values a run keeps from successful results, and the longest one.
+const MAX_HARVEST: usize = 256;
+const MAX_HARVEST_BYTES: usize = 256;
+/// Last words of parameter names a bare value from a result may fill.
+const IDENTIFIER_WORDS: [&str; 7] = ["id", "uri", "url", "path", "name", "key", "slug"];
+
+/// Scalars read from successful results, so a tool the schema alone cannot
+/// feed can be called with a value another tool returned. Held in memory for
+/// one run and never reported.
+#[derive(Debug, Default)]
+struct Harvest {
+    /// The words of the key each value was found under; None for a bare
+    /// value, such as a line of plain text.
+    values: Vec<(Option<Vec<String>>, Value)>,
+}
+
+impl Harvest {
+    /// `structuredContent`, and text content that is a JSON object or array
+    /// or else lines without whitespace.
+    fn collect(&mut self, result: &Value) {
+        if let Some(structured) = result.get("structuredContent") {
+            self.walk(None, structured, 0);
+        }
+        let texts = result
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.get("text").and_then(Value::as_str));
+        for text in texts {
+            match serde_json::from_str::<Value>(text) {
+                Ok(value @ (Value::Object(_) | Value::Array(_))) => self.walk(None, &value, 0),
+                _ => {
+                    for line in text.lines().map(str::trim) {
+                        self.offer(None, json!(line));
+                    }
+                }
+            }
+        }
+    }
+
+    fn walk(&mut self, key: Option<&str>, value: &Value, depth: usize) {
+        if depth > MAX_SCHEMA_DEPTH {
+            return;
+        }
+        match value {
+            Value::Object(entries) => {
+                for (key, value) in entries {
+                    self.walk(Some(key), value, depth + 1);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    self.walk(key, item, depth + 1);
+                }
+            }
+            Value::String(_) | Value::Number(_) => self.offer(key.map(words), value.clone()),
+            _ => {}
+        }
+    }
+
+    fn offer(&mut self, key: Option<Vec<String>>, value: Value) {
+        let usable = match &value {
+            Value::String(text) => {
+                !text.is_empty()
+                    && text.len() <= MAX_HARVEST_BYTES
+                    && (key.is_some() || !text.contains(char::is_whitespace))
+            }
+            Value::Number(_) => true,
+            _ => false,
+        };
+        if usable
+            && self.values.len() < MAX_HARVEST
+            && !self
+                .values
+                .iter()
+                .any(|(seen, kept)| *seen == key && *kept == value)
+        {
+            self.values.push((key, value));
+        }
+    }
+
+    /// Values for parameter `name`, best first: found under the same key;
+    /// under a key with the same last word when one of the two is that word
+    /// alone (`id` and `record_id`); then bare values, when the name ends in
+    /// an identifier word.
+    fn candidates(&self, name: &str) -> Vec<&Value> {
+        let wanted = words(name);
+        let Some(last) = wanted.last() else {
+            return Vec::new();
+        };
+        let identifier = IDENTIFIER_WORDS.contains(&last.as_str());
+        let mut ranked: Vec<(u8, &Value)> = self
+            .values
+            .iter()
+            .filter_map(|(key, value)| {
+                let rank = match key {
+                    Some(key) if *key == wanted => 0,
+                    Some(key)
+                        if key.last() == Some(last) && (key.len() == 1 || wanted.len() == 1) =>
+                    {
+                        1
+                    }
+                    None if identifier => 2,
+                    _ => return None,
+                };
+                Some((rank, value))
+            })
+            .collect();
+        ranked.sort_by_key(|(rank, _)| *rank);
+        ranked.into_iter().map(|(_, value)| value).collect()
+    }
+
+    /// `synthesized` with each required parameter set to the first harvested
+    /// value the schema accepts there; None when no parameter changed.
+    fn feed(&self, schema: &Value, synthesized: &Value) -> Option<Value> {
+        let validator = crate::schema::compile(schema).ok()?;
+        let mut arguments = synthesized.clone();
+        let mut fed = false;
+        let required = schema
+            .get("required")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str);
+        for name in required {
+            let original = arguments.get(name)?.clone();
+            for candidate in self.candidates(name) {
+                if *candidate == original {
+                    continue;
+                }
+                arguments[name] = candidate.clone();
+                if validator.is_valid(&arguments) {
+                    fed = true;
+                    break;
+                }
+                arguments[name] = original.clone();
+            }
+        }
+        fed.then_some(arguments)
+    }
+}
+
+/// `recordId`, `record_id` and `record-id` all read as `["record", "id"]`.
+fn words(name: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut after_lower = false;
+    for character in name.chars() {
+        if !character.is_alphanumeric() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+            after_lower = false;
+            continue;
+        }
+        if character.is_uppercase() && after_lower {
+            words.push(std::mem::take(&mut current));
+        }
+        after_lower = character.is_lowercase() || character.is_numeric();
+        current.extend(character.to_lowercase());
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
 /// Three calls with `arguments`. A call that does not complete costs this
-/// tool and the next tool starts on a fresh connection. Returns the
-/// observation and whether all three calls succeeded.
+/// tool and the next tool starts on a fresh connection. Successful results
+/// feed `harvest`.
 fn exercise_tool(
     client: &mut Option<ProbeClient>,
     target: &ClientTarget,
     tool: &ToolDefinition,
     arguments: &Value,
+    harvest: &mut Harvest,
 ) -> (Exercise, CallCounts) {
     let mut calls = CallCounts::default();
     let mut outcomes = Vec::with_capacity(REPEATS);
@@ -784,6 +987,9 @@ fn exercise_tool(
         };
         let outcome = Outcome::of(&response);
         calls.observe(outcome);
+        if let ToolResponse::Success(result) = &response {
+            harvest.collect(result);
+        }
         if outcome == Outcome::Rejected {
             return (
                 Exercise::NotExercised(CheckReason::CoverageRejectedArguments),
@@ -1301,6 +1507,33 @@ mod tests {
         assert_eq!(cited_parameters(&schema, &json!({})), ["a", "b"]);
         assert_eq!(cited_parameters(&schema, &json!({"b": "x"})), ["b"]);
         assert!(cited_parameters(&json!({"type": "object"}), &json!({})).is_empty());
+    }
+
+    #[test]
+    fn chained_values_fill_matching_identifiers_the_schema_accepts() {
+        let mut harvest = Harvest::default();
+        harvest.collect(&json!({
+            "content": [{"type": "text", "text": "plain-7\ntwo words"}],
+            "structuredContent": {"items": [{"id": "rec-1", "count": 3}]}
+        }));
+        let schema = |name: &str| {
+            json!({"type": "object", "required": [name], "properties": {
+                name: {"type": "string", "pattern": "^[a-z]+-[0-9]$"}
+            }})
+        };
+        let fed = |name: &str| harvest.feed(&schema(name), &json!({name: "mcpeval"}));
+        // A keyed value beats a bare one; `id` feeds `record_id`/`recordId`.
+        assert_eq!(fed("id"), Some(json!({"id": "rec-1"})));
+        assert_eq!(fed("recordId"), Some(json!({"recordId": "rec-1"})));
+        // Bare lines feed identifier-like names only.
+        assert_eq!(fed("slug"), Some(json!({"slug": "plain-7"})));
+        assert_eq!(fed("query"), None);
+        // A value the schema refuses is never sent.
+        let integer = json!({"type": "object", "required": ["id"], "properties": {
+            "id": {"type": "integer"}
+        }});
+        assert_eq!(harvest.feed(&integer, &json!({"id": 1})), None);
+        assert_eq!(words("recordID_v2-name"), ["record", "id", "v2", "name"]);
     }
 
     #[test]

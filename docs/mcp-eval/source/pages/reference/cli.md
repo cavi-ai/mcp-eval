@@ -85,7 +85,9 @@ standard, its areas, and every lost point. Supports
 `--format text|json|markdown|junit`, `--brief`, `--confirm-read-only`,
 `--skip-tool <NAME>`, `--arguments <FILE>`, `--min-readiness <SCORE>`,
 `--min-area <AREA=SCORE>`, `--exclude-latency`, and `--allow-remote-http`, as
-for `probe`.
+for `probe`. `--sandbox` runs a stdio server in a disposable directory and
+calls every tool, writers included; `--sandbox-network` allows its network
+access. See [Sandboxed runs](../guides/readiness-reporting.md#sandboxed-runs).
 
 ### `init`
 

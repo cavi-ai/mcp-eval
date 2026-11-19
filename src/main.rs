@@ -358,6 +358,8 @@ fn run() -> anyhow::Result<()> {
             format,
             brief,
             confirm_read_only,
+            sandbox,
+            sandbox_network,
             skip_tools,
             arguments,
             floors,
@@ -374,6 +376,8 @@ fn run() -> anyhow::Result<()> {
                 confirm_read_only,
                 skip_tools,
                 arguments: load_arguments(arguments)?,
+                sandbox,
+                sandbox_network,
             })?;
             if !floors.is_empty() {
                 report.readiness_gate = Some(floors.evaluate(report.readiness.as_ref()));

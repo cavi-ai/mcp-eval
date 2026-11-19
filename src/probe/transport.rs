@@ -14,7 +14,10 @@ pub(crate) struct ClientTarget {
 
 #[derive(Clone, Debug)]
 enum TargetTransport {
-    Stdio(Vec<String>),
+    Stdio {
+        command: Vec<String>,
+        sandbox: Option<std::sync::Arc<crate::sandbox::Sandbox>>,
+    },
     Http {
         endpoint: String,
         allow_remote: bool,
@@ -33,7 +36,10 @@ impl ClientTarget {
         allow_remote_http: bool,
     ) -> anyhow::Result<Self> {
         let transport = match (http_url, command.is_empty()) {
-            (None, false) => TargetTransport::Stdio(command),
+            (None, false) => TargetTransport::Stdio {
+                command,
+                sandbox: None,
+            },
             (Some(endpoint), true) => TargetTransport::Http {
                 endpoint,
                 allow_remote: allow_remote_http,
@@ -45,6 +51,18 @@ impl ClientTarget {
             transport,
             budget: crate::evaluation_budget::Budget::default(),
         })
+    }
+
+    /// Launch every stdio connection inside `sandbox`; HTTP targets refuse.
+    pub(crate) fn sandboxed(
+        mut self,
+        sandbox: std::sync::Arc<crate::sandbox::Sandbox>,
+    ) -> anyhow::Result<Self> {
+        match &mut self.transport {
+            TargetTransport::Stdio { sandbox: slot, .. } => *slot = Some(sandbox),
+            TargetTransport::Http { .. } => bail!("--sandbox applies to stdio servers only"),
+        }
+        Ok(self)
     }
 
     pub(super) fn from_options(options: &ProbeOptions) -> anyhow::Result<Self> {
@@ -60,7 +78,9 @@ impl ClientTarget {
     pub(crate) fn connect(&self, timeout: Option<Duration>) -> anyhow::Result<ProbeClient> {
         self.budget.check()?;
         let mut client = match &self.transport {
-            TargetTransport::Stdio(command) => ProbeClient::Stdio(McpClient::spawn(command)?),
+            TargetTransport::Stdio { command, sandbox } => {
+                ProbeClient::Stdio(McpClient::spawn_in(command, sandbox.as_deref())?)
+            }
             TargetTransport::Http {
                 endpoint,
                 allow_remote,

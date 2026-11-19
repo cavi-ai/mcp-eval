@@ -344,7 +344,8 @@ pub struct Surface {
 }
 
 impl Surface {
-    fn of(tools: &[ToolObservation]) -> Self {
+    fn of(observations: &Observations) -> Self {
+        let tools = &observations.tools;
         let writers = tools
             .iter()
             .filter(|tool| tool.class == ToolClass::Writer)
@@ -355,7 +356,9 @@ impl Surface {
             writers,
             exercised: tools
                 .iter()
-                .filter(|tool| tool.class != ToolClass::Writer && tool.calls.successful > 0)
+                .filter(|tool| {
+                    in_surface(tool, observations.sandboxed) && tool.calls.successful > 0
+                })
                 .count() as u64,
         }
     }
@@ -384,9 +387,9 @@ pub fn fold(observations: &Observations) -> Readiness {
             Area::Protocol => protocol(&observations.protocol),
             Area::Catalog => catalog(&observations.tools),
             Area::Context => context(&observations.tools),
-            Area::ErrorHonesty => error_honesty(&observations.tools),
+            Area::ErrorHonesty => error_honesty(observations),
             Area::Reliability => reliability(observations, Latency::Banded),
-            Area::Coverage => coverage(&observations.tools),
+            Area::Coverage => coverage(observations),
         })
         .collect();
     let reliability_without_latency = reliability(observations, Latency::FullMarks).score;
@@ -403,7 +406,7 @@ pub fn fold(observations: &Observations) -> Readiness {
         score,
         score_without_latency: Some(score_without_latency),
         attested_read_only: observations.attested_read_only,
-        surface: Surface::of(&observations.tools),
+        surface: Surface::of(observations),
         areas,
         measurement_profile: None,
     }
@@ -480,10 +483,17 @@ fn lost(
     })
 }
 
-fn read_only_surface(tools: &[ToolObservation]) -> usize {
-    tools
+/// Whether the battery measures `tool`: every non-writer, and in a sandbox
+/// every tool.
+fn in_surface(tool: &ToolObservation, sandboxed: bool) -> bool {
+    sandboxed || tool.class != ToolClass::Writer
+}
+
+fn callable_surface(observations: &Observations) -> usize {
+    observations
+        .tools
         .iter()
-        .filter(|tool| tool.class != ToolClass::Writer)
+        .filter(|tool| in_surface(tool, observations.sandboxed))
         .count()
 }
 
@@ -645,8 +655,9 @@ pub const HONESTY_PARTIAL: f64 = 50.0;
 /// schema-violating arguments was. Read-only tools whose schema admits every
 /// input are not judged; when none can be judged, the area scores 0 with one
 /// visible loss.
-fn error_honesty(tools: &[ToolObservation]) -> AreaScore {
-    let judged: Vec<(&ToolObservation, Honesty)> = tools
+fn error_honesty(observations: &Observations) -> AreaScore {
+    let judged: Vec<(&ToolObservation, Honesty)> = observations
+        .tools
         .iter()
         .filter_map(|tool| tool.honesty.map(|honesty| (tool, honesty)))
         .collect();
@@ -670,7 +681,7 @@ fn error_honesty(tools: &[ToolObservation]) -> AreaScore {
         }
     }
     let score = if judged.is_empty() {
-        let reason = if read_only_surface(tools) == 0 {
+        let reason = if callable_surface(observations) == 0 {
             CheckReason::NoReadOnlyTools
         } else {
             CheckReason::HonestyUntestable
@@ -722,7 +733,7 @@ fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore 
             output_schema,
         }) = &tool.exercise
         else {
-            if tool.class != ToolClass::Writer {
+            if in_surface(tool, observations.sandboxed) {
                 entries.push(0.0);
                 let reason = match tool.exercise {
                     Some(Exercise::NotExercised(reason)) => reason,
@@ -808,7 +819,7 @@ fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore 
         }
     }
     let score = if exercised == 0 {
-        let reason = if read_only_surface(&observations.tools) == 0 {
+        let reason = if callable_surface(observations) == 0 {
             CheckReason::NoReadOnlyTools
         } else {
             CheckReason::ReliabilityNoneExercised
@@ -834,16 +845,20 @@ fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore 
             "rpc_errors": observations.tools.iter().map(|t| t.calls.rpc_errors).sum::<u64>(),
             "rejected_calls": observations.tools.iter().map(|t| t.calls.rejected).sum::<u64>(),
             "transport_errors": observations.tools.iter().map(|t| t.calls.transport_errors).sum::<u64>(),
-            "untested_tools": observations.tools.iter().filter(|t| t.class != ToolClass::Writer && t.calls.total() == 0).count(),
+            "untested_tools": observations.tools.iter().filter(|t| in_surface(t, observations.sandboxed) && t.calls.total() == 0).count(),
         })).expect("numeric measurements"),
     }
 }
 
-fn coverage(tools: &[ToolObservation]) -> AreaScore {
-    let surface = read_only_surface(tools);
+fn coverage(observations: &Observations) -> AreaScore {
+    let surface = callable_surface(observations);
     let mut checks = Vec::new();
     let mut exercised = 0usize;
-    for tool in tools.iter().filter(|tool| tool.class != ToolClass::Writer) {
+    for tool in observations
+        .tools
+        .iter()
+        .filter(|tool| in_surface(tool, observations.sandboxed))
+    {
         if tool.calls.successful > 0 {
             exercised += 1;
             continue;
@@ -1231,6 +1246,7 @@ mod tests {
                 read("publish_status", 50, facts(60, 0, 0, true, false)),
             ],
             attested_read_only: false,
+            sandboxed: false,
             contention: Some(true),
             payload: Some(true),
             protocol: [

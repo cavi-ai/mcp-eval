@@ -296,11 +296,26 @@ impl McpClient {
         self.capabilities.clone()
     }
     pub fn spawn(command: &[String]) -> anyhow::Result<Self> {
+        Self::spawn_in(command, None)
+    }
+
+    /// Spawn `command`, inside `sandbox` when one is given.
+    pub(crate) fn spawn_in(
+        command: &[String],
+        sandbox: Option<&crate::sandbox::Sandbox>,
+    ) -> anyhow::Result<Self> {
         let (program, args) = command
             .split_first()
             .ok_or_else(|| anyhow::anyhow!("server command must not be empty"))?;
-        let child = Command::new(program)
-            .args(args)
+        let mut process = match sandbox {
+            Some(sandbox) => sandbox.command(program, args),
+            None => {
+                let mut process = Command::new(program);
+                process.args(args);
+                process
+            }
+        };
+        let child = process
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

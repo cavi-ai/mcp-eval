@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- `score --sandbox` runs a stdio server on macOS in a disposable directory with writes outside it denied, no inherited credentials, and no network (`--sandbox-network` allows it), and calls every tool, writers included; the measurement profile records `sandboxed`.
+
 ### Changed
 
 - Error honesty gives full credit only to an `isError` result whose text names the offending parameter; JSON-RPC `-32602` (`honesty-protocol-error`) and `isError` text naming no parameter (`honesty-unnamed-parameter`) earn half. `mcpeval serve` and `mcpeval-demo` return schema violations as `isError` results naming the parameter.

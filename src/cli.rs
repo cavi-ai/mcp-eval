@@ -251,6 +251,14 @@ pub enum Command {
         /// destructiveHint are read-only, so the standard battery calls them.
         #[arg(long)]
         confirm_read_only: bool,
+        /// Run the stdio server in a disposable directory with writes
+        /// outside it denied, no inherited credentials, and no network, and
+        /// call every tool, writers included. macOS only.
+        #[arg(long, conflicts_with = "url")]
+        sandbox: bool,
+        /// Allow network access from the sandbox.
+        #[arg(long, requires = "sandbox")]
+        sandbox_network: bool,
         /// Never call this tool in the standard battery; it scores as
         /// unexercised. Repeat for each tool.
         #[arg(long = "skip-tool", value_name = "NAME")]

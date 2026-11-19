@@ -225,6 +225,25 @@ The standard battery is read-only by construction:
 - It trusts `readOnlyHint`: a server that marks a writing tool read-only gets it
   called.
 
+### Sandboxed runs
+
+`mcpeval score --sandbox -- <CMD>...` measures a stdio server whose tools are
+unannotated or writers. The battery calls every tool, and every tool counts in
+the surface. The server runs under macOS `sandbox-exec`:
+
+- A new directory under the system temporary directory is its `HOME`,
+  `TMPDIR`, XDG directories, and working directory; it is removed after the
+  run.
+- It inherits only `PATH`, `LANG`, `LC_ALL`, and `LC_CTYPE`; credentials in
+  the environment do not reach it.
+- File writes outside that directory are denied.
+- Network access is denied. `--sandbox-network` allows it, for example for a
+  server that `npx` or `uvx` downloads at start.
+
+Reads are not restricted. The report's measurement profile records
+`"sandboxed": true`, so a sandboxed score compares only with sandboxed scores.
+`--sandbox` cannot be combined with `--url` and fails on other platforms.
+
 Arguments are synthesized from each tool's input schema. Every required
 property takes the first rule that applies:
 

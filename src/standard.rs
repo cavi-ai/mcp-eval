@@ -35,15 +35,19 @@ pub struct StandardOptions {
     pub skip_tools: Vec<String>,
     /// Arguments to call named tools with instead of synthesized ones.
     pub arguments: Option<crate::tool_arguments::ToolArguments>,
+    /// The server runs in a write-contained sandbox, so every tool is called.
+    pub sandboxed: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolClass {
-    /// `readOnlyHint: false` or `destructiveHint: true`: never called.
+    /// `readOnlyHint: false` or `destructiveHint: true`: called only in a
+    /// sandbox.
     Writer,
     /// `readOnlyHint: true`.
     ReadOnly,
-    /// No deciding annotation: called only under `--confirm-read-only`.
+    /// No deciding annotation: called only under `--confirm-read-only` or in
+    /// a sandbox.
     Unannotated,
 }
 
@@ -127,6 +131,7 @@ pub struct ToolObservation {
     pub catalog: CatalogFacts,
     /// How the tool refused schema-violating arguments; None for tools
     /// that are not called or whose schema admits every input.
+    /// `exercise` is None for writers outside a sandbox.
     pub honesty: Option<Honesty>,
     pub calls: CallCounts,
 }
@@ -168,6 +173,8 @@ pub struct Observations {
     /// Every distinct tool, in catalog order.
     pub tools: Vec<ToolObservation>,
     pub attested_read_only: bool,
+    /// Every tool, writers included, was callable in a sandbox.
+    pub sandboxed: bool,
     /// Contention on the first fully successful tool; None when none.
     pub contention: Option<bool>,
     /// Payload bounds on the first fully successful tool with a string
@@ -212,14 +219,16 @@ pub(crate) fn run(
 ) -> anyhow::Result<(Readiness, CatalogContract)> {
     let (observations, contract) = target.budget.finish(observe(target, options))?;
     let mut readiness = crate::score::fold(&observations);
-    readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
+    let mut profile = crate::measurement::MeasurementProfile::current(
         options.confirm_read_only,
         &options.skip_tools,
         options
             .arguments
             .as_ref()
             .map(crate::tool_arguments::ToolArguments::sha256),
-    ));
+    );
+    profile.sandboxed = options.sandboxed;
+    readiness.measurement_profile = Some(profile);
     Ok((readiness, contract))
 }
 
@@ -263,8 +272,8 @@ fn observe(
         let mut calls = CallCounts::default();
         let class = ToolClass::of(tool);
         let callable = match class {
-            ToolClass::Writer => false,
-            ToolClass::Unannotated => options.confirm_read_only,
+            ToolClass::Writer => options.sandboxed,
+            ToolClass::Unannotated => options.confirm_read_only || options.sandboxed,
             ToolClass::ReadOnly => true,
         };
         // A skipped tool is never called; it scores as the worst call it
@@ -279,8 +288,9 @@ fn observe(
             None
         };
         let exercise = match class {
-            ToolClass::Writer => None,
-            ToolClass::Unannotated if !options.confirm_read_only => {
+            // Read-only tools are always callable.
+            ToolClass::Writer if !callable => None,
+            ToolClass::Unannotated if !callable => {
                 Some(Exercise::NotExercised(CheckReason::CoverageUnannotated))
             }
             _ => match options
@@ -360,6 +370,7 @@ fn observe(
         Observations {
             tools,
             attested_read_only: options.confirm_read_only,
+            sandboxed: options.sandboxed,
             contention,
             payload,
             protocol,

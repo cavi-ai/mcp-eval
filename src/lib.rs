@@ -30,6 +30,7 @@ pub mod readiness_gate;
 pub mod record;
 pub mod remediation;
 pub mod report;
+pub mod sandbox;
 pub mod sarif;
 mod schema;
 pub mod score;

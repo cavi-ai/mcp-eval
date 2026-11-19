@@ -656,6 +656,8 @@ fn score_tool_call(arguments: &Value) -> anyhow::Result<Value> {
         confirm_read_only: args.confirm_read_only,
         skip_tools: args.skip_tools,
         arguments: None,
+        sandbox: false,
+        sandbox_network: false,
     })?;
     Ok(report_result(&report, &server))
 }

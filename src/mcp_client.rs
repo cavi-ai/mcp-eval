@@ -78,6 +78,9 @@ pub struct ToolDefinition {
     /// Sorted, distinct hashes of the description's lowercased words, for
     /// comparing descriptions without keeping them. In memory only.
     pub description_words: Vec<u64>,
+    /// Hidden characters, model directives, and identifiers in the entry's
+    /// text. In memory only.
+    pub text_scan: crate::description_scan::TextScan,
     /// The tool's declared `outputSchema`, when present. Structural
     /// metadata only; never persisted.
     pub output_schema: Option<Value>,
@@ -125,6 +128,7 @@ pub(crate) fn tool_definition(tool: &Value) -> anyhow::Result<ToolDefinition> {
         entry_bytes: serde_json::to_vec(tool)?.len(),
         description_chars: description.chars().count(),
         description_words: word_hashes(description),
+        text_scan: crate::description_scan::TextScan::of(tool),
         output_schema: tool
             .get("outputSchema")
             .filter(|schema| schema.is_object())

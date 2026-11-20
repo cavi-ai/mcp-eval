@@ -110,6 +110,25 @@ fn render_probe_text(
                 surface.tools, surface.read_only, surface.writers, surface.exercised
             );
             println!("  assessment: read-only structural checks; semantic correctness requires a reviewed oracle");
+            if let Some(scan) = readiness
+                .areas
+                .iter()
+                .find(|area| area.area == mcpeval::score::Area::Catalog)
+                .map(|area| &area.measurements)
+                .filter(|measurements| !measurements.is_empty())
+            {
+                let count = |name: &str| {
+                    scan.get(name)
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0)
+                };
+                println!(
+                    "  description scan: {} hidden characters, {} injection phrases, {} cross-tool references",
+                    count("hidden_characters"),
+                    count("injection_phrases"),
+                    count("cross_tool_references")
+                );
+            }
             // One hint per reason: a catalog-wide defect loses a check on
             // every tool.
             let mut hinted = Vec::new();

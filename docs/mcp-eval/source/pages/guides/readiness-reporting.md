@@ -190,6 +190,21 @@ and cost a conforming tool nothing:
   `oneOf`, `allOf`, or `not`, a shape function-calling clients reject
   (`catalog-schema-root-unportable`).
 
+The catalog area's `measurements` count, unscored, text a model reads in any
+string of a `tools/list` entry other than its name, each key present only when
+non-zero:
+
+- `hidden_characters`: zero-width, bidirectional-control, and Unicode tag
+  characters;
+- `injection_phrases`: phrases addressing the model rather than describing the
+  tool, such as `ignore previous instructions`, `do not tell the user`, or
+  `<IMPORTANT>`, matched case-insensitively;
+- `cross_tool_references`: other tools named in the entry, for names containing
+  `_`, `-`, `.`, or `:`.
+
+The text report prints them on a `description scan:` line. The text itself is
+read in memory and never kept.
+
 ### context
 
 - 75%: the catalog's token estimate, 100 at 2,000 tokens or fewer and 0 at

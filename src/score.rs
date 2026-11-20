@@ -10,7 +10,7 @@
 use serde_json::{json, Value};
 
 use crate::probe::ProbeReport;
-use crate::standard::{Exercise, Honesty, Observations, ToolClass, ToolObservation};
+use crate::standard::{CatalogFacts, Exercise, Honesty, Observations, ToolClass, ToolObservation};
 
 /// The standard this build scores against.
 pub const STANDARD: &str = "mcpeval-standard/2";
@@ -659,8 +659,28 @@ fn catalog(tools: &[ToolObservation]) -> AreaScore {
         area: Area::Catalog,
         score: round(fractions.iter().sum::<f64>() / fractions.len() as f64),
         checks,
-        measurements: serde_json::Map::new(),
+        measurements: description_scan(tools),
     }
+}
+
+/// Description-scan counts over the catalog, each only when non-zero. They
+/// are reported for review and do not change the score.
+fn description_scan(tools: &[ToolObservation]) -> serde_json::Map<String, Value> {
+    let total = |count: fn(&CatalogFacts) -> u64| {
+        tools.iter().map(|tool| count(&tool.catalog)).sum::<u64>()
+    };
+    [
+        ("hidden_characters", total(|facts| facts.hidden_characters)),
+        ("injection_phrases", total(|facts| facts.injection_phrases)),
+        (
+            "cross_tool_references",
+            total(|facts| facts.cross_tool_references),
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, count)| *count > 0)
+    .map(|(name, count)| (name.to_owned(), count.into()))
+    .collect()
 }
 
 fn context(tools: &[ToolObservation]) -> AreaScore {
@@ -1243,6 +1263,9 @@ mod tests {
             name_off_spec: false,
             schema_root_unportable: false,
             description_duplicated: false,
+            hidden_characters: 0,
+            injection_phrases: 0,
+            cross_tool_references: 0,
         }
     }
 

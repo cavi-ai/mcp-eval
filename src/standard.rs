@@ -94,6 +94,12 @@ pub struct CatalogFacts {
     pub schema_root_unportable: bool,
     /// The description's words nearly match another tool's.
     pub description_duplicated: bool,
+    /// Zero-width, bidirectional-control, and tag characters in the entry.
+    pub hidden_characters: u64,
+    /// Matches of [`crate::description_scan::INJECTION_PHRASES`].
+    pub injection_phrases: u64,
+    /// Other tools whose separator-bearing names the entry's text contains.
+    pub cross_tool_references: u64,
 }
 
 /// Word-set overlap (Jaccard) at which two descriptions count as the same.
@@ -113,13 +119,23 @@ fn near_duplicate(a: &[u64], b: &[u64]) -> bool {
     shared as f64 / union as f64 >= DUPLICATE_DESCRIPTION_OVERLAP
 }
 
-/// Mark every tool whose description nearly matches another's.
-fn mark_duplicate_descriptions(tools: &mut [ToolObservation], catalog: &[ToolDefinition]) {
+/// Facts relating each tool to the rest of the catalog: a nearly matching
+/// description, and the other tools its text names.
+fn mark_catalog_relations(tools: &mut [ToolObservation], catalog: &[ToolDefinition]) {
     for (index, tool) in catalog.iter().enumerate() {
-        let duplicated = catalog.iter().enumerate().any(|(other, sibling)| {
-            other != index && near_duplicate(&tool.description_words, &sibling.description_words)
-        });
-        tools[index].catalog.description_duplicated = duplicated;
+        let others = || {
+            catalog
+                .iter()
+                .enumerate()
+                .filter(move |(other, _)| *other != index)
+                .map(|(_, sibling)| sibling)
+        };
+        let facts = &mut tools[index].catalog;
+        facts.description_duplicated = others()
+            .any(|sibling| near_duplicate(&tool.description_words, &sibling.description_words));
+        facts.cross_tool_references = others()
+            .filter(|sibling| tool.text_scan.names(&sibling.name))
+            .count() as u64;
     }
 }
 
@@ -162,6 +178,9 @@ impl CatalogFacts {
                     .iter()
                     .any(|key| tool.input_schema.get(*key).is_some()),
             description_duplicated: false,
+            hidden_characters: tool.text_scan.hidden_characters,
+            injection_phrases: tool.text_scan.injection_phrases,
+            cross_tool_references: 0,
         }
     }
 }
@@ -382,7 +401,7 @@ fn observe(
             chained: false,
         });
     }
-    mark_duplicate_descriptions(&mut tools, &catalog.tools);
+    mark_catalog_relations(&mut tools, &catalog.tools);
     // A tool the schema alone cannot feed is called once more with values
     // other tools returned, such as an ID a list tool printed. The new
     // calls count only when one succeeds.
@@ -1470,6 +1489,9 @@ mod tests {
                 name_off_spec: false,
                 schema_root_unportable: false,
                 description_duplicated: false,
+                hidden_characters: 0,
+                injection_phrases: 0,
+                cross_tool_references: 0,
             }
         );
     }

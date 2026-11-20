@@ -2,6 +2,7 @@ pub mod catalog_contract;
 pub mod compare;
 pub mod corpus;
 pub mod correlate;
+pub mod description_scan;
 pub mod diagnosis;
 pub mod diff;
 pub mod doctor;

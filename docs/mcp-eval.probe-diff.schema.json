@@ -454,6 +454,10 @@
         "sandboxed": {
           "const": true,
           "description": "The server ran under score --sandbox and every tool was called; absent otherwise."
+        },
+        "sandbox_network": {
+          "const": true,
+          "description": "The sandbox allowed network access (score --sandbox-network); absent otherwise."
         }
       }
     }

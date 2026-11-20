@@ -1008,17 +1008,23 @@ pub(crate) fn tool_result_is_error(result: &Value) -> anyhow::Result<bool> {
     }
 }
 
+/// The text of a `tools/call` result: every content item's `text`, joined
+/// by newlines; None when no item has text.
+pub(crate) fn tool_result_text(result: &Value) -> Option<String> {
+    let texts: Vec<&str> = result
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .collect();
+    (!texts.is_empty()).then(|| texts.join("\n"))
+}
+
 pub fn classify_tool_response(response: &Value) -> anyhow::Result<ToolResponse> {
     if let Some(result) = response.get("result") {
         if tool_result_is_error(result)? {
-            let message = result
-                .get("content")
-                .and_then(Value::as_array)
-                .and_then(|content| content.first())
-                .and_then(|item| item.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or(UNTEXTED_TOOL_ERROR)
-                .to_owned();
+            let message =
+                tool_result_text(result).unwrap_or_else(|| UNTEXTED_TOOL_ERROR.to_owned());
             return Ok(ToolResponse::Error {
                 code: -32000,
                 // The shim's journal synthesizes the same constant for

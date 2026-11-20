@@ -255,7 +255,7 @@ fn decisions(
 ) -> anyhow::Result<Vec<Decision>> {
     if let Some(supplied) = supplied {
         supplied
-            .validate(catalog, confirm_read_only)
+            .validate(catalog, confirm_read_only, false)
             .map_err(crate::exit::usage)?;
     }
     for name in selected {

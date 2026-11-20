@@ -164,8 +164,10 @@ The share of these checks passed:
 - over HTTP with credentials configured, when `initialize` without them gets
   401, the 401 carries a `Bearer` challenge (`protocol-auth-no-challenge`) and
   OAuth protected resource metadata (RFC 9728) at its `resource_metadata` URL
-  or `/.well-known/oauth-protected-resource` names an authorization server
-  (`protocol-auth-no-metadata`).
+  or `/.well-known/oauth-protected-resource` names the endpoint as `resource`
+  and lists only absolute `https` authorization servers, or `http` ones on a
+  loopback host (`protocol-auth-no-metadata`). Each metadata request counts
+  against the evaluation budget.
 
 ### catalog
 
@@ -222,7 +224,8 @@ with the same count.
 
 - consistency: every call ends with the same outcome;
 - latency: the median latency band, 100 up to 100 ms, 80 up to 300 ms, 50 up to
-  1 s, 20 up to 3 s, else 0;
+  1 s, 20 up to 3 s, else 0; for an even call count the median is the mean of
+  the two middle calls;
 - output conformance: a declared `outputSchema` fully honored on every
   successful result.
 
@@ -233,7 +236,8 @@ payload-bounds case.
 
 The mean over judged read-only tools of how they refuse one call with
 schema-violating arguments and still answer the next request. An `isError`
-result whose text names the offending parameter earns full credit. JSON-RPC
+result whose text, read across every text content block, names the offending
+parameter earns full credit. JSON-RPC
 error -32602, which most clients do not show the model, or `isError` text that
 names no parameter earns half (`honesty-protocol-error`,
 `honesty-unnamed-parameter`). Accepting the call, an empty error, or another
@@ -277,7 +281,9 @@ the surface. The server runs under macOS `sandbox-exec`:
   server that `npx` or `uvx` downloads at start.
 
 Reads are not restricted. The report's measurement profile records
-`"sandboxed": true`, so a sandboxed score compares only with sandboxed scores.
+`"sandboxed": true`, and `"sandbox_network": true` under `--sandbox-network`,
+so a sandboxed score compares only with scores taken under the same sandbox.
+`--arguments` may name any tool the sandboxed battery calls, writers included.
 `--sandbox` cannot be combined with `--url` and fails on other platforms.
 
 Arguments are synthesized from each tool's input schema. Every required

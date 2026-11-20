@@ -765,38 +765,47 @@ pub(crate) fn bearer_challenge(challenge: &str) -> (bool, Option<String>) {
 }
 
 /// Whether OAuth protected resource metadata (RFC 9728) for `endpoint`
-/// answers with at least one authorization server. Tried in order: the
-/// challenge's `resource_metadata` URL when it shares the endpoint's
-/// origin, the well-known URL for the endpoint's path, then the one for its
-/// origin.
+/// names it as the resource and lists only usable authorization servers.
+/// Tried in order: the challenge's `resource_metadata` URL when it shares
+/// the endpoint's origin, the well-known URL for the endpoint's path, then
+/// the one for its origin, which may name the origin as the resource. Each
+/// request is reserved from `budget` and bounded by its deadline.
 pub(crate) fn has_resource_metadata(
     endpoint: &str,
     metadata: Option<&str>,
     timeout: Duration,
+    budget: &crate::evaluation_budget::Budget,
 ) -> bool {
     let Ok(base) = url::Url::parse(endpoint) else {
         return false;
     };
-    let mut candidates = Vec::new();
+    let mut origin = base.clone();
+    origin.set_path("/");
+    origin.set_query(None);
+    let mut candidates: Vec<(url::Url, Vec<&url::Url>)> = Vec::new();
     if let Some(url) = metadata
         .and_then(|metadata| base.join(metadata).ok())
         .filter(|url| url.origin() == base.origin())
     {
-        candidates.push(url);
+        candidates.push((url, vec![&base]));
     }
     let path = base.path().trim_end_matches('/');
-    for suffix in [path, ""] {
+    for (suffix, resources) in [(path, vec![&base]), ("", vec![&base, &origin])] {
         let mut url = base.clone();
         url.set_path(&format!("/.well-known/oauth-protected-resource{suffix}"));
-        if !candidates.contains(&url) {
-            candidates.push(url);
+        url.set_query(None);
+        if !candidates.iter().any(|(candidate, _)| candidate == &url) {
+            candidates.push((url, resources));
         }
     }
-    let agent = ureq::AgentBuilder::new()
-        .redirects(0)
-        .timeout(timeout)
-        .build();
-    candidates.iter().any(|url| {
+    candidates.iter().any(|(url, resources)| {
+        let Ok(timeout) = budget.acquire().and_then(|()| budget.timeout(timeout)) else {
+            return false;
+        };
+        let agent = ureq::AgentBuilder::new()
+            .redirects(0)
+            .timeout(timeout)
+            .build();
         let Ok(response) = agent
             .get(url.as_str())
             .set("Accept", "application/json")
@@ -807,14 +816,43 @@ pub(crate) fn has_resource_metadata(
         read_bounded(response.into_reader())
             .ok()
             .and_then(|body| serde_json::from_slice::<Value>(&body).ok())
-            .and_then(|document| {
-                document
-                    .get("authorization_servers")
-                    .and_then(Value::as_array)
-                    .map(|servers| servers.iter().any(|server| server.as_str().is_some()))
-            })
-            .unwrap_or(false)
+            .is_some_and(|document| resource_metadata_names(&document, resources))
     })
+}
+
+/// RFC 9728 metadata whose `resource` is one of `resources` and whose
+/// `authorization_servers` are all absolute `https` URLs, or `http` on
+/// loopback, with at least one listed.
+fn resource_metadata_names(document: &Value, resources: &[&url::Url]) -> bool {
+    let same = |left: &url::Url, right: &url::Url| {
+        left.scheme() == right.scheme()
+            && left.host() == right.host()
+            && left.port_or_known_default() == right.port_or_known_default()
+            && left.path().trim_end_matches('/') == right.path().trim_end_matches('/')
+            && left.query() == right.query()
+    };
+    let resource = document
+        .get("resource")
+        .and_then(Value::as_str)
+        .and_then(|resource| url::Url::parse(resource).ok())
+        .is_some_and(|resource| resources.iter().any(|expected| same(&resource, expected)));
+    let servers = document
+        .get("authorization_servers")
+        .and_then(Value::as_array)
+        .is_some_and(|servers| {
+            !servers.is_empty()
+                && servers.iter().all(|server| {
+                    server
+                        .as_str()
+                        .and_then(|server| url::Url::parse(server).ok())
+                        .is_some_and(|server| match (server.scheme(), server.host()) {
+                            ("https", Some(_)) => true,
+                            ("http", Some(host)) => crate::loopback::is_loopback_host(&host),
+                            _ => false,
+                        })
+                })
+        });
+    resource && servers
 }
 
 /// Whether `endpoint` names a loopback host.
@@ -1024,7 +1062,25 @@ fn validate_response(value: &Value, id: u64) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod challenge_tests {
-    use super::bearer_challenge;
+    use super::{bearer_challenge, has_resource_metadata};
+
+    #[test]
+    fn resource_metadata_requests_are_reserved_from_the_evaluation_budget() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let spent = crate::evaluation_budget::Budget::new(std::time::Duration::from_secs(10), 0);
+        assert!(!has_resource_metadata(
+            &endpoint,
+            Some("/m"),
+            std::time::Duration::from_millis(200),
+            &spent
+        ));
+        assert!(
+            listener.accept().is_err(),
+            "a metadata request ran past the request budget"
+        );
+    }
 
     #[test]
     fn a_bearer_challenge_and_its_metadata_url_are_read_from_any_position() {

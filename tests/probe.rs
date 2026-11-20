@@ -240,6 +240,30 @@ fn token_cost_fails_on_total_and_per_tool_budgets() {
 }
 
 #[test]
+fn the_standard_battery_refuses_repeat_counts_outside_its_range() {
+    for repeats in [0, mcpeval::standard::MAX_REPEATS + 1] {
+        let error = mcpeval::probe::score(mcpeval::probe::ScoreOptions {
+            server: "fixture".into(),
+            command: vec!["python3".into(), FIXTURE.into(), "clean".into()],
+            env: Vec::new(),
+            http_url: None,
+            allow_remote_http: false,
+            confirm_read_only: false,
+            skip_tools: Vec::new(),
+            arguments: None,
+            sandbox: false,
+            sandbox_network: false,
+            repeats,
+        })
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("repeats must be 3 to 100"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn token_estimation_is_deterministic_ceil_division() {
     assert_eq!(mcpeval::probe::estimate_tokens(0), 0);
     assert_eq!(mcpeval::probe::estimate_tokens(1), 1);

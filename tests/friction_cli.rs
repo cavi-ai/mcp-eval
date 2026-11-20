@@ -93,6 +93,48 @@ fn friction_counts_storms_corrections_and_wrong_tools_without_private_content() 
 }
 
 #[test]
+fn friction_never_joins_calls_across_unknown_outcomes_or_unrecorded_order() {
+    let home = std::env::temp_dir().join(format!("mcpeval-friction-{}", uuid::Uuid::new_v4()));
+    let mut store = Store::open(Some(home.clone())).unwrap();
+    let mut unknown = call("session-gamma", 2, "inspect", true);
+    unknown.outcome = "unknown".into();
+    for record in [
+        call("session-gamma", 1, "press", false),
+        unknown,
+        call("session-gamma", 3, "click", true),
+        // Legacy records sharing a sequence number have no recorded order.
+        call("session-delta", 1, "press", false),
+        call("session-delta", 1, "click", true),
+    ] {
+        store.append(&record).unwrap();
+    }
+    assert_eq!(mcpeval(&home, &["index"]).status.code(), Some(0));
+
+    let output = mcpeval(&home, &["friction", "--format", "json"]);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(
+        document["servers"],
+        json!([{
+            "server": "demo",
+            "sessions": 2,
+            "calls": 4,
+            "failed_before_first_success": 1,
+            "sessions_without_success": 0,
+            "tools": [],
+            "switches": [],
+            "unordered_sessions": 1
+        }])
+    );
+    let text = mcpeval(&home, &["friction"]);
+    assert_eq!(
+        String::from_utf8(text.stdout).unwrap(),
+        "demo: 2 sessions, 4 calls, 1 failed before the first success, 0 sessions without one\n  \
+         1 sessions without a recorded call order; only their calls and successes count\n"
+    );
+}
+
+#[test]
 fn friction_needs_an_index() {
     let home = std::env::temp_dir().join(format!("mcpeval-friction-{}", uuid::Uuid::new_v4()));
     let output = mcpeval(&home, &["friction"]);

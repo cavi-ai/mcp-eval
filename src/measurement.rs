@@ -19,6 +19,9 @@ pub struct MeasurementProfile {
     /// The server ran in a write-contained sandbox and every tool was called.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sandboxed: bool,
+    /// The sandbox allowed network access (`--sandbox-network`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_network: bool,
 }
 
 impl MeasurementProfile {
@@ -42,6 +45,7 @@ impl MeasurementProfile {
             repeats: crate::standard::REPEATS,
             arguments_sha256: arguments_sha256.map(str::to_owned),
             sandboxed: false,
+            sandbox_network: false,
         }
     }
 

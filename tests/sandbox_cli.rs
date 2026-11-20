@@ -89,6 +89,43 @@ fn a_sandboxed_score_calls_every_tool_and_contains_writes_and_network() {
     );
     assert!(!escape.exists(), "the writer escaped the sandbox");
     assert_eq!(accepted(&listener), 0, "the sandbox reached the network");
+    assert!(
+        sandboxed["readiness"]["measurement_profile"]
+            .get("sandbox_network")
+            .is_none(),
+        "{sandboxed}"
+    );
+
+    // Working arguments may name every tool the sandbox makes callable.
+    let arguments = home.join("arguments.json");
+    std::fs::write(
+        &arguments,
+        r#"{"save_note": {"text": "from arguments"}, "wipe_target": {}}"#,
+    )
+    .unwrap();
+    let fed = score(
+        &home,
+        &["--sandbox", "--arguments", arguments.to_str().unwrap()],
+        &escape,
+        port,
+    );
+    assert!(
+        fed["readiness"]["measurement_profile"]["arguments_sha256"].is_string(),
+        "{fed}"
+    );
+    assert!(!escape.exists(), "the writer escaped the sandbox");
+
+    // The profile records the network permission, so runs with and without
+    // it are not compared.
+    let networked = score(&home, &["--sandbox", "--sandbox-network"], &escape, port);
+    assert_eq!(
+        networked["readiness"]["measurement_profile"]["sandbox_network"], true,
+        "{networked}"
+    );
+    assert!(
+        accepted(&listener) > 0,
+        "--sandbox-network kept the network out"
+    );
 
     let schema: Value = serde_json::from_str(
         &std::fs::read_to_string(

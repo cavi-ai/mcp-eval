@@ -27,6 +27,16 @@ pub struct ServerFriction {
     /// A failed call to one tool directly followed by a successful call to
     /// another: the agent picked the wrong tool first.
     pub switches: Vec<Switch>,
+    /// Sessions whose call order the index cannot establish (legacy records
+    /// sharing a sequence number): their calls and successes count, but
+    /// they add no storms, corrections, switches, or failures before the
+    /// first success.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub unordered_sessions: u64,
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Default, PartialEq, Serialize)]
@@ -53,6 +63,7 @@ struct Tally {
     calls: u64,
     failed_before_first_success: u64,
     sessions_without_success: u64,
+    unordered_sessions: u64,
     tools: BTreeMap<String, ToolFriction>,
     switches: BTreeMap<(String, String), u64>,
 }
@@ -67,21 +78,44 @@ impl Tally {
             })
     }
 
-    /// One session's real `tools/call` outcomes, in order.
-    fn session(&mut self, calls: &[(String, bool)]) {
+    /// One session's real `tools/call` outcomes, in order: `Some(ok)` for a
+    /// call that succeeded or failed, `None` for one whose outcome is
+    /// unknown, which separates the calls around it. A session that is not
+    /// `ordered` counts only its calls and whether any succeeded.
+    fn session(&mut self, calls: &[(String, Option<bool>)], ordered: bool) {
+        let known = calls.iter().filter(|(_, ok)| ok.is_some()).count() as u64;
+        if known == 0 {
+            return;
+        }
         self.sessions += 1;
-        self.calls += calls.len() as u64;
-        match calls.iter().position(|(_, ok)| *ok) {
-            Some(first) => self.failed_before_first_success += first as u64,
-            None => self.sessions_without_success += 1,
+        self.calls += known;
+        let succeeded = calls.iter().any(|(_, ok)| *ok == Some(true));
+        if !succeeded {
+            self.sessions_without_success += 1;
+        }
+        if !ordered {
+            self.unordered_sessions += 1;
+            return;
+        }
+        if succeeded {
+            self.failed_before_first_success += calls
+                .iter()
+                .take_while(|(_, ok)| *ok != Some(true))
+                .filter(|(_, ok)| *ok == Some(false))
+                .count() as u64;
         }
         // The tool of the current run of failed calls, and its length.
         let mut run: Option<(&str, u64)> = None;
         let mut previous: Option<(&str, bool)> = None;
         for (tool, ok) in calls {
             let tool = tool.as_str();
+            let Some(ok) = *ok else {
+                self.close(run.take());
+                previous = None;
+                continue;
+            };
             if let Some((from, false)) = previous {
-                if *ok && from != tool {
+                if ok && from != tool {
                     *self
                         .switches
                         .entry((from.to_owned(), tool.to_owned()))
@@ -89,7 +123,7 @@ impl Tally {
                 }
             }
             let same = run.is_some_and(|(failing, _)| failing == tool);
-            if *ok {
+            if ok {
                 if let (true, Some((_, failures))) = (same, run) {
                     let entry = self.tool(tool);
                     entry.corrections += 1;
@@ -101,7 +135,7 @@ impl Tally {
             } else {
                 self.close(run.replace((tool, 1)));
             }
-            previous = Some((tool, *ok));
+            previous = Some((tool, ok));
         }
         self.close(run);
     }
@@ -135,6 +169,7 @@ impl Tally {
             sessions_without_success: self.sessions_without_success,
             tools,
             switches,
+            unordered_sessions: self.unordered_sessions,
         }
     }
 }
@@ -156,37 +191,53 @@ pub fn load(root: &Path) -> anyhow::Result<Vec<ServerFriction>> {
     if indexed.is_none() {
         bail!("friction is unavailable; run `mcpeval index` first");
     }
+    // Legacy records (no capture) sharing a session, server, and sequence
+    // number have no recorded order, as in the index's failure windows.
     let mut statement = db.prepare(
-        "SELECT server, COALESCE(capture_id, ''), session, tool, outcome FROM calls
-         WHERE method='tools/call' AND kind='real' AND tool IS NOT NULL
-           AND outcome IN ('ok', 'error')
-         ORDER BY server, COALESCE(capture_id, ''), session, seq, id",
+        "WITH ambiguous AS (
+           SELECT session, server FROM calls WHERE capture_id IS NULL
+           GROUP BY session, server, seq HAVING COUNT(*) > 1)
+         SELECT c.server, COALESCE(c.capture_id, ''), c.session, c.tool, c.outcome,
+           c.capture_id IS NULL AND EXISTS (
+             SELECT 1 FROM ambiguous a WHERE a.session=c.session AND a.server=c.server)
+         FROM calls c
+         WHERE c.method='tools/call' AND c.kind='real' AND c.tool IS NOT NULL
+         ORDER BY c.server, COALESCE(c.capture_id, ''), c.session, c.seq, c.id",
     )?;
     let rows = statement.query_map([], |row| {
+        let outcome = row.get::<_, String>(4)?;
         Ok((
             row.get::<_, String>(0)?,
             (row.get::<_, String>(1)?, row.get::<_, String>(2)?),
             row.get::<_, String>(3)?,
-            row.get::<_, String>(4)? == "ok",
+            match outcome.as_str() {
+                "ok" => Some(true),
+                "error" => Some(false),
+                _ => None,
+            },
+            row.get::<_, bool>(5)?,
         ))
     })?;
     let mut servers: BTreeMap<String, Tally> = BTreeMap::new();
     let mut current: Option<(String, (String, String))> = None;
-    let mut calls: Vec<(String, bool)> = Vec::new();
+    let mut calls: Vec<(String, Option<bool>)> = Vec::new();
+    let mut ordered = true;
     for row in rows {
-        let (server, session, tool, ok) = row?;
+        let (server, session, tool, ok, ambiguous) = row?;
         let key = (server, session);
         if current.as_ref() != Some(&key) {
             if let Some((server, _)) = current.take() {
-                servers.entry(server).or_default().session(&calls);
+                servers.entry(server).or_default().session(&calls, ordered);
             }
             calls.clear();
+            ordered = true;
             current = Some(key);
         }
+        ordered &= !ambiguous;
         calls.push((tool, ok));
     }
     if let Some((server, _)) = current {
-        servers.entry(server).or_default().session(&calls);
+        servers.entry(server).or_default().session(&calls, ordered);
     }
     Ok(servers
         .into_iter()
@@ -213,6 +264,12 @@ pub fn render_text(servers: &[ServerFriction]) -> String {
             server.failed_before_first_success,
             server.sessions_without_success
         ));
+        if server.unordered_sessions > 0 {
+            out.push_str(&format!(
+                "  {} sessions without a recorded call order; only their calls and successes count\n",
+                server.unordered_sessions
+            ));
+        }
         for tool in &server.tools {
             out.push_str(&format!(
                 "  {}: {} retry storms, {} corrections after {} failed calls\n",
@@ -236,11 +293,11 @@ mod tests {
     fn tally(sessions: &[&[(&str, bool)]]) -> ServerFriction {
         let mut tally = Tally::default();
         for calls in sessions {
-            let calls: Vec<(String, bool)> = calls
+            let calls: Vec<(String, Option<bool>)> = calls
                 .iter()
-                .map(|(tool, ok)| ((*tool).to_owned(), *ok))
+                .map(|(tool, ok)| ((*tool).to_owned(), Some(*ok)))
                 .collect();
-            tally.session(&calls);
+            tally.session(&calls, true);
         }
         tally.finish("demo".into())
     }
@@ -279,6 +336,7 @@ mod tests {
                     to: "click".into(),
                     count: 1,
                 }],
+                unordered_sessions: 0,
             }
         );
     }

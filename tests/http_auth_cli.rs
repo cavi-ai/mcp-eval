@@ -88,6 +88,19 @@ fn http_servers_must_refuse_foreign_origins_and_challenge_missing_credentials() 
     }
     assert!(!stdout.contains("t0ken") && !stdout.contains("acme"));
 
+    // Metadata naming another resource and no usable authorization server
+    // earns no credit.
+    let unusable = server("unusable", &dir);
+    let (report, _) = score(&unusable, &dir);
+    assert_eq!(
+        protocol_losses(&report),
+        [(
+            "protocol.auth-challenge".to_owned(),
+            "protocol-auth-no-metadata".to_owned()
+        )],
+        "{report:#}"
+    );
+
     let lax = server("lax", &dir);
     let (report, _) = score(&lax, &dir);
     assert_eq!(

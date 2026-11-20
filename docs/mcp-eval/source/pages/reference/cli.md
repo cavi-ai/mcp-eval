@@ -108,7 +108,8 @@ every tool name more than one server lists.
   those values are replaced from the environment.
 - An entry it cannot run is listed as skipped with a reason: `sse-transport`,
   `no-command-or-url`, `unset-variable`, `invalid-server-label`, or
-  `invalid-entry`.
+  `invalid-entry`. A server with an invalid label is listed by its ordinal
+  among invalid labels, `#1`, `#2`, and so on, never by the label.
 - `--format text|json` selects the output (default `text`); JSON is
   `mcpeval.fleet/v1`.
 - `--allow-remote-http` permits the remote HTTPS endpoints the config lists.

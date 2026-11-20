@@ -420,6 +420,7 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
                 skip_tools: options.skip_tools,
                 arguments: options.arguments,
                 sandboxed: false,
+                sandbox_network: false,
                 repeats: options.repeats,
             },
         )?;
@@ -473,6 +474,7 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
             skip_tools: options.skip_tools,
             arguments: options.arguments,
             sandboxed: options.sandbox,
+            sandbox_network: options.sandbox && options.sandbox_network,
             repeats: options.repeats,
         },
     )?;

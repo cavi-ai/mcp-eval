@@ -80,13 +80,19 @@ pub fn load(path: &Path) -> anyhow::Result<Config> {
         .with_context(|| format!("{} has no mcpServers object", path.display()))?;
     let mut entries = Vec::new();
     let mut skipped = Vec::new();
+    let mut invalid = 0;
     for (server, entry) in servers {
-        let parsed = if crate::privacy::valid_server(server) {
-            parse(entry)
-        } else {
-            Err("invalid-server-label")
-        };
-        match parsed {
+        // An invalid label can hold a URL, a path, or control characters:
+        // it is reported only by its ordinal among invalid labels.
+        if !crate::privacy::valid_server(server) {
+            invalid += 1;
+            skipped.push(Skipped {
+                server: format!("#{invalid}"),
+                reason: "invalid-server-label",
+            });
+            continue;
+        }
+        match parse(entry) {
             Ok(entry) => entries.push((server.clone(), entry)),
             Err(reason) => skipped.push(Skipped {
                 server: server.clone(),
@@ -312,5 +318,37 @@ mod tests {
         );
         assert_eq!(entry(json!({"args": []})), Err("no-command-or-url"));
         assert_eq!(entry(json!({"command": ["node"]})), Err("invalid-entry"));
+    }
+
+    #[test]
+    fn invalid_server_labels_are_reported_by_ordinal_only() {
+        let path =
+            std::env::temp_dir().join(format!("mcpeval-fleet-{}.json", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            json!({"mcpServers": {
+                "https://user:secret@example.invalid/mcp": {"command": "node"},
+                "notes": {"command": "node"},
+                "\u{1b}]0;title\u{7}": {"command": "node"}
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let config = load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(config.entries.len(), 1);
+        assert_eq!(
+            config.skipped,
+            [
+                Skipped {
+                    server: "#1".into(),
+                    reason: "invalid-server-label"
+                },
+                Skipped {
+                    server: "#2".into(),
+                    reason: "invalid-server-label"
+                },
+            ]
+        );
     }
 }

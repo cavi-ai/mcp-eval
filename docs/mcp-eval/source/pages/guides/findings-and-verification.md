@@ -146,6 +146,12 @@ in order and counts, per server:
 - switches: a failed call to one tool directly followed by a successful call to
   another, the sign of a tool the agent mistook for the right one.
 
+Only calls that ended `ok` or `error` count. A call with any other outcome
+ends the current run, so failed calls are never joined across it. A session
+whose call order the index does not record, legacy records sharing a sequence
+number, counts only its calls and whether any succeeded; it is reported as
+`unordered_sessions`.
+
 It needs `mcpeval index`, not `promote`. `--format json` writes
 `mcpeval.friction/v1`. Output holds counts and tool names only: no sessions,
 arguments, or error text.

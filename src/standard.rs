@@ -39,6 +39,8 @@ pub struct StandardOptions {
     pub arguments: Option<crate::tool_arguments::ToolArguments>,
     /// The server runs in a write-contained sandbox, so every tool is called.
     pub sandboxed: bool,
+    /// The sandbox allows network access.
+    pub sandbox_network: bool,
     /// Calls per exercised tool, from [`REPEATS`] to [`MAX_REPEATS`].
     pub repeats: usize,
 }
@@ -50,6 +52,7 @@ impl Default for StandardOptions {
             skip_tools: Vec::new(),
             arguments: None,
             sandboxed: false,
+            sandbox_network: false,
             repeats: REPEATS,
         }
     }
@@ -75,6 +78,15 @@ impl ToolClass {
             Self::ReadOnly
         } else {
             Self::Unannotated
+        }
+    }
+
+    /// Whether the battery calls a tool of this class.
+    pub fn callable(self, confirm_read_only: bool, sandboxed: bool) -> bool {
+        match self {
+            Self::Writer => sandboxed,
+            Self::Unannotated => confirm_read_only || sandboxed,
+            Self::ReadOnly => true,
         }
     }
 }
@@ -301,6 +313,11 @@ pub(crate) fn run(
     target: &ClientTarget,
     options: &StandardOptions,
 ) -> anyhow::Result<(Readiness, CatalogContract)> {
+    if !(REPEATS..=MAX_REPEATS).contains(&options.repeats) {
+        return Err(crate::exit::usage(anyhow::anyhow!(
+            "repeats must be {REPEATS} to {MAX_REPEATS}"
+        )));
+    }
     let (observations, contract) = target.budget.finish(observe(target, options))?;
     let mut readiness = crate::score::fold(&observations);
     let mut profile = crate::measurement::MeasurementProfile::current(
@@ -312,6 +329,7 @@ pub(crate) fn run(
             .map(crate::tool_arguments::ToolArguments::sha256),
     );
     profile.sandboxed = options.sandboxed;
+    profile.sandbox_network = options.sandbox_network;
     profile.repeats = options.repeats;
     readiness.measurement_profile = Some(profile);
     Ok((readiness, contract))
@@ -345,7 +363,7 @@ fn observe(
     }
     if let Some(arguments) = &options.arguments {
         arguments
-            .validate(&catalog, options.confirm_read_only)
+            .validate(&catalog, options.confirm_read_only, options.sandboxed)
             .map_err(crate::exit::usage)?;
     }
     let mut tools = Vec::with_capacity(catalog.tools.len());
@@ -359,11 +377,7 @@ fn observe(
         target.budget.check()?;
         let mut calls = CallCounts::default();
         let class = ToolClass::of(tool);
-        let callable = match class {
-            ToolClass::Writer => options.sandboxed,
-            ToolClass::Unannotated => options.confirm_read_only || options.sandboxed,
-            ToolClass::ReadOnly => true,
-        };
+        let callable = class.callable(options.confirm_read_only, options.sandboxed);
         // A skipped tool is never called; it scores as the worst call it
         // could have made (see score.rs), so skipping never pays.
         let skipped = callable && options.skip_tools.contains(&tool.name);
@@ -1109,11 +1123,22 @@ fn exercise_tool(
     (
         Exercise::Exercised {
             consistent,
-            median_latency_ms: latencies[repeats / 2],
+            median_latency_ms: median(&latencies),
             output_schema,
         },
         calls,
     )
+}
+
+/// The median of sorted, non-empty `values`: the mean of the two middle
+/// values for an even count.
+fn median(values: &[u64]) -> u64 {
+    let middle = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        (values[middle - 1] + values[middle]) / 2
+    } else {
+        values[middle]
+    }
 }
 
 /// `structuredContent` must satisfy the complete declared output schema.
@@ -1266,7 +1291,7 @@ const FOREIGN_ORIGIN: &str = "https://mcpeval.invalid";
 ///   rebinding;
 /// - when credentials are configured and a request without them gets 401,
 ///   the 401 carries a `Bearer` challenge and protected resource metadata
-///   (RFC 9728) names an authorization server.
+///   (RFC 9728) names the endpoint and only usable authorization servers.
 fn http_checks(
     target: &ClientTarget,
     endpoint: &str,
@@ -1274,13 +1299,13 @@ fn http_checks(
 ) -> Vec<(CheckId, Option<CheckReason>)> {
     let mut results = Vec::new();
     let status = |origin, credentials| {
-        target.budget.check().ok()?;
+        target.budget.acquire().ok()?;
         crate::http_client::initialize_status(
             endpoint,
             allow_remote,
             origin,
             credentials,
-            CALL_TIMEOUT,
+            target.budget.timeout(CALL_TIMEOUT).ok()?,
         )
         .ok()
     };
@@ -1305,6 +1330,7 @@ fn http_checks(
                 endpoint,
                 metadata.as_deref(),
                 CALL_TIMEOUT,
+                &target.budget,
             ) {
                 Some(CheckReason::ProtocolAuthNoMetadata)
             } else {
@@ -1674,6 +1700,28 @@ mod tests {
             judge(json!({"error": {"code": -32603, "message": "boom"}})),
             Honesty::Dishonest(CheckReason::HonestyWrongCode)
         );
+        // Every text block counts, wherever it sits in the content.
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [
+                {"type": "image", "data": "AAAA", "mimeType": "image/png"},
+                {"type": "text", "text": "City must be a string"}
+            ]}})),
+            Honesty::Honest
+        );
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [
+                {"type": "text", "text": "invalid arguments"},
+                {"type": "text", "text": "city must be a string"}
+            ]}})),
+            Honesty::Honest
+        );
+    }
+
+    #[test]
+    fn median_latency_averages_the_middle_pair_of_an_even_count() {
+        assert_eq!(median(&[0, 0, 180, 180]), 90);
+        assert_eq!(median(&[10, 20, 400]), 20);
+        assert_eq!(median(&[7]), 7);
     }
 
     #[test]

@@ -76,19 +76,26 @@ impl ToolArguments {
 
     /// Every named tool must be one the server lists and mcpeval may call,
     /// and its arguments must satisfy the tool's input schema.
-    pub fn validate(&self, catalog: &ToolCatalog, confirm_read_only: bool) -> anyhow::Result<()> {
+    pub fn validate(
+        &self,
+        catalog: &ToolCatalog,
+        confirm_read_only: bool,
+        sandboxed: bool,
+    ) -> anyhow::Result<()> {
         for (name, arguments) in &self.by_tool {
             let Some(tool) = catalog.tools.iter().find(|tool| &tool.name == name) else {
                 bail!("--arguments names {name}, which is not a tool the server lists");
             };
-            match ToolClass::of(tool) {
-                ToolClass::Writer => bail!(
-                    "--arguments names {name}, which the server annotates as a writer; mcpeval never calls it"
-                ),
-                ToolClass::Unannotated if !confirm_read_only => bail!(
-                    "--arguments names {name}, which carries no readOnlyHint; pass --confirm-read-only to attest it is read-only"
-                ),
-                _ => {}
+            let class = ToolClass::of(tool);
+            if !class.callable(confirm_read_only, sandboxed) {
+                match class {
+                    ToolClass::Writer => bail!(
+                        "--arguments names {name}, which the server annotates as a writer; mcpeval calls writers only under --sandbox"
+                    ),
+                    _ => bail!(
+                        "--arguments names {name}, which carries no readOnlyHint; pass --confirm-read-only to attest it is read-only"
+                    ),
+                }
             }
             if !crate::schema::conforms(&tool.input_schema, arguments) {
                 bail!("--arguments for {name} do not satisfy its input schema");

@@ -99,6 +99,9 @@ pub enum CheckId {
     CatalogReadOnlyDeclared,
     CatalogDestructiveDeclared,
     CatalogOutputSchema,
+    CatalogNameFormat,
+    CatalogSchemaPortable,
+    CatalogDistinctDescription,
     CatalogEmpty,
     ProtocolNegotiation,
     ProtocolUnknownMethod,
@@ -131,6 +134,9 @@ impl CheckId {
         Self::CatalogReadOnlyDeclared,
         Self::CatalogDestructiveDeclared,
         Self::CatalogOutputSchema,
+        Self::CatalogNameFormat,
+        Self::CatalogSchemaPortable,
+        Self::CatalogDistinctDescription,
         Self::CatalogEmpty,
         Self::ProtocolNegotiation,
         Self::ProtocolUnknownMethod,
@@ -163,6 +169,9 @@ impl CheckId {
             Self::CatalogReadOnlyDeclared => "catalog.read-only-declared",
             Self::CatalogDestructiveDeclared => "catalog.destructive-declared",
             Self::CatalogOutputSchema => "catalog.output-schema",
+            Self::CatalogNameFormat => "catalog.name-format",
+            Self::CatalogSchemaPortable => "catalog.schema-portable",
+            Self::CatalogDistinctDescription => "catalog.distinct-description",
             Self::CatalogEmpty => "catalog.empty",
             Self::ProtocolNegotiation => "protocol.negotiation",
             Self::ProtocolUnknownMethod => "protocol.unknown-method",
@@ -205,6 +214,9 @@ pub enum CheckReason {
     CatalogReadOnlyUndeclared,
     CatalogDestructiveUndeclared,
     CatalogNoOutputSchema,
+    CatalogNameOffSpec,
+    CatalogSchemaRootUnportable,
+    CatalogDescriptionDuplicated,
     CatalogNoTools,
     ProtocolNegotiationEchoedUnknown,
     ProtocolNegotiationInvalidVersion,
@@ -250,6 +262,9 @@ impl CheckReason {
         Self::CatalogReadOnlyUndeclared,
         Self::CatalogDestructiveUndeclared,
         Self::CatalogNoOutputSchema,
+        Self::CatalogNameOffSpec,
+        Self::CatalogSchemaRootUnportable,
+        Self::CatalogDescriptionDuplicated,
         Self::CatalogNoTools,
         Self::ProtocolNegotiationEchoedUnknown,
         Self::ProtocolNegotiationInvalidVersion,
@@ -295,6 +310,9 @@ impl CheckReason {
             Self::CatalogReadOnlyUndeclared => "catalog-read-only-undeclared",
             Self::CatalogDestructiveUndeclared => "catalog-destructive-undeclared",
             Self::CatalogNoOutputSchema => "catalog-no-output-schema",
+            Self::CatalogNameOffSpec => "catalog-name-off-spec",
+            Self::CatalogSchemaRootUnportable => "catalog-schema-root-unportable",
+            Self::CatalogDescriptionDuplicated => "catalog-description-duplicated",
             Self::CatalogNoTools => "catalog-no-tools",
             Self::ProtocolNegotiationEchoedUnknown => "protocol-negotiation-echoed-unknown",
             Self::ProtocolNegotiationInvalidVersion => "protocol-negotiation-invalid-version",
@@ -572,6 +590,29 @@ fn catalog(tools: &[ToolObservation]) -> AreaScore {
             CheckReason::CatalogShortDescription,
             Some(facts.description_chars as u64),
         )];
+        // Conformance defects count only against a tool that has one, so a
+        // conforming catalog scores as it did without them.
+        for (defect, id, reason) in [
+            (
+                facts.description_duplicated,
+                CheckId::CatalogDistinctDescription,
+                CheckReason::CatalogDescriptionDuplicated,
+            ),
+            (
+                facts.name_off_spec,
+                CheckId::CatalogNameFormat,
+                CheckReason::CatalogNameOffSpec,
+            ),
+            (
+                facts.schema_root_unportable,
+                CheckId::CatalogSchemaPortable,
+                CheckReason::CatalogSchemaRootUnportable,
+            ),
+        ] {
+            if defect {
+                results.push((false, id, reason, None));
+            }
+        }
         if facts.properties > 0 {
             results.push((
                 facts.described_properties == facts.properties,
@@ -1199,6 +1240,9 @@ mod tests {
             read_only_declared,
             destructive_declared,
             output_schema: false,
+            name_off_spec: false,
+            schema_root_unportable: false,
+            description_duplicated: false,
         }
     }
 

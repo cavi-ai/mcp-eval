@@ -410,10 +410,12 @@ fn record_annotation_tool() -> Value {
                 }
             },
             "required": ["kind", "note"],
-            "oneOf": [
-                {"required": ["event_id"], "not": {"anyOf": [{"required": ["session"]}, {"required": ["seq"]}]}},
-                {"required": ["session", "seq"], "not": {"required": ["event_id"]}}
-            ]
+            // Exactly one target without root combinators, which
+            // function-calling clients reject: session and seq come together,
+            // event_id excludes them, and one of the two must be present.
+            "minProperties": 3,
+            "dependentRequired": {"session": ["seq"], "seq": ["session"]},
+            "dependentSchemas": {"event_id": {"not": {"required": ["session"]}}}
         })),
     )
 }

@@ -75,6 +75,9 @@ pub struct ToolDefinition {
     pub entry_bytes: usize,
     /// Characters in the tool's description; the text itself is never kept.
     pub description_chars: usize,
+    /// Sorted, distinct hashes of the description's lowercased words, for
+    /// comparing descriptions without keeping them. In memory only.
+    pub description_words: Vec<u64>,
     /// The tool's declared `outputSchema`, when present. Structural
     /// metadata only; never persisted.
     pub output_schema: Option<Value>,
@@ -112,14 +115,16 @@ pub(crate) fn tool_definition(tool: &Value) -> anyhow::Result<ToolDefinition> {
     if !input_schema.is_object() {
         bail!("tool inputSchema is not an object");
     }
+    let description = tool
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     Ok(ToolDefinition {
         name: name.to_owned(),
         input_schema,
         entry_bytes: serde_json::to_vec(tool)?.len(),
-        description_chars: tool
-            .get("description")
-            .and_then(Value::as_str)
-            .map_or(0, |text| text.chars().count()),
+        description_chars: description.chars().count(),
+        description_words: word_hashes(description),
         output_schema: tool
             .get("outputSchema")
             .filter(|schema| schema.is_object())
@@ -127,6 +132,23 @@ pub(crate) fn tool_definition(tool: &Value) -> anyhow::Result<ToolDefinition> {
         read_only_hint: annotation_hint(tool, "readOnlyHint"),
         destructive_hint: annotation_hint(tool, "destructiveHint"),
     })
+}
+
+/// Sorted, distinct hashes of the lowercased alphanumeric words of `text`.
+fn word_hashes(text: &str) -> Vec<u64> {
+    use std::hash::{Hash, Hasher};
+    let mut hashes: Vec<u64> = text
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            word.to_lowercase().hash(&mut hasher);
+            hasher.finish()
+        })
+        .collect();
+    hashes.sort_unstable();
+    hashes.dedup();
+    hashes
 }
 
 /// Maximum `tools/list` pages followed during catalog discovery.

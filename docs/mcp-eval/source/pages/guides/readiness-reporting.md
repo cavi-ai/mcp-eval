@@ -179,6 +179,17 @@ empty catalog scores 0.
 - `destructiveHint` declared, for writers;
 - `outputSchema` declared.
 
+Three conformance defects each add one failed check to the tool that has it,
+and cost a conforming tool nothing:
+
+- a description nearly repeating another tool's, 85% or more of the two
+  descriptions' distinct words shared (`catalog-description-duplicated`);
+- a name outside the spec's naming rule, 1 to 128 ASCII letters, digits, `_`,
+  `-`, or `.` (`catalog-name-off-spec`);
+- an input schema whose root is not `"type": "object"` or uses `anyOf`,
+  `oneOf`, `allOf`, or `not`, a shape function-calling clients reject
+  (`catalog-schema-root-unportable`).
+
 ### context
 
 - 75%: the catalog's token estimate, 100 at 2,000 tokens or fewer and 0 at

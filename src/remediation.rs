@@ -334,6 +334,19 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
             "declare destructiveHint on tools that write, so clients can confirm before \
              destructive calls"
         }
+        CheckReason::CatalogNameOffSpec => {
+            "the tool name breaks the MCP naming rule; use 1 to 128 ASCII letters, digits, \
+             underscores, hyphens, or dots"
+        }
+        CheckReason::CatalogSchemaRootUnportable => {
+            "clients that turn tools into model function calls need a plain object schema; give \
+             inputSchema \"type\": \"object\" at the root and move anyOf, oneOf, allOf, or not \
+             into properties"
+        }
+        CheckReason::CatalogDescriptionDuplicated => {
+            "the description nearly repeats another tool's, so a model cannot tell them apart; \
+             say what this tool does differently and when to pick it"
+        }
         CheckReason::CatalogNoOutputSchema => {
             "declare outputSchema and return structuredContent so agents can read results \
              without parsing prose"

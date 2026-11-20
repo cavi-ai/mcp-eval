@@ -534,6 +534,8 @@ fn event_annotations_match_advertised_schema_and_link_only_the_named_call() {
     assert!(stored[0].get("session").is_none());
     assert!(stored[0].get("seq").is_none());
     for invalid in [
+        json!({}),
+        json!({"seq":1}),
         json!({"event_id":events[0],"session":"s","seq":1}),
         json!({"event_id":events[0],"session":null}),
         json!({"event_id":null,"session":"s","seq":1}),

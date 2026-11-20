@@ -629,6 +629,7 @@ mod tests {
             input_schema,
             entry_bytes: 0,
             description_chars: 0,
+            description_words: Vec::new(),
             output_schema: None,
             read_only_hint: None,
             destructive_hint: None,

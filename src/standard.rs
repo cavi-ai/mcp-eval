@@ -87,6 +87,40 @@ pub struct CatalogFacts {
     pub read_only_declared: bool,
     pub destructive_declared: bool,
     pub output_schema: bool,
+    /// The name breaks the spec's naming rule: 1 to 128 of `A-Z a-z 0-9 _ - .`.
+    pub name_off_spec: bool,
+    /// The input schema's root is not a plain `"type": "object"`, or it
+    /// combines branches with `anyOf`, `oneOf`, `allOf`, or `not`.
+    pub schema_root_unportable: bool,
+    /// The description's words nearly match another tool's.
+    pub description_duplicated: bool,
+}
+
+/// Word-set overlap (Jaccard) at which two descriptions count as the same.
+pub const DUPLICATE_DESCRIPTION_OVERLAP: f64 = 0.85;
+
+/// Whether two sorted, distinct word-hash sets overlap at
+/// [`DUPLICATE_DESCRIPTION_OVERLAP`] or more; empty sets never do.
+fn near_duplicate(a: &[u64], b: &[u64]) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let shared = a
+        .iter()
+        .filter(|word| b.binary_search(word).is_ok())
+        .count();
+    let union = a.len() + b.len() - shared;
+    shared as f64 / union as f64 >= DUPLICATE_DESCRIPTION_OVERLAP
+}
+
+/// Mark every tool whose description nearly matches another's.
+fn mark_duplicate_descriptions(tools: &mut [ToolObservation], catalog: &[ToolDefinition]) {
+    for (index, tool) in catalog.iter().enumerate() {
+        let duplicated = catalog.iter().enumerate().any(|(other, sibling)| {
+            other != index && near_duplicate(&tool.description_words, &sibling.description_words)
+        });
+        tools[index].catalog.description_duplicated = duplicated;
+    }
 }
 
 impl CatalogFacts {
@@ -116,6 +150,18 @@ impl CatalogFacts {
             read_only_declared: tool.read_only_hint.is_some(),
             destructive_declared: tool.destructive_hint.is_some(),
             output_schema: tool.output_schema.is_some(),
+            name_off_spec: tool.name.is_empty()
+                || tool.name.len() > 128
+                || !tool
+                    .name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')),
+            schema_root_unportable: tool.input_schema.get("type")
+                != Some(&Value::String("object".into()))
+                || ["anyOf", "oneOf", "allOf", "not"]
+                    .iter()
+                    .any(|key| tool.input_schema.get(*key).is_some()),
+            description_duplicated: false,
         }
     }
 }
@@ -336,6 +382,7 @@ fn observe(
             chained: false,
         });
     }
+    mark_duplicate_descriptions(&mut tools, &catalog.tools);
     // A tool the schema alone cannot feed is called once more with values
     // other tools returned, such as an ID a list tool printed. The new
     // calls count only when one succeeds.
@@ -1420,8 +1467,24 @@ mod tests {
                 read_only_declared: true,
                 destructive_declared: false,
                 output_schema: false,
+                name_off_spec: false,
+                schema_root_unportable: false,
+                description_duplicated: false,
             }
         );
+    }
+
+    #[test]
+    fn descriptions_count_as_duplicates_from_85_percent_shared_words() {
+        let words = |count: u64| (0..count).collect::<Vec<u64>>();
+        // 11 shared of 12 distinct: 0.92.
+        assert!(near_duplicate(&words(11), &words(12)));
+        // 10 shared of 12 distinct: 0.83.
+        assert!(!near_duplicate(
+            &words(10),
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 99, 100]
+        ));
+        assert!(!near_duplicate(&[], &[]));
     }
 
     #[test]

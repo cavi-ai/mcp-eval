@@ -427,6 +427,8 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
 pub struct ScoreOptions {
     pub server: String,
     pub command: Vec<String>,
+    /// Variables added to the stdio server's environment.
+    pub env: Vec<(String, String)>,
     pub http_url: Option<String>,
     pub allow_remote_http: bool,
     pub confirm_read_only: bool,
@@ -448,6 +450,7 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
     }
     let mut target =
         ClientTarget::new(options.command, options.http_url, options.allow_remote_http)
+            .and_then(|target| target.with_env(options.env))
             .map_err(crate::exit::usage)?;
     if options.sandbox {
         let sandbox =

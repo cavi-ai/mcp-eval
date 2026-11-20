@@ -14,6 +14,13 @@ pub enum FrictionFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum FleetFormat {
+    Text,
+    /// Deterministic JSON document (mcpeval.fleet/v1).
+    Json,
+}
+
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum ProbeFormat {
     /// Human-readable one-line-per-case summary.
@@ -286,6 +293,20 @@ pub enum Command {
         /// The server command, after `--`.
         #[arg(last = true)]
         cmd: Vec<String>,
+    },
+    /// Score every server in an MCP client config's `mcpServers` object
+    /// (`.mcp.json`, `claude_desktop_config.json`): the catalog tokens the
+    /// set costs a session and tool names more than one server lists.
+    #[command(display_order = 2)]
+    Fleet {
+        /// The client config file.
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long, value_enum, default_value_t = FleetFormat::Text)]
+        format: FleetFormat,
+        /// Allow remote HTTPS endpoints the config lists.
+        #[arg(long)]
+        allow_remote_http: bool,
     },
     /// Scaffold a starter manifest from a live server's tool catalog.
     #[command(display_order = 1)]

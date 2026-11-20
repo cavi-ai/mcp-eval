@@ -390,6 +390,7 @@ fn run() -> anyhow::Result<()> {
             let mut report = mcpeval::probe::score(mcpeval::probe::ScoreOptions {
                 server: server.clone(),
                 command: cmd,
+                env: Vec::new(),
                 http_url: url,
                 allow_remote_http,
                 confirm_read_only,
@@ -421,6 +422,18 @@ fn run() -> anyhow::Result<()> {
                 }
             }
             exit_for_report(&report);
+            Ok(())
+        }
+        cli::Command::Fleet {
+            config,
+            format,
+            allow_remote_http,
+        } => {
+            let fleet = mcpeval::fleet::run(&config, allow_remote_http)?;
+            match format {
+                cli::FleetFormat::Text => print!("{}", mcpeval::fleet::render_text(&fleet)),
+                cli::FleetFormat::Json => print!("{}", mcpeval::fleet::render_json(&fleet)?),
+            }
             Ok(())
         }
         cli::Command::Init {

@@ -16,6 +16,7 @@ pub(crate) struct ClientTarget {
 enum TargetTransport {
     Stdio {
         command: Vec<String>,
+        env: Vec<(String, String)>,
         sandbox: Option<std::sync::Arc<crate::sandbox::Sandbox>>,
     },
     Http {
@@ -38,6 +39,7 @@ impl ClientTarget {
         let transport = match (http_url, command.is_empty()) {
             (None, false) => TargetTransport::Stdio {
                 command,
+                env: Vec::new(),
                 sandbox: None,
             },
             (Some(endpoint), true) => TargetTransport::Http {
@@ -61,6 +63,16 @@ impl ClientTarget {
         match &mut self.transport {
             TargetTransport::Stdio { sandbox: slot, .. } => *slot = Some(sandbox),
             TargetTransport::Http { .. } => bail!("--sandbox applies to stdio servers only"),
+        }
+        Ok(self)
+    }
+
+    /// Add `env` to every stdio connection's environment; HTTP targets refuse.
+    pub(crate) fn with_env(mut self, env: Vec<(String, String)>) -> anyhow::Result<Self> {
+        match &mut self.transport {
+            TargetTransport::Stdio { env: slot, .. } => *slot = env,
+            TargetTransport::Http { .. } if env.is_empty() => {}
+            TargetTransport::Http { .. } => bail!("env applies to stdio servers only"),
         }
         Ok(self)
     }
@@ -89,9 +101,11 @@ impl ClientTarget {
     pub(crate) fn connect(&self, timeout: Option<Duration>) -> anyhow::Result<ProbeClient> {
         self.budget.check()?;
         let mut client = match &self.transport {
-            TargetTransport::Stdio { command, sandbox } => {
-                ProbeClient::Stdio(McpClient::spawn_in(command, sandbox.as_deref())?)
-            }
+            TargetTransport::Stdio {
+                command,
+                env,
+                sandbox,
+            } => ProbeClient::Stdio(McpClient::spawn_in(command, env, sandbox.as_deref())?),
             TargetTransport::Http {
                 endpoint,
                 allow_remote,

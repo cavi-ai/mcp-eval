@@ -653,6 +653,7 @@ fn score_tool_call(arguments: &Value) -> anyhow::Result<Value> {
     let report = crate::probe::score(crate::probe::ScoreOptions {
         server: server.clone(),
         command: args.command,
+        env: Vec::new(),
         http_url: args.url,
         allow_remote_http: false,
         confirm_read_only: args.confirm_read_only,

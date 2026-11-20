@@ -10,6 +10,7 @@ pub mod errtemplate;
 mod evaluation_budget;
 pub mod exit;
 pub mod fingerprint;
+pub mod fleet;
 pub mod frame;
 pub mod friction;
 pub mod generate;

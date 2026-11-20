@@ -322,12 +322,14 @@ impl McpClient {
         self.capabilities.clone()
     }
     pub fn spawn(command: &[String]) -> anyhow::Result<Self> {
-        Self::spawn_in(command, None)
+        Self::spawn_in(command, &[], None)
     }
 
-    /// Spawn `command`, inside `sandbox` when one is given.
+    /// Spawn `command` with `env` added to its environment, inside `sandbox`
+    /// when one is given.
     pub(crate) fn spawn_in(
         command: &[String],
+        env: &[(String, String)],
         sandbox: Option<&crate::sandbox::Sandbox>,
     ) -> anyhow::Result<Self> {
         let (program, args) = command
@@ -342,6 +344,7 @@ impl McpClient {
             }
         };
         let child = process
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

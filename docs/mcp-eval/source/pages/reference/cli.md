@@ -7,6 +7,7 @@ MCP Eval {{PRODUCT_VERSION}} installs the `mcpeval` binary. Use
 | --- | --- |
 | `probe` | Runs the manifest's cases (the gate), then the standard battery for readiness |
 | `score` | Runs the standard battery alone, with no manifest |
+| `fleet` | Scores every server in an MCP client config |
 | `init` | Scaffolds a manifest from a live server |
 | `guidance` | Compares server instructions with capability-dependent tool catalogs |
 | `compare` | Runs one manifest against several servers side by side |
@@ -89,6 +90,28 @@ standard, its areas, and every lost point. Supports
 for `probe`. `--sandbox` runs a stdio server in a disposable directory and
 calls every tool, writers included; `--sandbox-network` allows its network
 access. See [Sandboxed runs](../guides/readiness-reporting.md#sandboxed-runs).
+
+### `fleet`
+
+`mcpeval fleet --config <PATH>` scores every server in the config's
+`mcpServers` object, the shape `.mcp.json` and `claude_desktop_config.json`
+use, as `score` would with no other option. It reports each server's
+readiness, tools, and catalog tokens; the tools and catalog tokens summed over
+the set, what loading the whole config costs one session before any call; and
+every tool name more than one server lists.
+
+- An entry runs `command` with `args` and `env` added to the environment, or
+  connects to `url` over Streamable HTTP. `${NAME}` and `${NAME:-default}` in
+  those values are replaced from the environment.
+- An entry it cannot run is listed as skipped with a reason: `sse-transport`,
+  `no-command-or-url`, `unset-variable`, `invalid-server-label`, or
+  `invalid-entry`.
+- `--format text|json` selects the output (default `text`); JSON is
+  `mcpeval.fleet/v1`.
+- `--allow-remote-http` permits the remote HTTPS endpoints the config lists.
+
+The report carries server names, scores, counts, and tool names; never
+commands, arguments, environment values, or URLs.
 
 ### `init`
 

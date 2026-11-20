@@ -1,10 +1,10 @@
 # MCP Eval
 
-[![npm weekly downloads](https://img.shields.io/npm/dw/@cavi-ai/mcp-eval?label=npm%20downloads%2Fweek)](https://www.npmjs.com/package/@cavi-ai/mcp-eval)
+**Find the failures your MCP server keeps sending back to agents.**
 
 ![A corgi detective catches the same bug in disguise. Catch the repeat offenders. Reproduce the failure. Verify the fix.](assets/mcp-eval-hero.png)
 
-**Find the failures your MCP server keeps sending back to agents.**
+[![npm weekly downloads](https://img.shields.io/npm/dw/@cavi-ai/mcp-eval?label=npm%20downloads%2Fweek)](https://www.npmjs.com/package/@cavi-ai/mcp-eval)
 
 MCP Eval turns recurring tool errors from real sessions into findings you can reproduce, investigate and verify. Run a read-only readiness battery against a server, or capture session traffic to see which failures keep coming back. Findings include a server-side fix hint; they close after three consecutive passing verification runs and reopen if the problem returns.
 

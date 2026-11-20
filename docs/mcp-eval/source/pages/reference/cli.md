@@ -59,6 +59,9 @@ The default manifest path for `probe`, `verify`, and `report` is
   the battery may call and satisfy its input schema, or the run exits 2. The
   measurement profile records the file's SHA-256, so readiness is comparable
   only between runs with the same file; the values never reach the report.
+- `--repeats <N>` calls each tool in the standard battery `N` times, 3 to 100
+  (default 3). The measurement profile records the count, so readiness
+  compares only between runs with the same count.
 - `--min-readiness <SCORE>` exits 1 when readiness is under the floor, even
   when every manifest case passed.
 - `--min-area <AREA=SCORE>` (repeatable) exits 1 when that area scores under
@@ -85,7 +88,7 @@ version {{PRODUCT_VERSION}}.
 standard battery with no manifest and reports readiness under the named mcpeval
 standard, its areas, and every lost point. Supports
 `--format text|json|markdown|junit`, `--brief`, `--confirm-read-only`,
-`--skip-tool <NAME>`, `--arguments <FILE>`, `--min-readiness <SCORE>`,
+`--skip-tool <NAME>`, `--arguments <FILE>`, `--repeats <N>`, `--min-readiness <SCORE>`,
 `--min-area <AREA=SCORE>`, `--exclude-latency`, and `--allow-remote-http`, as
 for `probe`. `--sandbox` runs a stdio server in a disposable directory and
 calls every tool, writers included; `--sandbox-network` allows its network

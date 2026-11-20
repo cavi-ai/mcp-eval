@@ -32,7 +32,7 @@ demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reli
   lost reliability.success score=33 tool=flaky_read observed=1 reason=reliability-call-failed
     hint: make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability. When a value built from the schema means nothing to the server (a path, an ID), declare examples that work, or pass working arguments with --arguments
   lost reliability.consistent score=0 tool=flaky_read reason=reliability-inconsistent
-    hint: the same read-only call with the same arguments ended differently across three calls; make read paths deterministic, or return a retryable error with a stable code
+    hint: the same read-only call with the same arguments ended differently across repeated calls; make read paths deterministic, or return a retryable error with a stable code
   lost reliability.latency score=50 tool=slow_read reason=reliability-slow
     hint: median latency is above 100 ms (score 80: up to 300 ms, 50: up to 1 s, 20: up to 3 s, 0: slower); cache or precompute the read, or page large results
   standard corpus (mcpeval-standard/2): above 9, tied 0, below 4 of 13 observed servers
@@ -215,9 +215,12 @@ read in memory and never kept.
 ### reliability
 
 Each tool's mean of three checks, multiplied by its successful-call fraction.
-An untested tool earns 0.
+An untested tool earns 0. The battery calls each tool three times;
+`--repeats <N>` on `probe` and `score` calls it 3 to 100 times, and the
+measurement profile records the count, so readiness compares only between runs
+with the same count.
 
-- consistency: the three calls end with the same outcome every time;
+- consistency: every call ends with the same outcome;
 - latency: the median latency band, 100 up to 100 ms, 80 up to 300 ms, 50 up to
   1 s, 20 up to 3 s, else 0;
 - output conformance: a declared `outputSchema` fully honored on every

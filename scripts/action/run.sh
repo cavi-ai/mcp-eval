@@ -46,6 +46,7 @@ has_url=false
 
 args=(probe --server "$INPUT_SERVER" --manifest "$manifest" --format json)
 [ "${INPUT_ALLOW_MUTATION:-false}" != true ] || args+=(--allow-mutation)
+[ -z "${INPUT_REPEATS:-}" ] || args+=(--repeats "$INPUT_REPEATS")
 
 floors=()
 [ -z "${INPUT_MIN_READINESS:-}" ] || floors+=(--min-readiness "$INPUT_MIN_READINESS")
@@ -82,6 +83,9 @@ if [ "${INPUT_SARIF:-false}" = true ] && ! mcpeval report --help 2>&1 | grep -q 
 fi
 if [ "${#floors[@]}" -gt 0 ] && ! mcpeval probe --help 2>&1 | grep -q -- --min-readiness; then
   usage "$(mcpeval --version) does not support readiness floors; set the version input to a release that does"
+fi
+if [ -n "${INPUT_REPEATS:-}" ] && ! mcpeval probe --help 2>&1 | grep -q -- --repeats; then
+  usage "$(mcpeval --version) does not support repeats; set the version input to a release that does"
 fi
 if [ -n "${INPUT_MAX_READINESS_DROP:-}" ] && ! mcpeval diff --help 2>&1 | grep -q -- --max-readiness-drop; then
   usage "$(mcpeval --version) does not support max-readiness-drop; set the version input to a release that does"

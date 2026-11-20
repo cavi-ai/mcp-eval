@@ -50,6 +50,7 @@ reused only when its version matches an explicit `version` input. With no
 | `min-area` | | Area floors as whitespace-separated `AREA=SCORE` words |
 | `max-readiness-drop` | | With `baseline`, fail when readiness fell by more than this many points |
 | `exclude-latency` | `false` | Compare floors and the drop with every latency check at full marks |
+| `repeats` | | Calls per tool in the standard battery, 3 to 100; readiness compares only at the same count |
 | `sarif` | `false` | Render SARIF and upload it to code scanning |
 | `report-path` | `mcpeval.report.json` | Where the JSON report is written; the markdown and SARIF go beside it |
 | `comment` | `false` | On pull requests, keep one comment per server with the report and baseline diff |

@@ -303,6 +303,7 @@ fn run() -> anyhow::Result<()> {
             confirm_read_only,
             skip_tools,
             arguments,
+            repeats,
             floors,
             url,
             allow_remote_http,
@@ -327,6 +328,7 @@ fn run() -> anyhow::Result<()> {
                     confirm_read_only,
                     skip_tools,
                     arguments,
+                    repeats,
                 },
                 &mut store,
             )?;
@@ -381,6 +383,7 @@ fn run() -> anyhow::Result<()> {
             sandbox_network,
             skip_tools,
             arguments,
+            repeats,
             floors,
             url,
             allow_remote_http,
@@ -398,6 +401,7 @@ fn run() -> anyhow::Result<()> {
                 arguments: load_arguments(arguments)?,
                 sandbox,
                 sandbox_network,
+                repeats,
             })?;
             if !floors.is_empty() {
                 report.readiness_gate = Some(floors.evaluate(report.readiness.as_ref()));

@@ -182,6 +182,7 @@ pub fn run(path: &Path, allow_remote_http: bool) -> anyhow::Result<Fleet> {
             arguments: None,
             sandbox: false,
             sandbox_network: false,
+            repeats: crate::standard::REPEATS,
         }) {
             Ok(report) => report,
             Err(_) => {

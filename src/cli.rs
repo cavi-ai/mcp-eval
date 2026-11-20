@@ -106,6 +106,15 @@ pub enum DiffFormat {
     Json,
 }
 
+fn parse_repeats(value: &str) -> Result<usize, String> {
+    let range = mcpeval::standard::REPEATS..=mcpeval::standard::MAX_REPEATS;
+    value
+        .parse()
+        .ok()
+        .filter(|repeats| range.contains(repeats))
+        .ok_or_else(|| format!("expected {} to {}", range.start(), range.end()))
+}
+
 /// Readiness floors shared by `probe` and `score`.
 #[derive(Args, Debug)]
 pub struct FloorArgs {
@@ -237,6 +246,10 @@ pub enum Command {
         /// an ID) the schema does not imply. Reports carry only its digest.
         #[arg(long, value_name = "FILE")]
         arguments: Option<std::path::PathBuf>,
+        /// Calls per tool in the standard battery (3 to 100); the
+        /// measurement profile records it.
+        #[arg(long, value_name = "N", default_value_t = mcpeval::standard::REPEATS, value_parser = parse_repeats)]
+        repeats: usize,
         #[command(flatten)]
         floors: FloorArgs,
         /// Streamable HTTP endpoint instead of a stdio command.
@@ -282,6 +295,10 @@ pub enum Command {
         /// an ID) the schema does not imply. Reports carry only its digest.
         #[arg(long, value_name = "FILE")]
         arguments: Option<std::path::PathBuf>,
+        /// Calls per tool in the standard battery (3 to 100); the
+        /// measurement profile records it.
+        #[arg(long, value_name = "N", default_value_t = mcpeval::standard::REPEATS, value_parser = parse_repeats)]
+        repeats: usize,
         #[command(flatten)]
         floors: FloorArgs,
         /// Streamable HTTP endpoint instead of a stdio command.

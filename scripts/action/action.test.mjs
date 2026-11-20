@@ -509,7 +509,7 @@ test("run forwards readiness floors and the readiness drop", async () => {
   await writeFile(
     path.join(stubs, "mcpeval"),
     `#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\n` +
-      `case "$*" in *--help*) echo '--manifest --min-readiness --max-readiness-drop --fail-on-breaking'; exit 0;; esac\n` +
+      `case "$*" in *--help*) echo '--manifest --min-readiness --repeats --max-readiness-drop --fail-on-breaking'; exit 0;; esac\n` +
       `[ "$1" = probe ] && printf '{"passed":true,"readiness":{"score":90},"readiness_gate":{"passed":true}}'\nexit 0\n`,
   );
   await chmod(path.join(stubs, "mcpeval"), 0o755);
@@ -524,15 +524,17 @@ test("run forwards readiness floors and the readiness drop", async () => {
     "max-readiness-drop": "3",
     "exclude-latency": "true",
     "fail-on-breaking": "true",
+    repeats: "10",
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.outputs.passed, "true");
   assert.deepEqual((await readFile(log, "utf8")).split("\n").filter(Boolean), [
     "diff --help",
     "probe --help",
+    "probe --help",
     "diff --help",
     "diff --help",
-    "probe --server demo --manifest mcp-eval.manifest.json --format json --min-readiness 80 --min-area reliability=70 --min-area coverage=50 --exclude-latency -- mcpeval-demo",
+    "probe --server demo --manifest mcp-eval.manifest.json --format json --repeats 10 --min-readiness 80 --min-area reliability=70 --min-area coverage=50 --exclude-latency -- mcpeval-demo",
     "report mcpeval.report.json --format markdown",
     "diff baseline.json mcpeval.report.json --format markdown --fail-on-regression --fail-on-breaking --max-readiness-drop 3 --exclude-latency",
   ]);

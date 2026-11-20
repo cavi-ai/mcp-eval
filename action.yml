@@ -81,6 +81,12 @@ inputs:
       at full marks ('true'/'false'); latency depends on the runner.
     required: false
     default: 'false'
+  repeats:
+    description: >
+      Calls per tool in the standard battery, 3 to 100. Readiness compares
+      only between runs with the same count.
+    required: false
+    default: ''
   sarif:
     description: >
       Render the report as SARIF and upload it to code scanning
@@ -162,6 +168,7 @@ runs:
         INPUT_MIN_AREA: ${{ inputs.min-area }}
         INPUT_MAX_READINESS_DROP: ${{ inputs.max-readiness-drop }}
         INPUT_EXCLUDE_LATENCY: ${{ inputs.exclude-latency }}
+        INPUT_REPEATS: ${{ inputs.repeats }}
         INPUT_SARIF: ${{ inputs.sarif }}
         INPUT_REPORT_PATH: ${{ inputs.report-path }}
       run: bash "$ACTION_PATH/scripts/action/run.sh"

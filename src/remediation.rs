@@ -266,7 +266,7 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
              path, an ID), declare examples that work, or pass working arguments with --arguments"
         }
         CheckReason::ReliabilityInconsistent => {
-            "the same read-only call with the same arguments ended differently across three \
+            "the same read-only call with the same arguments ended differently across repeated \
              calls; make read paths deterministic, or return a retryable error with a stable code"
         }
         CheckReason::ReliabilitySlow => {

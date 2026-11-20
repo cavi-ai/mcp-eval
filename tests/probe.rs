@@ -79,6 +79,7 @@ fn options(home: &TestHome, mode: &str, selected_probe: Option<ProbeKind>) -> Pr
         confirm_read_only: false,
         skip_tools: Vec::new(),
         arguments: None,
+        repeats: mcpeval::standard::REPEATS,
     }
 }
 
@@ -183,6 +184,7 @@ fn token_cost_options(
         confirm_read_only: false,
         skip_tools: Vec::new(),
         arguments: None,
+        repeats: mcpeval::standard::REPEATS,
     }
 }
 

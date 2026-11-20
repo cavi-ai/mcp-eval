@@ -588,6 +588,7 @@ fn run_probe_tool_call(root: &std::path::Path, arguments: &Value) -> anyhow::Res
             confirm_read_only: false,
             skip_tools: Vec::new(),
             arguments: None,
+            repeats: crate::standard::REPEATS,
         },
         &mut store,
     )?;
@@ -661,6 +662,7 @@ fn score_tool_call(arguments: &Value) -> anyhow::Result<Value> {
         arguments: None,
         sandbox: false,
         sandbox_network: false,
+        repeats: crate::standard::REPEATS,
     })?;
     Ok(report_result(&report, &server))
 }

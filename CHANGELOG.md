@@ -8,6 +8,7 @@
 - The standard battery calls a tool whose synthesized arguments failed once more with values other tools returned, such as a listed ID; coverage reports `chained_tools`.
 - Catalog conformance defects cost the tool that has one: a description nearly repeating another tool's, a name outside the spec's naming rule, or an input schema root that is not a plain object.
 - Catalog measurements count hidden Unicode characters, phrases addressing the model, and references to other tools in each `tools/list` entry (`hidden_characters`, `injection_phrases`, `cross_tool_references`); unscored.
+- `--repeats <N>` on `probe` and `score` (action input `repeats`) calls each tool in the standard battery 3 to 100 times; the measurement profile records the count.
 - `mcpeval fleet --config <PATH>` scores every server in an MCP client config's `mcpServers` object and reports the catalog tokens the set costs a session and tool names more than one server lists.
 - `mcpeval friction` counts session-path friction in indexed captures: retry storms, corrections, a failed tool followed by a different successful one, and failed calls before the first success.
 - `MCPEVAL_HTTP_HEADERS` sends extra credential headers to HTTP servers, one `Name: value` per line, never persisted or printed.

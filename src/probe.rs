@@ -43,6 +43,8 @@ pub struct ProbeOptions {
     /// Arguments the standard battery calls named tools with
     /// (`--arguments`).
     pub arguments: Option<crate::tool_arguments::ToolArguments>,
+    /// Calls per tool in the standard battery (`--repeats`).
+    pub repeats: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -418,6 +420,7 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
                 skip_tools: options.skip_tools,
                 arguments: options.arguments,
                 sandboxed: false,
+                repeats: options.repeats,
             },
         )?;
     }
@@ -439,6 +442,8 @@ pub struct ScoreOptions {
     pub sandbox: bool,
     /// Allow network access from the sandbox.
     pub sandbox_network: bool,
+    /// Calls per tool in the standard battery (`--repeats`).
+    pub repeats: usize,
 }
 
 /// The standard battery alone: no manifest, no gate.
@@ -468,6 +473,7 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
             skip_tools: options.skip_tools,
             arguments: options.arguments,
             sandboxed: options.sandbox,
+            repeats: options.repeats,
         },
     )?;
     Ok(report)
@@ -2171,9 +2177,7 @@ mod tests {
             &target,
             &crate::standard::StandardOptions {
                 confirm_read_only: true,
-                skip_tools: vec![],
-                arguments: None,
-                sandboxed: false,
+                ..Default::default()
             },
         )
         .unwrap();

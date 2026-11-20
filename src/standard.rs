@@ -19,15 +19,17 @@ use crate::score::{CheckId, CheckReason, Readiness};
 /// round operation durations: a tool that works for exactly 10 s must not
 /// pass or fail on a few milliseconds of scheduling.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(15);
-/// Calls per exercised tool.
+/// Calls per exercised tool; `--repeats` sets more.
 pub const REPEATS: usize = 3;
+/// The most calls per exercised tool `--repeats` sets.
+pub const MAX_REPEATS: usize = 100;
 /// `tools/list` pages followed before the catalog is taken as complete.
 pub const MAX_PAGES: usize = crate::mcp_client::MAX_TOOL_PAGES;
 /// Server-to-client requests declined during one tool call.
 pub(crate) const MAX_SERVER_REQUESTS: u64 = 8;
 const PAYLOAD_BYTES: u64 = 1_000_000;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct StandardOptions {
     /// Attest that unannotated tools are read-only, so they are called.
     pub confirm_read_only: bool,
@@ -37,6 +39,20 @@ pub struct StandardOptions {
     pub arguments: Option<crate::tool_arguments::ToolArguments>,
     /// The server runs in a write-contained sandbox, so every tool is called.
     pub sandboxed: bool,
+    /// Calls per exercised tool, from [`REPEATS`] to [`MAX_REPEATS`].
+    pub repeats: usize,
+}
+
+impl Default for StandardOptions {
+    fn default() -> Self {
+        Self {
+            confirm_read_only: false,
+            skip_tools: Vec::new(),
+            arguments: None,
+            sandboxed: false,
+            repeats: REPEATS,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -296,6 +312,7 @@ pub(crate) fn run(
             .map(crate::tool_arguments::ToolArguments::sha256),
     );
     profile.sandboxed = options.sandboxed;
+    profile.repeats = options.repeats;
     readiness.measurement_profile = Some(profile);
     Ok((readiness, contract))
 }
@@ -332,7 +349,7 @@ fn observe(
             .map_err(crate::exit::usage)?;
     }
     let mut tools = Vec::with_capacity(catalog.tools.len());
-    // Tools whose three calls all succeeded, with the arguments used: the
+    // Tools whose calls all succeeded, with the arguments used: the
     // server-level cases run on the first of them.
     let mut succeeded: Vec<(&ToolDefinition, Value)> = Vec::new();
     let mut harvest = Harvest::default();
@@ -376,10 +393,16 @@ fn observe(
                         Some(Exercise::NotExercised(CheckReason::CoverageSkipped))
                     }
                     Some(arguments) => {
-                        let (exercise, measured_calls) =
-                            exercise_tool(&mut client, target, tool, &arguments, &mut harvest);
+                        let (exercise, measured_calls) = exercise_tool(
+                            &mut client,
+                            target,
+                            tool,
+                            &arguments,
+                            options.repeats,
+                            &mut harvest,
+                        );
                         calls = measured_calls;
-                        if calls.successful == REPEATS as u64 {
+                        if calls.successful == options.repeats as u64 {
                             succeeded.push((tool, arguments));
                         } else if calls.successful == 0 && synthesized {
                             unfed.push((tools.len(), arguments));
@@ -411,11 +434,18 @@ fn observe(
         let Some(arguments) = harvest.feed(&tool.input_schema, &synthesized) else {
             continue;
         };
-        let (exercise, calls) = exercise_tool(&mut client, target, tool, &arguments, &mut harvest);
+        let (exercise, calls) = exercise_tool(
+            &mut client,
+            target,
+            tool,
+            &arguments,
+            options.repeats,
+            &mut harvest,
+        );
         if calls.successful == 0 {
             continue;
         }
-        if calls.successful == REPEATS as u64 {
+        if calls.successful == options.repeats as u64 {
             succeeded.push((tool, arguments));
         }
         let observation = &mut tools[index];
@@ -1010,25 +1040,26 @@ fn words(name: &str) -> Vec<String> {
     words
 }
 
-/// Three calls with `arguments`. A call that does not complete costs this
-/// tool and the next tool starts on a fresh connection. Successful results
-/// feed `harvest`.
+/// `repeats` calls with `arguments`. A call that does not complete costs
+/// this tool and the next tool starts on a fresh connection. Successful
+/// results feed `harvest`.
 fn exercise_tool(
     client: &mut Option<ProbeClient>,
     target: &ClientTarget,
     tool: &ToolDefinition,
     arguments: &Value,
+    repeats: usize,
     harvest: &mut Harvest,
 ) -> (Exercise, CallCounts) {
     let mut calls = CallCounts::default();
-    let mut outcomes = Vec::with_capacity(REPEATS);
-    let mut latencies = Vec::with_capacity(REPEATS);
+    let mut outcomes = Vec::with_capacity(repeats);
+    let mut latencies = Vec::with_capacity(repeats);
     let validator = tool.declared_output_schema().map(crate::schema::compile);
     let mut output_schema: Option<bool> = None;
     if client.is_none() {
         *client = connect(target).ok();
     }
-    for _ in 0..REPEATS {
+    for _ in 0..repeats {
         let Some(active) = client.as_mut() else {
             return (
                 Exercise::NotExercised(CheckReason::CoverageCallFailed),
@@ -1078,7 +1109,7 @@ fn exercise_tool(
     (
         Exercise::Exercised {
             consistent,
-            median_latency_ms: latencies[REPEATS / 2],
+            median_latency_ms: latencies[repeats / 2],
             output_schema,
         },
         calls,

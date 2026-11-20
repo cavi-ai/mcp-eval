@@ -103,6 +103,7 @@ pub fn run(mut options: VerifyOptions, store: &mut Store) -> anyhow::Result<Veri
             confirm_read_only: false,
             skip_tools: Vec::new(),
             arguments: None,
+            repeats: crate::standard::REPEATS,
         },
         store,
     )?;

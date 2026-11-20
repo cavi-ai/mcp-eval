@@ -10,10 +10,10 @@
 use serde_json::{json, Value};
 
 use crate::probe::ProbeReport;
-use crate::standard::{Exercise, Honesty, Observations, ToolClass, ToolObservation};
+use crate::standard::{CatalogFacts, Exercise, Honesty, Observations, ToolClass, ToolObservation};
 
 /// The standard this build scores against.
-pub const STANDARD: &str = "mcpeval-standard/2";
+pub const STANDARD: &str = "mcpeval-standard/3";
 
 /// Catalog tokens at or under this earn full marks (1% of a 200k window).
 pub const CATALOG_FULL_TOKENS: u64 = 2_000;
@@ -99,6 +99,9 @@ pub enum CheckId {
     CatalogReadOnlyDeclared,
     CatalogDestructiveDeclared,
     CatalogOutputSchema,
+    CatalogNameFormat,
+    CatalogSchemaPortable,
+    CatalogDistinctDescription,
     CatalogEmpty,
     ProtocolNegotiation,
     ProtocolUnknownMethod,
@@ -106,6 +109,8 @@ pub enum CheckId {
     ProtocolUnknownTool,
     ProtocolPagination,
     ProtocolSurfaces,
+    ProtocolOrigin,
+    ProtocolAuthChallenge,
     ErrorHonestyInvalidArguments,
     ErrorHonestyUntestable,
 }
@@ -129,6 +134,9 @@ impl CheckId {
         Self::CatalogReadOnlyDeclared,
         Self::CatalogDestructiveDeclared,
         Self::CatalogOutputSchema,
+        Self::CatalogNameFormat,
+        Self::CatalogSchemaPortable,
+        Self::CatalogDistinctDescription,
         Self::CatalogEmpty,
         Self::ProtocolNegotiation,
         Self::ProtocolUnknownMethod,
@@ -136,6 +144,8 @@ impl CheckId {
         Self::ProtocolUnknownTool,
         Self::ProtocolPagination,
         Self::ProtocolSurfaces,
+        Self::ProtocolOrigin,
+        Self::ProtocolAuthChallenge,
         Self::ErrorHonestyInvalidArguments,
         Self::ErrorHonestyUntestable,
     ];
@@ -159,6 +169,9 @@ impl CheckId {
             Self::CatalogReadOnlyDeclared => "catalog.read-only-declared",
             Self::CatalogDestructiveDeclared => "catalog.destructive-declared",
             Self::CatalogOutputSchema => "catalog.output-schema",
+            Self::CatalogNameFormat => "catalog.name-format",
+            Self::CatalogSchemaPortable => "catalog.schema-portable",
+            Self::CatalogDistinctDescription => "catalog.distinct-description",
             Self::CatalogEmpty => "catalog.empty",
             Self::ProtocolNegotiation => "protocol.negotiation",
             Self::ProtocolUnknownMethod => "protocol.unknown-method",
@@ -166,6 +179,8 @@ impl CheckId {
             Self::ProtocolUnknownTool => "protocol.unknown-tool",
             Self::ProtocolPagination => "protocol.pagination",
             Self::ProtocolSurfaces => "protocol.surfaces",
+            Self::ProtocolOrigin => "protocol.origin",
+            Self::ProtocolAuthChallenge => "protocol.auth-challenge",
             Self::ErrorHonestyInvalidArguments => "error-honesty.invalid-arguments",
             Self::ErrorHonestyUntestable => "error-honesty.untestable",
         }
@@ -199,6 +214,9 @@ pub enum CheckReason {
     CatalogReadOnlyUndeclared,
     CatalogDestructiveUndeclared,
     CatalogNoOutputSchema,
+    CatalogNameOffSpec,
+    CatalogSchemaRootUnportable,
+    CatalogDescriptionDuplicated,
     CatalogNoTools,
     ProtocolNegotiationEchoedUnknown,
     ProtocolNegotiationInvalidVersion,
@@ -208,10 +226,15 @@ pub enum CheckReason {
     ProtocolUnknownToolAccepted,
     ProtocolPaginationInvalid,
     ProtocolSurfaceInvalid,
+    ProtocolOriginAccepted,
+    ProtocolAuthNoChallenge,
+    ProtocolAuthNoMetadata,
     ProtocolCallFailed,
     HonestyAcceptedInvalid,
     HonestyEmptyError,
     HonestyWrongCode,
+    HonestyProtocolError,
+    HonestyUnnamedParameter,
     HonestyCallFailed,
     HonestyUntestable,
 }
@@ -239,6 +262,9 @@ impl CheckReason {
         Self::CatalogReadOnlyUndeclared,
         Self::CatalogDestructiveUndeclared,
         Self::CatalogNoOutputSchema,
+        Self::CatalogNameOffSpec,
+        Self::CatalogSchemaRootUnportable,
+        Self::CatalogDescriptionDuplicated,
         Self::CatalogNoTools,
         Self::ProtocolNegotiationEchoedUnknown,
         Self::ProtocolNegotiationInvalidVersion,
@@ -248,10 +274,15 @@ impl CheckReason {
         Self::ProtocolUnknownToolAccepted,
         Self::ProtocolPaginationInvalid,
         Self::ProtocolSurfaceInvalid,
+        Self::ProtocolOriginAccepted,
+        Self::ProtocolAuthNoChallenge,
+        Self::ProtocolAuthNoMetadata,
         Self::ProtocolCallFailed,
         Self::HonestyAcceptedInvalid,
         Self::HonestyEmptyError,
         Self::HonestyWrongCode,
+        Self::HonestyProtocolError,
+        Self::HonestyUnnamedParameter,
         Self::HonestyCallFailed,
         Self::HonestyUntestable,
     ];
@@ -279,6 +310,9 @@ impl CheckReason {
             Self::CatalogReadOnlyUndeclared => "catalog-read-only-undeclared",
             Self::CatalogDestructiveUndeclared => "catalog-destructive-undeclared",
             Self::CatalogNoOutputSchema => "catalog-no-output-schema",
+            Self::CatalogNameOffSpec => "catalog-name-off-spec",
+            Self::CatalogSchemaRootUnportable => "catalog-schema-root-unportable",
+            Self::CatalogDescriptionDuplicated => "catalog-description-duplicated",
             Self::CatalogNoTools => "catalog-no-tools",
             Self::ProtocolNegotiationEchoedUnknown => "protocol-negotiation-echoed-unknown",
             Self::ProtocolNegotiationInvalidVersion => "protocol-negotiation-invalid-version",
@@ -290,10 +324,15 @@ impl CheckReason {
             Self::ProtocolUnknownToolAccepted => "protocol-unknown-tool-accepted",
             Self::ProtocolPaginationInvalid => "protocol-pagination-invalid",
             Self::ProtocolSurfaceInvalid => "protocol-surface-invalid",
+            Self::ProtocolOriginAccepted => "protocol-origin-accepted",
+            Self::ProtocolAuthNoChallenge => "protocol-auth-no-challenge",
+            Self::ProtocolAuthNoMetadata => "protocol-auth-no-metadata",
             Self::ProtocolCallFailed => "protocol-call-failed",
             Self::HonestyAcceptedInvalid => "honesty-accepted-invalid",
             Self::HonestyEmptyError => "honesty-empty-error",
             Self::HonestyWrongCode => "honesty-wrong-code",
+            Self::HonestyProtocolError => "honesty-protocol-error",
+            Self::HonestyUnnamedParameter => "honesty-unnamed-parameter",
             Self::HonestyCallFailed => "honesty-call-failed",
             Self::HonestyUntestable => "honesty-untestable",
         }
@@ -338,7 +377,8 @@ pub struct Surface {
 }
 
 impl Surface {
-    fn of(tools: &[ToolObservation]) -> Self {
+    fn of(observations: &Observations) -> Self {
+        let tools = &observations.tools;
         let writers = tools
             .iter()
             .filter(|tool| tool.class == ToolClass::Writer)
@@ -349,7 +389,9 @@ impl Surface {
             writers,
             exercised: tools
                 .iter()
-                .filter(|tool| tool.class != ToolClass::Writer && tool.calls.successful > 0)
+                .filter(|tool| {
+                    in_surface(tool, observations.sandboxed) && tool.calls.successful > 0
+                })
                 .count() as u64,
         }
     }
@@ -378,9 +420,9 @@ pub fn fold(observations: &Observations) -> Readiness {
             Area::Protocol => protocol(&observations.protocol),
             Area::Catalog => catalog(&observations.tools),
             Area::Context => context(&observations.tools),
-            Area::ErrorHonesty => error_honesty(&observations.tools),
+            Area::ErrorHonesty => error_honesty(observations),
             Area::Reliability => reliability(observations, Latency::Banded),
-            Area::Coverage => coverage(&observations.tools),
+            Area::Coverage => coverage(observations),
         })
         .collect();
     let reliability_without_latency = reliability(observations, Latency::FullMarks).score;
@@ -397,7 +439,7 @@ pub fn fold(observations: &Observations) -> Readiness {
         score,
         score_without_latency: Some(score_without_latency),
         attested_read_only: observations.attested_read_only,
-        surface: Surface::of(&observations.tools),
+        surface: Surface::of(observations),
         areas,
         measurement_profile: None,
     }
@@ -474,10 +516,17 @@ fn lost(
     })
 }
 
-fn read_only_surface(tools: &[ToolObservation]) -> usize {
-    tools
+/// Whether the battery measures `tool`: every non-writer, and in a sandbox
+/// every tool.
+fn in_surface(tool: &ToolObservation, sandboxed: bool) -> bool {
+    sandboxed || tool.class != ToolClass::Writer
+}
+
+fn callable_surface(observations: &Observations) -> usize {
+    observations
+        .tools
         .iter()
-        .filter(|tool| tool.class != ToolClass::Writer)
+        .filter(|tool| in_surface(tool, observations.sandboxed))
         .count()
 }
 
@@ -541,6 +590,29 @@ fn catalog(tools: &[ToolObservation]) -> AreaScore {
             CheckReason::CatalogShortDescription,
             Some(facts.description_chars as u64),
         )];
+        // Conformance defects count only against a tool that has one, so a
+        // conforming catalog scores as it did without them.
+        for (defect, id, reason) in [
+            (
+                facts.description_duplicated,
+                CheckId::CatalogDistinctDescription,
+                CheckReason::CatalogDescriptionDuplicated,
+            ),
+            (
+                facts.name_off_spec,
+                CheckId::CatalogNameFormat,
+                CheckReason::CatalogNameOffSpec,
+            ),
+            (
+                facts.schema_root_unportable,
+                CheckId::CatalogSchemaPortable,
+                CheckReason::CatalogSchemaRootUnportable,
+            ),
+        ] {
+            if defect {
+                results.push((false, id, reason, None));
+            }
+        }
         if facts.properties > 0 {
             results.push((
                 facts.described_properties == facts.properties,
@@ -587,8 +659,28 @@ fn catalog(tools: &[ToolObservation]) -> AreaScore {
         area: Area::Catalog,
         score: round(fractions.iter().sum::<f64>() / fractions.len() as f64),
         checks,
-        measurements: serde_json::Map::new(),
+        measurements: description_scan(tools),
     }
+}
+
+/// Description-scan counts over the catalog, each only when non-zero. They
+/// are reported for review and do not change the score.
+fn description_scan(tools: &[ToolObservation]) -> serde_json::Map<String, Value> {
+    let total = |count: fn(&CatalogFacts) -> u64| {
+        tools.iter().map(|tool| count(&tool.catalog)).sum::<u64>()
+    };
+    [
+        ("hidden_characters", total(|facts| facts.hidden_characters)),
+        ("injection_phrases", total(|facts| facts.injection_phrases)),
+        (
+            "cross_tool_references",
+            total(|facts| facts.cross_tool_references),
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, count)| *count > 0)
+    .map(|(name, count)| (name.to_owned(), count.into()))
+    .collect()
 }
 
 fn context(tools: &[ToolObservation]) -> AreaScore {
@@ -630,28 +722,42 @@ fn context(tools: &[ToolObservation]) -> AreaScore {
     }
 }
 
-/// The share of judged tools that refused schema-violating arguments with
-/// words. Read-only tools whose schema admits every input are not judged;
-/// when none can be judged, the area scores 0 with one visible loss.
-fn error_honesty(tools: &[ToolObservation]) -> AreaScore {
-    let judged: Vec<(&ToolObservation, Honesty)> = tools
+/// What a refusal the model can act on only in part earns: a protocol error
+/// most clients never show the model, or tool-error text that does not name
+/// the offending parameter.
+pub const HONESTY_PARTIAL: f64 = 50.0;
+
+/// The mean over judged tools of how actionable their refusal of
+/// schema-violating arguments was. Read-only tools whose schema admits every
+/// input are not judged; when none can be judged, the area scores 0 with one
+/// visible loss.
+fn error_honesty(observations: &Observations) -> AreaScore {
+    let judged: Vec<(&ToolObservation, Honesty)> = observations
+        .tools
         .iter()
         .filter_map(|tool| tool.honesty.map(|honesty| (tool, honesty)))
         .collect();
     let mut checks = Vec::new();
+    let mut earned = 0.0;
     for (tool, honesty) in &judged {
-        if let Honesty::Dishonest(reason) = honesty {
+        let (value, reason) = match honesty {
+            Honesty::Honest => (100.0, None),
+            Honesty::Partial(reason) => (HONESTY_PARTIAL, Some(*reason)),
+            Honesty::Dishonest(reason) => (0.0, Some(*reason)),
+        };
+        earned += value;
+        if let Some(reason) = reason {
             checks.extend(lost(
                 CheckId::ErrorHonestyInvalidArguments,
                 Some(tool.name.as_str()),
-                0.0,
+                value,
                 None,
-                *reason,
+                reason,
             ));
         }
     }
     let score = if judged.is_empty() {
-        let reason = if read_only_surface(tools) == 0 {
+        let reason = if callable_surface(observations) == 0 {
             CheckReason::NoReadOnlyTools
         } else {
             CheckReason::HonestyUntestable
@@ -665,11 +771,7 @@ fn error_honesty(tools: &[ToolObservation]) -> AreaScore {
         ));
         0
     } else {
-        let honest = judged
-            .iter()
-            .filter(|(_, honesty)| *honesty == Honesty::Honest)
-            .count();
-        round(100.0 * honest as f64 / judged.len() as f64)
+        round(earned / judged.len() as f64)
     };
     AreaScore {
         area: Area::ErrorHonesty,
@@ -707,7 +809,7 @@ fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore 
             output_schema,
         }) = &tool.exercise
         else {
-            if tool.class != ToolClass::Writer {
+            if in_surface(tool, observations.sandboxed) {
                 entries.push(0.0);
                 let reason = match tool.exercise {
                     Some(Exercise::NotExercised(reason)) => reason,
@@ -793,7 +895,7 @@ fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore 
         }
     }
     let score = if exercised == 0 {
-        let reason = if read_only_surface(&observations.tools) == 0 {
+        let reason = if callable_surface(observations) == 0 {
             CheckReason::NoReadOnlyTools
         } else {
             CheckReason::ReliabilityNoneExercised
@@ -819,18 +921,24 @@ fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore 
             "rpc_errors": observations.tools.iter().map(|t| t.calls.rpc_errors).sum::<u64>(),
             "rejected_calls": observations.tools.iter().map(|t| t.calls.rejected).sum::<u64>(),
             "transport_errors": observations.tools.iter().map(|t| t.calls.transport_errors).sum::<u64>(),
-            "untested_tools": observations.tools.iter().filter(|t| t.class != ToolClass::Writer && t.calls.total() == 0).count(),
+            "untested_tools": observations.tools.iter().filter(|t| in_surface(t, observations.sandboxed) && t.calls.total() == 0).count(),
         })).expect("numeric measurements"),
     }
 }
 
-fn coverage(tools: &[ToolObservation]) -> AreaScore {
-    let surface = read_only_surface(tools);
+fn coverage(observations: &Observations) -> AreaScore {
+    let surface = callable_surface(observations);
     let mut checks = Vec::new();
     let mut exercised = 0usize;
-    for tool in tools.iter().filter(|tool| tool.class != ToolClass::Writer) {
+    let mut chained = 0usize;
+    for tool in observations
+        .tools
+        .iter()
+        .filter(|tool| in_surface(tool, observations.sandboxed))
+    {
         if tool.calls.successful > 0 {
             exercised += 1;
+            chained += usize::from(tool.chained);
             continue;
         }
         match &tool.exercise {
@@ -863,11 +971,16 @@ fn coverage(tools: &[ToolObservation]) -> AreaScore {
     } else {
         round(100.0 * exercised as f64 / surface as f64)
     };
+    // Tools exercised only with values another tool returned.
+    let mut measurements = serde_json::Map::new();
+    if chained > 0 {
+        measurements.insert("chained_tools".into(), chained.into());
+    }
     AreaScore {
         area: Area::Coverage,
         score,
         checks,
-        measurements: serde_json::Map::new(),
+        measurements,
     }
 }
 
@@ -1128,6 +1241,7 @@ mod tests {
             catalog: CatalogFacts::default(),
             honesty: None,
             calls,
+            chained: false,
         }
     }
 
@@ -1146,6 +1260,12 @@ mod tests {
             read_only_declared,
             destructive_declared,
             output_schema: false,
+            name_off_spec: false,
+            schema_root_unportable: false,
+            description_duplicated: false,
+            hidden_characters: 0,
+            injection_phrases: 0,
+            cross_tool_references: 0,
         }
     }
 
@@ -1216,6 +1336,7 @@ mod tests {
                 read("publish_status", 50, facts(60, 0, 0, true, false)),
             ],
             attested_read_only: false,
+            sandboxed: false,
             contention: Some(true),
             payload: Some(true),
             protocol: [
@@ -1520,6 +1641,38 @@ mod tests {
                 observed: None,
                 reason: CheckReason::ProtocolCallFailed,
             }]
+        );
+    }
+
+    #[test]
+    fn error_honesty_gives_half_credit_to_refusals_the_model_cannot_act_on() {
+        let with = |name: &str, honesty| ToolObservation {
+            honesty: Some(honesty),
+            ..tool(name, 10, ToolClass::ReadOnly, exercised(true, 1))
+        };
+        let readiness = fold(&Observations {
+            tools: vec![
+                with("a", Honesty::Honest),
+                with("b", Honesty::Partial(CheckReason::HonestyProtocolError)),
+                with("c", Honesty::Partial(CheckReason::HonestyUnnamedParameter)),
+                with("d", Honesty::Dishonest(CheckReason::HonestyAcceptedInvalid)),
+            ],
+            ..Observations::default()
+        });
+        let honesty = area(&readiness, Area::ErrorHonesty);
+        assert_eq!(honesty.score, 50);
+        let lost: Vec<(&str, u64, CheckReason)> = honesty
+            .checks
+            .iter()
+            .map(|check| (check.tool.as_deref().unwrap(), check.score, check.reason))
+            .collect();
+        assert_eq!(
+            lost,
+            [
+                ("b", 50, CheckReason::HonestyProtocolError),
+                ("c", 50, CheckReason::HonestyUnnamedParameter),
+                ("d", 0, CheckReason::HonestyAcceptedInvalid),
+            ]
         );
     }
 

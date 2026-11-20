@@ -12,7 +12,7 @@ import { verifyCorpus, driftedResults } from "./verify.mjs";
 const expected = "a".repeat(64);
 const check = { name: "backend", command: ["fixture-state-check"], sha256: expected };
 const target = (state_checks = [check]) => ({ server: "fixture", runtime: "npm", package: "fixture-package", version: "1.2.3", bin: "fixture", args: [], prerequisites: { environment: [], checks: [], state_checks } });
-const document = (value) => ({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets: [value] });
+const document = (value) => ({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/3", targets: [value] });
 
 test("state checks require unique names, bounded commands, and exact digests", () => {
   for (const value of [null, {}, [{ ...check, sha256: "latest" }], [{ ...check, command: [] }], [{ ...check, command: ["a\0b"] }], [check, check], [{ ...check, name: "../private" }]]) {

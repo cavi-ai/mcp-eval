@@ -1,6 +1,6 @@
 {
   "schema": "mcpeval.corpus-targets/v1",
-  "standard": "mcpeval-standard/2",
+  "standard": "mcpeval-standard/3",
   "targets": [
     {"server": "everything", "runtime": "npm", "package": "@modelcontextprotocol/server-everything", "version": "2.0.0", "bin": "mcp-server-everything", "args": ["stdio"], "prerequisites": {"environment": [], "checks": []}},
     {"server": "memory", "runtime": "npm", "package": "@modelcontextprotocol/server-memory", "version": "2.0.0", "bin": "mcp-server-memory", "args": [], "prerequisites": {"environment": [], "checks": []}},

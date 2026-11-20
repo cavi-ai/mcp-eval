@@ -16,6 +16,12 @@ pub struct MeasurementProfile {
     /// SHA-256 of the `--arguments` file the battery called tools with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arguments_sha256: Option<String>,
+    /// The server ran in a write-contained sandbox and every tool was called.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandboxed: bool,
+    /// The sandbox allowed network access (`--sandbox-network`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sandbox_network: bool,
 }
 
 impl MeasurementProfile {
@@ -38,6 +44,8 @@ impl MeasurementProfile {
             call_timeout_ms: crate::standard::CALL_TIMEOUT.as_millis() as u64,
             repeats: crate::standard::REPEATS,
             arguments_sha256: arguments_sha256.map(str::to_owned),
+            sandboxed: false,
+            sandbox_network: false,
         }
     }
 

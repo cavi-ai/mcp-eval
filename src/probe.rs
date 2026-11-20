@@ -43,6 +43,8 @@ pub struct ProbeOptions {
     /// Arguments the standard battery calls named tools with
     /// (`--arguments`).
     pub arguments: Option<crate::tool_arguments::ToolArguments>,
+    /// Calls per tool in the standard battery (`--repeats`).
+    pub repeats: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -417,6 +419,9 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
                 confirm_read_only: options.confirm_read_only,
                 skip_tools: options.skip_tools,
                 arguments: options.arguments,
+                sandboxed: false,
+                sandbox_network: false,
+                repeats: options.repeats,
             },
         )?;
     }
@@ -426,12 +431,20 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
 pub struct ScoreOptions {
     pub server: String,
     pub command: Vec<String>,
+    /// Variables added to the stdio server's environment.
+    pub env: Vec<(String, String)>,
     pub http_url: Option<String>,
     pub allow_remote_http: bool,
     pub confirm_read_only: bool,
     pub skip_tools: Vec<String>,
     /// Arguments the standard battery calls named tools with.
     pub arguments: Option<crate::tool_arguments::ToolArguments>,
+    /// Run the stdio server in a write-contained sandbox and call every tool.
+    pub sandbox: bool,
+    /// Allow network access from the sandbox.
+    pub sandbox_network: bool,
+    /// Calls per tool in the standard battery (`--repeats`).
+    pub repeats: usize,
 }
 
 /// The standard battery alone: no manifest, no gate.
@@ -441,8 +454,17 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
             "server label is invalid"
         )));
     }
-    let target = ClientTarget::new(options.command, options.http_url, options.allow_remote_http)
-        .map_err(crate::exit::usage)?;
+    let mut target =
+        ClientTarget::new(options.command, options.http_url, options.allow_remote_http)
+            .and_then(|target| target.with_env(options.env))
+            .map_err(crate::exit::usage)?;
+    if options.sandbox {
+        let sandbox =
+            crate::sandbox::Sandbox::create(options.sandbox_network).map_err(crate::exit::usage)?;
+        target = target
+            .sandboxed(std::sync::Arc::new(sandbox))
+            .map_err(crate::exit::usage)?;
+    }
     let mut report = ProbeReport::default();
     measure_standard(
         &mut report,
@@ -451,6 +473,9 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
             confirm_read_only: options.confirm_read_only,
             skip_tools: options.skip_tools,
             arguments: options.arguments,
+            sandboxed: options.sandbox,
+            sandbox_network: options.sandbox && options.sandbox_network,
+            repeats: options.repeats,
         },
     )?;
     Ok(report)
@@ -2154,8 +2179,7 @@ mod tests {
             &target,
             &crate::standard::StandardOptions {
                 confirm_read_only: true,
-                skip_tools: vec![],
-                arguments: None,
+                ..Default::default()
             },
         )
         .unwrap();

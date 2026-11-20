@@ -237,12 +237,8 @@ fn id_key(v: &Value) -> Option<String> {
 /// The message lives in the result's content array; the fingerprint keeps
 /// only the privacy-safe template.
 fn tool_error_info(result: &Value, salt: &Salt) -> crate::record::ErrorInfo {
-    let message = result
-        .get("content")
-        .and_then(Value::as_array)
-        .and_then(|content| content.first())
-        .and_then(|item| item.get("text"))
-        .and_then(Value::as_str);
+    let message = crate::mcp_client::tool_result_text(result);
+    let message = message.as_deref();
     crate::record::ErrorInfo {
         code: Some(Value::String("tool-error".into())),
         layer: None,

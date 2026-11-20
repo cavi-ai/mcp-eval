@@ -110,6 +110,25 @@ fn render_probe_text(
                 surface.tools, surface.read_only, surface.writers, surface.exercised
             );
             println!("  assessment: read-only structural checks; semantic correctness requires a reviewed oracle");
+            if let Some(scan) = readiness
+                .areas
+                .iter()
+                .find(|area| area.area == mcpeval::score::Area::Catalog)
+                .map(|area| &area.measurements)
+                .filter(|measurements| !measurements.is_empty())
+            {
+                let count = |name: &str| {
+                    scan.get(name)
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0)
+                };
+                println!(
+                    "  description scan: {} hidden characters, {} injection phrases, {} cross-tool references",
+                    count("hidden_characters"),
+                    count("injection_phrases"),
+                    count("cross_tool_references")
+                );
+            }
             // One hint per reason: a catalog-wide defect loses a check on
             // every tool.
             let mut hinted = Vec::new();
@@ -186,10 +205,24 @@ fn render_probe_text(
     }
 }
 
+/// Stack for the command thread, the same on every platform; the main
+/// thread's default is 1 MiB on Windows.
+const STACK_BYTES: usize = 8 * 1024 * 1024;
+
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("Error: {error:?}");
-        std::process::exit(mcpeval::exit::code(&error));
+    let outcome = std::thread::Builder::new()
+        .name("main".into())
+        .stack_size(STACK_BYTES)
+        .spawn(run)
+        .expect("spawn the command thread")
+        .join();
+    match outcome {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            eprintln!("Error: {error:?}");
+            std::process::exit(mcpeval::exit::code(&error));
+        }
+        Err(panic) => std::panic::resume_unwind(panic),
     }
 }
 
@@ -284,6 +317,7 @@ fn run() -> anyhow::Result<()> {
             confirm_read_only,
             skip_tools,
             arguments,
+            repeats,
             floors,
             url,
             allow_remote_http,
@@ -308,6 +342,7 @@ fn run() -> anyhow::Result<()> {
                     confirm_read_only,
                     skip_tools,
                     arguments,
+                    repeats,
                 },
                 &mut store,
             )?;
@@ -358,8 +393,11 @@ fn run() -> anyhow::Result<()> {
             format,
             brief,
             confirm_read_only,
+            sandbox,
+            sandbox_network,
             skip_tools,
             arguments,
+            repeats,
             floors,
             url,
             allow_remote_http,
@@ -369,11 +407,15 @@ fn run() -> anyhow::Result<()> {
             let mut report = mcpeval::probe::score(mcpeval::probe::ScoreOptions {
                 server: server.clone(),
                 command: cmd,
+                env: Vec::new(),
                 http_url: url,
                 allow_remote_http,
                 confirm_read_only,
                 skip_tools,
                 arguments: load_arguments(arguments)?,
+                sandbox,
+                sandbox_network,
+                repeats,
             })?;
             if !floors.is_empty() {
                 report.readiness_gate = Some(floors.evaluate(report.readiness.as_ref()));
@@ -398,6 +440,18 @@ fn run() -> anyhow::Result<()> {
                 }
             }
             exit_for_report(&report);
+            Ok(())
+        }
+        cli::Command::Fleet {
+            config,
+            format,
+            allow_remote_http,
+        } => {
+            let fleet = mcpeval::fleet::run(&config, allow_remote_http)?;
+            match format {
+                cli::FleetFormat::Text => print!("{}", mcpeval::fleet::render_text(&fleet)),
+                cli::FleetFormat::Json => print!("{}", mcpeval::fleet::render_json(&fleet)?),
+            }
             Ok(())
         }
         cli::Command::Init {
@@ -836,6 +890,20 @@ fn run() -> anyhow::Result<()> {
                 );
             }
             print!("{}", mcpeval::report::render(&findings, format)?);
+            Ok(())
+        }
+        cli::Command::Friction { format } => {
+            let store = mcpeval::store::Store::open(None)?;
+            let servers = mcpeval::friction::load(store.root())?;
+            if servers.is_empty() {
+                eprintln!("no indexed tools/call records; capture with mcpeval shim, then run mcpeval index");
+            }
+            match format {
+                cli::FrictionFormat::Text => print!("{}", mcpeval::friction::render_text(&servers)),
+                cli::FrictionFormat::Json => {
+                    print!("{}", mcpeval::friction::render_json(&servers)?)
+                }
+            }
             Ok(())
         }
         cli::Command::Annotate {

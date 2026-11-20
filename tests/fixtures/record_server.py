@@ -21,6 +21,16 @@ TOOLS = [
         "annotations": {"readOnlyHint": True},
     },
     {
+        "name": "get_archived_record",
+        "description": "Return one archived record by its ID. Read-only.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"id": {"type": "string", "description": "Archived record ID"}},
+            "required": ["id"],
+        },
+        "annotations": {"readOnlyHint": True},
+    },
+    {
         "name": "delete_record",
         "description": "Delete one stored record by its ID.",
         "inputSchema": {
@@ -72,8 +82,13 @@ for line in sys.stdin:
                 emit(request_id, result=text("record rec-1"))
             else:
                 emit(request_id, result=text("unknown record", error=True))
-        elif name in ("get_record", "delete_record"):
-            emit(request_id, error={"code": -32602, "message": "id must be a string"})
+        elif name == "get_archived_record" and isinstance(arguments.get("id"), str):
+            if arguments["id"] == "arc-9":
+                emit(request_id, result=text("archived record arc-9"))
+            else:
+                emit(request_id, result=text("unknown record", error=True))
+        elif name in ("get_record", "get_archived_record", "delete_record"):
+            emit(request_id, result=text("id must be a string", error=True))
         else:
             emit(request_id, error={"code": -32602, "message": "unknown tool"})
     else:

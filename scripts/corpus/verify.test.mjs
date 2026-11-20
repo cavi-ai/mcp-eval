@@ -358,9 +358,9 @@ test("offline checking binds original input bytes and projections and refuses li
 
 test("target locks reject ranges, tags, duplicate labels, implicit prerequisites, and unknown runtimes", () => {
   for (const change of [{ version: "latest" }, { version: "^1.2.3" }, { version: "1.x" }, { runtime: "curl" }, { bin: "../secret" }, { prerequisites: undefined }]) {
-    assert.throws(() => validateTargets({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets: [target("one", change)] }));
+    assert.throws(() => validateTargets({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/3", targets: [target("one", change)] }));
   }
-  assert.throws(() => validateTargets({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets: [target("one"), target("one")] }));
+  assert.throws(() => validateTargets({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/3", targets: [target("one"), target("one")] }));
   assert.deepEqual(commandFor(target("python", { runtime: "uvx", package: "fixture_python", version: "1.2.3rc1" })), ["uvx", "--from", "fixture_python==1.2.3rc1", "fixture-server"]);
 });
 

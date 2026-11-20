@@ -1,7 +1,7 @@
 {
   "schema": "mcpeval.readiness-corpus/v3",
   "source": "Fictitious contract fixture; not collected server evidence",
-  "standard": "mcpeval-standard/2",
+  "standard": "mcpeval-standard/3",
   "platform": "fixture",
   "evaluator": { "version": "0.4.0", "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
   "targets_sha256": "0000000000000000000000000000000000000000000000000000000000000000",

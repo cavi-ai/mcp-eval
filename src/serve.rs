@@ -410,10 +410,12 @@ fn record_annotation_tool() -> Value {
                 }
             },
             "required": ["kind", "note"],
-            "oneOf": [
-                {"required": ["event_id"], "not": {"anyOf": [{"required": ["session"]}, {"required": ["seq"]}]}},
-                {"required": ["session", "seq"], "not": {"required": ["event_id"]}}
-            ]
+            // Exactly one target without root combinators, which
+            // function-calling clients reject: session and seq come together,
+            // event_id excludes them, and one of the two must be present.
+            "minProperties": 3,
+            "dependentRequired": {"session": ["seq"], "seq": ["session"]},
+            "dependentSchemas": {"event_id": {"not": {"required": ["session"]}}}
         })),
     )
 }
@@ -441,8 +443,9 @@ fn handle_call(message: &Value, server: &Server) -> anyhow::Result<Value> {
     // These tools already validate typed arguments or the CLI's annotation
     // contract, preserving their more specific error messages.
     if !matches!(name, "record_annotation" | "score" | "verify_finding") {
+        // An isError result naming the parameter lets the model correct its call.
         if let Some(reason) = crate::schema::violation(&declared["inputSchema"], &arguments) {
-            return Err(InvalidParams(reason).into());
+            return Err(anyhow::anyhow!(reason));
         }
     }
     // Keep spare HTTP workers available to data queries. Concurrent
@@ -585,6 +588,7 @@ fn run_probe_tool_call(root: &std::path::Path, arguments: &Value) -> anyhow::Res
             confirm_read_only: false,
             skip_tools: Vec::new(),
             arguments: None,
+            repeats: crate::standard::REPEATS,
         },
         &mut store,
     )?;
@@ -650,11 +654,15 @@ fn score_tool_call(arguments: &Value) -> anyhow::Result<Value> {
     let report = crate::probe::score(crate::probe::ScoreOptions {
         server: server.clone(),
         command: args.command,
+        env: Vec::new(),
         http_url: args.url,
         allow_remote_http: false,
         confirm_read_only: args.confirm_read_only,
         skip_tools: args.skip_tools,
         arguments: None,
+        sandbox: false,
+        sandbox_network: false,
+        repeats: crate::standard::REPEATS,
     })?;
     Ok(report_result(&report, &server))
 }

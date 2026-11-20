@@ -7,6 +7,20 @@ pub enum FindingsFormat {
     Json,
 }
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum FrictionFormat {
+    Text,
+    /// Deterministic JSON document (mcpeval.friction/v1).
+    Json,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub enum FleetFormat {
+    Text,
+    /// Deterministic JSON document (mcpeval.fleet/v1).
+    Json,
+}
+
 #[derive(Clone, Copy, Debug, Default, ValueEnum)]
 pub enum ProbeFormat {
     /// Human-readable one-line-per-case summary.
@@ -90,6 +104,15 @@ pub enum DiffFormat {
     Markdown,
     /// Deterministic JSON diff document (mcpeval.probe-diff/v2).
     Json,
+}
+
+fn parse_repeats(value: &str) -> Result<usize, String> {
+    let range = mcpeval::standard::REPEATS..=mcpeval::standard::MAX_REPEATS;
+    value
+        .parse()
+        .ok()
+        .filter(|repeats| range.contains(repeats))
+        .ok_or_else(|| format!("expected {} to {}", range.start(), range.end()))
 }
 
 /// Readiness floors shared by `probe` and `score`.
@@ -223,6 +246,10 @@ pub enum Command {
         /// an ID) the schema does not imply. Reports carry only its digest.
         #[arg(long, value_name = "FILE")]
         arguments: Option<std::path::PathBuf>,
+        /// Calls per tool in the standard battery (3 to 100); the
+        /// measurement profile records it.
+        #[arg(long, value_name = "N", default_value_t = mcpeval::standard::REPEATS, value_parser = parse_repeats)]
+        repeats: usize,
         #[command(flatten)]
         floors: FloorArgs,
         /// Streamable HTTP endpoint instead of a stdio command.
@@ -251,6 +278,14 @@ pub enum Command {
         /// destructiveHint are read-only, so the standard battery calls them.
         #[arg(long)]
         confirm_read_only: bool,
+        /// Run the stdio server in a disposable directory with writes
+        /// outside it denied, no inherited credentials, and no network, and
+        /// call every tool, writers included. macOS only.
+        #[arg(long, conflicts_with = "url")]
+        sandbox: bool,
+        /// Allow network access from the sandbox.
+        #[arg(long, requires = "sandbox")]
+        sandbox_network: bool,
         /// Never call this tool in the standard battery; it scores as
         /// unexercised. Repeat for each tool.
         #[arg(long = "skip-tool", value_name = "NAME")]
@@ -260,6 +295,10 @@ pub enum Command {
         /// an ID) the schema does not imply. Reports carry only its digest.
         #[arg(long, value_name = "FILE")]
         arguments: Option<std::path::PathBuf>,
+        /// Calls per tool in the standard battery (3 to 100); the
+        /// measurement profile records it.
+        #[arg(long, value_name = "N", default_value_t = mcpeval::standard::REPEATS, value_parser = parse_repeats)]
+        repeats: usize,
         #[command(flatten)]
         floors: FloorArgs,
         /// Streamable HTTP endpoint instead of a stdio command.
@@ -271,6 +310,20 @@ pub enum Command {
         /// The server command, after `--`.
         #[arg(last = true)]
         cmd: Vec<String>,
+    },
+    /// Score every server in an MCP client config's `mcpServers` object
+    /// (`.mcp.json`, `claude_desktop_config.json`): the catalog tokens the
+    /// set costs a session and tool names more than one server lists.
+    #[command(display_order = 2)]
+    Fleet {
+        /// The client config file.
+        #[arg(long)]
+        config: std::path::PathBuf,
+        #[arg(long, value_enum, default_value_t = FleetFormat::Text)]
+        format: FleetFormat,
+        /// Allow remote HTTPS endpoints the config lists.
+        #[arg(long)]
+        allow_remote_http: bool,
     },
     /// Scaffold a starter manifest from a live server's tool catalog.
     #[command(display_order = 1)]
@@ -520,6 +573,14 @@ pub enum Command {
         /// Output format for agents, people, or structured consumers.
         #[arg(long, value_enum, default_value_t = FindingsFormat::Agent)]
         format: FindingsFormat,
+    },
+    /// Count session-path friction in indexed captures: retry storms,
+    /// corrected calls, a wrong tool before the right one, and failed calls
+    /// before the first success.
+    #[command(display_order = 14)]
+    Friction {
+        #[arg(long, value_enum, default_value_t = FrictionFormat::Text)]
+        format: FrictionFormat,
     },
     /// Record an agent-authored observation about a call, identified by
     /// event ID or legacy (session, seq): a documented path was blocked, a call reported

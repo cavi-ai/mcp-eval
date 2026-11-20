@@ -87,7 +87,7 @@ fn the_clean_demo_loses_points_only_for_its_deliberate_fixtures() {
     assert_eq!(document["schema"], "mcpeval.probe-report/v2");
     assert_eq!(document["gate"], Value::Null);
     let readiness = &document["readiness"];
-    assert_eq!(readiness["standard"], "mcpeval-standard/2");
+    assert_eq!(readiness["standard"], "mcpeval-standard/3");
     assert_eq!(
         readiness["surface"],
         json!({"tools": 12, "read_only": 10, "writers": 2, "exercised": 10})
@@ -416,7 +416,7 @@ fn text_output_names_every_lost_point_with_its_hint() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/2"),
+        stdout.contains("demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/3"),
         "{stdout}"
     );
     assert!(
@@ -746,7 +746,16 @@ fn a_refusal_counts_even_when_the_server_lacks_ping() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(area(&document, "error-honesty"), 100, "{document:#}");
+    // The -32602 refusal earns partial credit, not the zero of a failed call.
+    assert_eq!(area(&document, "error-honesty"), 50, "{document:#}");
+    assert_eq!(
+        lost_in(&document, "error-honesty"),
+        owned(&[(
+            "error-honesty.invalid-arguments",
+            Some("lookup"),
+            "honesty-protocol-error"
+        )])
+    );
     assert!(lost_in(&document, "protocol")
         .contains(&owned(&[("protocol.ping", None, "protocol-ping-failed")])[0]));
 }
@@ -818,7 +827,8 @@ fn synthesized_arguments_reach_required_argument_tools() {
     );
     assert_eq!(document["readiness"]["surface"]["exercised"], 4);
     assert_eq!(area(&document, "coverage"), 80);
-    assert_eq!(area(&document, "error-honesty"), 100);
+    // The fixture refuses with -32602, which earns half.
+    assert_eq!(area(&document, "error-honesty"), 50);
     assert_eq!(
         lost_in(&document, "coverage"),
         owned(&[(

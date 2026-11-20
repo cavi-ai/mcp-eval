@@ -21,7 +21,7 @@ reason's hint prints once, under its first lost point:
 ```text
 literal-status instruction-fidelity pass attempts=1
 demo gate 1/1 passed
-demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/2
+demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/3
   surface: 12 tools, 10 read-only, 2 writers, 10 exercised
   lost catalog.description score=0 tool=describe_status observed=37 reason=catalog-short-description
     hint: describe what the tool does, when to use it, and what it returns in at least 40 characters; agents choose tools from this text
@@ -32,10 +32,10 @@ demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reli
   lost reliability.success score=33 tool=flaky_read observed=1 reason=reliability-call-failed
     hint: make valid read-only calls succeed; consistent tool errors are failures, not evidence of reliability. When a value built from the schema means nothing to the server (a path, an ID), declare examples that work, or pass working arguments with --arguments
   lost reliability.consistent score=0 tool=flaky_read reason=reliability-inconsistent
-    hint: the same read-only call with the same arguments ended differently across three calls; make read paths deterministic, or return a retryable error with a stable code
+    hint: the same read-only call with the same arguments ended differently across repeated calls; make read paths deterministic, or return a retryable error with a stable code
   lost reliability.latency score=50 tool=slow_read reason=reliability-slow
     hint: median latency is above 100 ms (score 80: up to 300 ms, 50: up to 1 s, 20: up to 3 s, 0: slower); cache or precompute the read, or page large results
-  standard corpus (mcpeval-standard/2): above 9, tied 0, below 4 of 13 observed servers
+  standard corpus (mcpeval-standard/3): above 9, tied 0, below 4 of 13 observed servers
   catalog: 566 tokens over 12 tools, lighter than 12 of 13 observed servers (median 2536 tokens)
 ```
 
@@ -87,7 +87,7 @@ as a baseline or attach to CI artifacts.
   "passed": false,
   "gate": {"passed": 0, "total": 1},
   "readiness": {
-    "standard": "mcpeval-standard/2",
+    "standard": "mcpeval-standard/3",
     "score": 91,
     "badge": "https://img.shields.io/badge/mcpeval-91%2F100-brightgreen",
     "attested_read_only": false,
@@ -135,7 +135,7 @@ ever leaves the report.
 
 Readiness is the weighted mean of the standard's areas, each scored on fixed
 curves that mcpeval defines. The weights, curves, bands, and checks are the
-standard. The report names it (`mcpeval-standard/2` in this build), and any
+standard. The report names it (`mcpeval-standard/3` in this build), and any
 change to them changes the name. No area ever drops out: surface the standard
 could not test counts against the score.
 
@@ -158,7 +158,16 @@ The share of these checks passed:
 - `tools/list` pages with finite cursors and valid, distinct entries;
 - a declared resources or prompts capability lists cleanly (only when declared);
 - `initialize` with an unknown version answers a date-shaped version the server
-  supports and will echo.
+  supports and will echo;
+- over HTTP to a loopback endpoint, `initialize` with a foreign `Origin` is
+  refused with 403 (`protocol-origin-accepted`);
+- over HTTP with credentials configured, when `initialize` without them gets
+  401, the 401 carries a `Bearer` challenge (`protocol-auth-no-challenge`) and
+  OAuth protected resource metadata (RFC 9728) at its `resource_metadata` URL
+  or `/.well-known/oauth-protected-resource` names the endpoint as `resource`
+  and lists only absolute `https` authorization servers, or `http` ones on a
+  loopback host (`protocol-auth-no-metadata`). Each metadata request counts
+  against the evaluation budget.
 
 ### catalog
 
@@ -172,6 +181,32 @@ empty catalog scores 0.
 - `destructiveHint` declared, for writers;
 - `outputSchema` declared.
 
+Three conformance defects each add one failed check to the tool that has it,
+and cost a conforming tool nothing:
+
+- a description nearly repeating another tool's, 85% or more of the two
+  descriptions' distinct words shared (`catalog-description-duplicated`);
+- a name outside the spec's naming rule, 1 to 128 ASCII letters, digits, `_`,
+  `-`, or `.` (`catalog-name-off-spec`);
+- an input schema whose root is not `"type": "object"` or uses `anyOf`,
+  `oneOf`, `allOf`, or `not`, a shape function-calling clients reject
+  (`catalog-schema-root-unportable`).
+
+The catalog area's `measurements` count, unscored, text a model reads in any
+string of a `tools/list` entry other than its name, each key present only when
+non-zero:
+
+- `hidden_characters`: zero-width, bidirectional-control, and Unicode tag
+  characters;
+- `injection_phrases`: phrases addressing the model rather than describing the
+  tool, such as `ignore previous instructions`, `do not tell the user`, or
+  `<IMPORTANT>`, matched case-insensitively;
+- `cross_tool_references`: other tools named in the entry, for names containing
+  `_`, `-`, `.`, or `:`.
+
+The text report prints them on a `description scan:` line. The text itself is
+read in memory and never kept.
+
 ### context
 
 - 75%: the catalog's token estimate, 100 at 2,000 tokens or fewer and 0 at
@@ -182,11 +217,15 @@ empty catalog scores 0.
 ### reliability
 
 Each tool's mean of three checks, multiplied by its successful-call fraction.
-An untested tool earns 0.
+An untested tool earns 0. The battery calls each tool three times;
+`--repeats <N>` on `probe` and `score` calls it 3 to 100 times, and the
+measurement profile records the count, so readiness compares only between runs
+with the same count.
 
-- consistency: the three calls end with the same outcome every time;
+- consistency: every call ends with the same outcome;
 - latency: the median latency band, 100 up to 100 ms, 80 up to 300 ms, 50 up to
-  1 s, 20 up to 3 s, else 0;
+  1 s, 20 up to 3 s, else 0; for an even call count the median is the mean of
+  the two middle calls;
 - output conformance: a declared `outputSchema` fully honored on every
   successful result.
 
@@ -195,9 +234,14 @@ payload-bounds case.
 
 ### error-honesty
 
-The share of judged read-only tools that refuse one call with schema-violating
-arguments and still answer the next request. A refusal is error -32602 or an
-`isError` result whose text says why. The violation is the first that applies:
+The mean over judged read-only tools of how they refuse one call with
+schema-violating arguments and still answer the next request. An `isError`
+result whose text, read across every text content block, names the offending
+parameter earns full credit. JSON-RPC
+error -32602, which most clients do not show the model, or `isError` text that
+names no parameter earns half (`honesty-protocol-error`,
+`honesty-unnamed-parameter`). Accepting the call, an empty error, or another
+error code earns none. The violation is the first that applies:
 
 - the required properties omitted;
 - the first typed property, by name, given the wrong type;
@@ -221,6 +265,27 @@ The standard battery is read-only by construction:
 - It trusts `readOnlyHint`: a server that marks a writing tool read-only gets it
   called.
 
+### Sandboxed runs
+
+`mcpeval score --sandbox -- <CMD>...` measures a stdio server whose tools are
+unannotated or writers. The battery calls every tool, and every tool counts in
+the surface. The server runs under macOS `sandbox-exec`:
+
+- A new directory under the system temporary directory is its `HOME`,
+  `TMPDIR`, XDG directories, and working directory; it is removed after the
+  run.
+- It inherits only `PATH`, `LANG`, `LC_ALL`, and `LC_CTYPE`; credentials in
+  the environment do not reach it.
+- File writes outside that directory are denied.
+- Network access is denied. `--sandbox-network` allows it, for example for a
+  server that `npx` or `uvx` downloads at start.
+
+Reads are not restricted. The report's measurement profile records
+`"sandboxed": true`, and `"sandbox_network": true` under `--sandbox-network`,
+so a sandboxed score compares only with scores taken under the same sandbox.
+`--arguments` may name any tool the sandboxed battery calls, writers included.
+`--sandbox` cannot be combined with `--url` and fails on other platforms.
+
 Arguments are synthesized from each tool's input schema. Every required
 property takes the first rule that applies:
 
@@ -237,6 +302,19 @@ before the call. Invalid defaults, examples, or constraints leave the tool
 unexercised. External schema references are disabled; local references are
 supported. A required string with only a `pattern`, or a property with no rule,
 leaves the tool unexercised (`coverage-unsynthesizable`).
+
+A tool whose synthesized arguments fail every call is called once more with
+values other tools returned, for example an ID a list tool printed:
+
+- Values come from `structuredContent` and from text content that is a JSON
+  object or array; other text contributes each line without whitespace.
+- A required parameter takes the first value the input schema accepts there:
+  one found under the same key, then one under a key sharing its last word when
+  either key is that word alone (`id` and `record_id`), then a bare line when
+  the name ends in `id`, `uri`, `url`, `path`, `name`, `key`, or `slug`.
+- The new calls replace the failed ones only when one succeeds; the coverage
+  area then reports `chained_tools`. Values stay in memory and never reach the
+  report.
 
 `--skip-tool <NAME>` (repeatable) never calls that tool. A skipped tool the
 battery would have called scores 0 for reliability (`reliability.skipped`) and
@@ -281,10 +359,10 @@ Target deployments and backing state must still be controlled by the operator.
 ## Corpus placement
 
 The shipped corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v3`)
-is collected under `mcpeval-standard/2` from the pinned targets in
+is collected under `mcpeval-standard/3` from the pinned targets in
 `data/corpus-targets.json`, and retains the evaluator, target-file hash, and
 each target's package, version, and outcome. It was measured with evaluator
-0.7.1; readiness placement is unavailable for other evaluator versions unless
+0.8.0; readiness placement is unavailable for other evaluator versions unless
 a matching corpus is supplied. See
 [State of MCP servers](state-of-mcp-servers.md) and
 [Corpus collection and replay](corpus-replay.md).
@@ -295,7 +373,7 @@ explicitly. They place your catalog among servers that recorded
 `catalog_tokens`; the median is the lower middle for an even count:
 
 ```text
-  standard corpus (mcpeval-standard/2): above 9, tied 0, below 4 of 13 observed servers
+  standard corpus (mcpeval-standard/3): above 9, tied 0, below 4 of 13 observed servers
   catalog: 566 tokens over 12 tools, lighter than 12 of 13 observed servers (median 2536 tokens)
 ```
 

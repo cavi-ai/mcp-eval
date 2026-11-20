@@ -353,17 +353,11 @@ impl HttpMcpClient {
         if let Some(session_id) = &self.session_id {
             request = request.set("Mcp-Session-Id", session_id);
         }
-        if let Ok(authorization) = std::env::var("MCPEVAL_HTTP_AUTHORIZATION") {
-            if authorization.is_empty()
-                || authorization.len() > 8192
-                || authorization.bytes().any(|byte| byte.is_ascii_control())
-            {
-                // A transport-level failure counts as "no notification
-                // observed" for the subscription contract.
-                return false;
-            }
-            request = request.set("Authorization", &authorization);
-        }
+        // A transport-level failure counts as "no notification observed"
+        // for the subscription contract.
+        let Ok(request) = with_credentials(request) else {
+            return false;
+        };
         let response = match request.call() {
             Ok(response) => response,
             // Read timeout with no matching frame: no notification arrived.
@@ -611,29 +605,266 @@ impl HttpMcpClient {
         if let Some(timeout) = timeout {
             request = request.timeout(timeout);
         }
-        if let Ok(authorization) = std::env::var("MCPEVAL_HTTP_AUTHORIZATION") {
-            if authorization.is_empty()
-                || authorization.len() > 8192
-                || authorization.bytes().any(|byte| byte.is_ascii_control())
-            {
-                bail!("HTTP authorization environment value is invalid");
-            }
-            request = request.set("Authorization", &authorization);
-        }
-        request.send_json(message).map_err(|error| match error {
-            ureq::Error::Status(status, _) => {
-                anyhow::anyhow!("MCP HTTP request failed with status {status}")
-            }
-            other => {
-                let failure = if request_timed_out(&other) {
-                    TransportFailure::Timeout
-                } else {
-                    TransportFailure::Closed
-                };
-                anyhow::Error::new(failure).context(format!("MCP HTTP request failed: {other}"))
-            }
-        })
+        with_credentials(request)?
+            .send_json(message)
+            .map_err(|error| match error {
+                ureq::Error::Status(status, _) => {
+                    anyhow::anyhow!("MCP HTTP request failed with status {status}")
+                }
+                other => {
+                    let failure = if request_timed_out(&other) {
+                        TransportFailure::Timeout
+                    } else {
+                        TransportFailure::Closed
+                    };
+                    anyhow::Error::new(failure).context(format!("MCP HTTP request failed: {other}"))
+                }
+            })
     }
+}
+
+const AUTHORIZATION_ENV: &str = "MCPEVAL_HTTP_AUTHORIZATION";
+const HEADERS_ENV: &str = "MCPEVAL_HTTP_HEADERS";
+const MAX_CREDENTIAL_BYTES: usize = 8192;
+const MAX_CREDENTIAL_HEADERS: usize = 32;
+/// Headers the client sets itself; `Authorization` has its own variable.
+const MANAGED_HEADERS: [&str; 11] = [
+    "accept",
+    "authorization",
+    "connection",
+    "content-length",
+    "content-type",
+    "host",
+    "last-event-id",
+    "mcp-protocol-version",
+    "mcp-session-id",
+    "origin",
+    "transfer-encoding",
+];
+
+/// Credentials sent with every request, read from the environment on each
+/// use and never persisted or printed: `MCPEVAL_HTTP_AUTHORIZATION` as
+/// `Authorization`, and `MCPEVAL_HTTP_HEADERS`, one `Name: value` per line.
+pub(crate) fn credential_headers() -> anyhow::Result<Vec<(String, String)>> {
+    let valid_value = |value: &str| {
+        !value.is_empty()
+            && value.len() <= MAX_CREDENTIAL_BYTES
+            && !value.bytes().any(|byte| byte.is_ascii_control())
+    };
+    let mut headers = Vec::new();
+    if let Ok(authorization) = std::env::var(AUTHORIZATION_ENV) {
+        if !valid_value(&authorization) {
+            bail!("HTTP authorization environment value is invalid");
+        }
+        headers.push(("Authorization".to_owned(), authorization));
+    }
+    let Ok(lines) = std::env::var(HEADERS_ENV) else {
+        return Ok(headers);
+    };
+    for (index, line) in lines.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parsed = line.split_once(':').and_then(|(name, value)| {
+            let value = value.trim();
+            let token = !name.is_empty()
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte));
+            (token
+                && valid_value(value)
+                && !MANAGED_HEADERS.contains(&name.to_ascii_lowercase().as_str()))
+            .then(|| (name.to_owned(), value.to_owned()))
+        });
+        let Some(header) = parsed else {
+            bail!(
+                "{HEADERS_ENV} line {} must be `Name: value` with a header mcpeval does not set \
+                 itself (use {AUTHORIZATION_ENV} for Authorization)",
+                index + 1
+            );
+        };
+        headers.push(header);
+    }
+    if headers.len() > MAX_CREDENTIAL_HEADERS {
+        bail!("{HEADERS_ENV} names more than {MAX_CREDENTIAL_HEADERS} headers");
+    }
+    Ok(headers)
+}
+
+fn with_credentials(mut request: ureq::Request) -> anyhow::Result<ureq::Request> {
+    for (name, value) in credential_headers()? {
+        request = request.set(&name, &value);
+    }
+    Ok(request)
+}
+
+/// The status and `WWW-Authenticate` challenge a bare `initialize` POST
+/// gets on a fresh session, sent with or without the credentials and with
+/// an optional `Origin`. The body is read and discarded.
+pub(crate) fn initialize_status(
+    endpoint: &str,
+    allow_remote: bool,
+    origin: Option<&str>,
+    credentials: bool,
+    timeout: Duration,
+) -> anyhow::Result<(u16, Option<String>)> {
+    let endpoint = validate_endpoint(endpoint, allow_remote)?;
+    let agent = ureq::AgentBuilder::new()
+        .redirects(0)
+        .timeout(timeout)
+        .build();
+    let mut request = agent
+        .post(&endpoint)
+        .set("Accept", "application/json, text/event-stream")
+        .set("Content-Type", "application/json")
+        .set("MCP-Protocol-Version", PROTOCOL_VERSION);
+    if let Some(origin) = origin {
+        request = request.set("Origin", origin);
+    }
+    if credentials {
+        request = with_credentials(request)?;
+    }
+    let response = match request.send_json(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "mcpeval", "version": env!("CARGO_PKG_VERSION")}
+        }
+    })) {
+        Ok(response) | Err(ureq::Error::Status(_, response)) => response,
+        Err(error) => bail!("MCP HTTP request failed: {error}"),
+    };
+    let status = response.status();
+    let challenge = response.header("WWW-Authenticate").map(str::to_owned);
+    let _ = read_bounded(response.into_reader());
+    Ok((status, challenge))
+}
+
+/// Whether `challenge` holds a `Bearer` challenge, and the
+/// `resource_metadata` URL it names, if any.
+pub(crate) fn bearer_challenge(challenge: &str) -> (bool, Option<String>) {
+    let bearer = challenge.split(',').any(|part| {
+        let part = part.trim_start();
+        part.len() >= 6
+            && part.as_bytes()[..6].eq_ignore_ascii_case(b"bearer")
+            && part[6..].chars().next().is_none_or(char::is_whitespace)
+    });
+    let lower = challenge.to_ascii_lowercase();
+    let metadata = lower.find("resource_metadata=").and_then(|start| {
+        let value = &challenge[start + "resource_metadata=".len()..];
+        let value = match value.strip_prefix('"') {
+            Some(quoted) => &quoted[..quoted.find('"')?],
+            None => value.split([',', ' ']).next()?,
+        };
+        (!value.is_empty()).then(|| value.to_owned())
+    });
+    (bearer, metadata)
+}
+
+/// Whether OAuth protected resource metadata (RFC 9728) for `endpoint`
+/// names it as the resource and lists only usable authorization servers.
+/// Tried in order: the challenge's `resource_metadata` URL when it shares
+/// the endpoint's origin, the well-known URL for the endpoint's path, then
+/// the one for its origin, which may name the origin as the resource. Each
+/// request is reserved from `budget` and bounded by its deadline.
+pub(crate) fn has_resource_metadata(
+    endpoint: &str,
+    metadata: Option<&str>,
+    timeout: Duration,
+    budget: &crate::evaluation_budget::Budget,
+) -> bool {
+    let Ok(base) = url::Url::parse(endpoint) else {
+        return false;
+    };
+    let mut origin = base.clone();
+    origin.set_path("/");
+    origin.set_query(None);
+    let mut candidates: Vec<(url::Url, Vec<&url::Url>)> = Vec::new();
+    if let Some(url) = metadata
+        .and_then(|metadata| base.join(metadata).ok())
+        .filter(|url| url.origin() == base.origin())
+    {
+        candidates.push((url, vec![&base]));
+    }
+    let path = base.path().trim_end_matches('/');
+    for (suffix, resources) in [(path, vec![&base]), ("", vec![&base, &origin])] {
+        let mut url = base.clone();
+        url.set_path(&format!("/.well-known/oauth-protected-resource{suffix}"));
+        url.set_query(None);
+        if !candidates.iter().any(|(candidate, _)| candidate == &url) {
+            candidates.push((url, resources));
+        }
+    }
+    candidates.iter().any(|(url, resources)| {
+        let Ok(timeout) = budget.acquire().and_then(|()| budget.timeout(timeout)) else {
+            return false;
+        };
+        let agent = ureq::AgentBuilder::new()
+            .redirects(0)
+            .timeout(timeout)
+            .build();
+        let Ok(response) = agent
+            .get(url.as_str())
+            .set("Accept", "application/json")
+            .call()
+        else {
+            return false;
+        };
+        read_bounded(response.into_reader())
+            .ok()
+            .and_then(|body| serde_json::from_slice::<Value>(&body).ok())
+            .is_some_and(|document| resource_metadata_names(&document, resources))
+    })
+}
+
+/// RFC 9728 metadata whose `resource` is one of `resources` and whose
+/// `authorization_servers` are all absolute `https` URLs, or `http` on
+/// loopback, with at least one listed.
+fn resource_metadata_names(document: &Value, resources: &[&url::Url]) -> bool {
+    let same = |left: &url::Url, right: &url::Url| {
+        left.scheme() == right.scheme()
+            && left.host() == right.host()
+            && left.port_or_known_default() == right.port_or_known_default()
+            && left.path().trim_end_matches('/') == right.path().trim_end_matches('/')
+            && left.query() == right.query()
+    };
+    let resource = document
+        .get("resource")
+        .and_then(Value::as_str)
+        .and_then(|resource| url::Url::parse(resource).ok())
+        .is_some_and(|resource| resources.iter().any(|expected| same(&resource, expected)));
+    let servers = document
+        .get("authorization_servers")
+        .and_then(Value::as_array)
+        .is_some_and(|servers| {
+            !servers.is_empty()
+                && servers.iter().all(|server| {
+                    server
+                        .as_str()
+                        .and_then(|server| url::Url::parse(server).ok())
+                        .is_some_and(|server| match (server.scheme(), server.host()) {
+                            ("https", Some(_)) => true,
+                            ("http", Some(host)) => crate::loopback::is_loopback_host(&host),
+                            _ => false,
+                        })
+                })
+        });
+    resource && servers
+}
+
+/// Whether `endpoint` names a loopback host.
+pub(crate) fn is_loopback_endpoint(endpoint: &str) -> bool {
+    url::Url::parse(endpoint)
+        .ok()
+        .and_then(|parsed| {
+            parsed
+                .host()
+                .map(|host| crate::loopback::is_loopback_host(&host))
+        })
+        .unwrap_or(false)
 }
 
 pub(crate) fn validate_endpoint(endpoint: &str, allow_remote: bool) -> anyhow::Result<String> {
@@ -748,16 +979,7 @@ fn worker_call(
     if let Some(session_id) = &session_id {
         request = request.set("Mcp-Session-Id", session_id);
     }
-    if let Ok(authorization) = std::env::var("MCPEVAL_HTTP_AUTHORIZATION") {
-        if authorization.is_empty()
-            || authorization.len() > 8192
-            || authorization.bytes().any(|byte| byte.is_ascii_control())
-        {
-            bail!("HTTP authorization environment value is invalid");
-        }
-        request = request.set("Authorization", &authorization);
-    }
-    let response = match request.send_json(message) {
+    let response = match with_credentials(request)?.send_json(message) {
         Ok(response) => response,
         Err(error) if request_timed_out(&error) => return Ok(CancellationOutcome::Honored),
         Err(error) => bail!("cancelled call POST failed: {error}"),
@@ -836,6 +1058,44 @@ fn validate_response(value: &Value, id: u64) -> anyhow::Result<()> {
         bail!("MCP HTTP response is invalid");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod challenge_tests {
+    use super::{bearer_challenge, has_resource_metadata};
+
+    #[test]
+    fn resource_metadata_requests_are_reserved_from_the_evaluation_budget() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let endpoint = format!("http://{}/mcp", listener.local_addr().unwrap());
+        let spent = crate::evaluation_budget::Budget::new(std::time::Duration::from_secs(10), 0);
+        assert!(!has_resource_metadata(
+            &endpoint,
+            Some("/m"),
+            std::time::Duration::from_millis(200),
+            &spent
+        ));
+        assert!(
+            listener.accept().is_err(),
+            "a metadata request ran past the request budget"
+        );
+    }
+
+    #[test]
+    fn a_bearer_challenge_and_its_metadata_url_are_read_from_any_position() {
+        assert_eq!(
+            bearer_challenge(r#"Bearer resource_metadata="https://a.test/m", scope="x""#),
+            (true, Some("https://a.test/m".to_owned()))
+        );
+        assert_eq!(
+            bearer_challenge(r#"Basic realm="r", bearer RESOURCE_METADATA=/m"#),
+            (true, Some("/m".to_owned()))
+        );
+        assert_eq!(bearer_challenge("Bearer"), (true, None));
+        assert_eq!(bearer_challenge("Bearerish realm=x"), (false, None));
+        assert_eq!(bearer_challenge(r#"Basic realm="r""#), (false, None));
+    }
 }
 
 #[cfg(test)]

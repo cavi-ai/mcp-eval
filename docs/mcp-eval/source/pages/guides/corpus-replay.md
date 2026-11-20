@@ -52,7 +52,7 @@ prerequisite arrays when the server needs them:
 ```json
 {
   "schema": "mcpeval.corpus-targets/v1",
-  "standard": "mcpeval-standard/2",
+  "standard": "mcpeval-standard/3",
   "targets": [{
     "server": "my-server",
     "runtime": "npm",
@@ -113,7 +113,7 @@ dependency identity.
 | Field | Requirement |
 | --- | --- |
 | `schema` | `mcpeval.corpus-targets/v1`. |
-| `standard` | The evaluator's readiness standard, such as `mcpeval-standard/2`. Reports scored under another standard are `invalid-report`. |
+| `standard` | The evaluator's readiness standard, such as `mcpeval-standard/3`. Reports scored under another standard are `invalid-report`. |
 | `targets` | Non-empty array. |
 | `server` | Unique label: a letter, then up to 127 letters, digits, `_`, `.`, `:`, or `-`. |
 | `runtime` | `npm` (runs `npx`), `uvx`, or `native`. Native targets require `deployment` and never fall back to a package runner. |

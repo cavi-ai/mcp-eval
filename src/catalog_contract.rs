@@ -465,6 +465,8 @@ mod tests {
             input_schema: schema,
             entry_bytes: 0,
             description_chars: 0,
+            description_words: Vec::new(),
+            text_scan: Default::default(),
             output_schema: None,
             read_only_hint: annotations.0,
             destructive_hint: annotations.1,

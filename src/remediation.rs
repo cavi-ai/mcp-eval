@@ -266,7 +266,7 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
              path, an ID), declare examples that work, or pass working arguments with --arguments"
         }
         CheckReason::ReliabilityInconsistent => {
-            "the same read-only call with the same arguments ended differently across three \
+            "the same read-only call with the same arguments ended differently across repeated \
              calls; make read paths deterministic, or return a retryable error with a stable code"
         }
         CheckReason::ReliabilitySlow => {
@@ -334,6 +334,19 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
             "declare destructiveHint on tools that write, so clients can confirm before \
              destructive calls"
         }
+        CheckReason::CatalogNameOffSpec => {
+            "the tool name breaks the MCP naming rule; use 1 to 128 ASCII letters, digits, \
+             underscores, hyphens, or dots"
+        }
+        CheckReason::CatalogSchemaRootUnportable => {
+            "clients that turn tools into model function calls need a plain object schema; give \
+             inputSchema \"type\": \"object\" at the root and move anyOf, oneOf, allOf, or not \
+             into properties"
+        }
+        CheckReason::CatalogDescriptionDuplicated => {
+            "the description nearly repeats another tool's, so a model cannot tell them apart; \
+             say what this tool does differently and when to pick it"
+        }
         CheckReason::CatalogNoOutputSchema => {
             "declare outputSchema and return structuredContent so agents can read results \
              without parsing prose"
@@ -371,17 +384,41 @@ pub fn check_hint(reason: crate::score::CheckReason) -> &'static str {
             "a declared resources or prompts capability did not list cleanly; list what the \
              capability declares, or stop declaring it"
         }
+        CheckReason::ProtocolOriginAccepted => {
+            "a loopback server accepted a request with a foreign Origin; validate Origin and \
+             answer an untrusted one with HTTP 403 to block DNS rebinding"
+        }
+        CheckReason::ProtocolAuthNoChallenge => {
+            "a request without credentials got 401 with no Bearer challenge; send \
+             WWW-Authenticate: Bearer with resource_metadata naming the protected resource \
+             metadata URL"
+        }
+        CheckReason::ProtocolAuthNoMetadata => {
+            "no OAuth protected resource metadata (RFC 9728) named an authorization server; \
+             serve it at resource_metadata or /.well-known/oauth-protected-resource with \
+             authorization_servers"
+        }
         CheckReason::HonestyAcceptedInvalid => {
             "the tool accepted arguments that violate its input schema; validate arguments and \
-             refuse invalid ones with -32602 or an isError result that says what is wrong"
+             refuse invalid ones with an isError result whose text names the parameter and what \
+             is wrong with it"
         }
         CheckReason::HonestyEmptyError => {
-            "the tool refused invalid arguments without saying why; put the reason in the \
-             isError result's text content"
+            "the tool refused invalid arguments without saying why; put the parameter and the \
+             reason in the isError result's text content"
         }
         CheckReason::HonestyWrongCode => {
-            "invalid arguments were refused with a JSON-RPC code other than -32602; use -32602 \
-             (invalid params) or an isError result"
+            "invalid arguments were refused with an unrelated JSON-RPC error; return an isError \
+             result whose text names the parameter and what is wrong with it"
+        }
+        CheckReason::HonestyProtocolError => {
+            "invalid arguments were refused with JSON-RPC -32602, which most clients do not show \
+             the model; return an isError result whose text names the parameter so the model can \
+             correct its call"
+        }
+        CheckReason::HonestyUnnamedParameter => {
+            "the isError text does not name the offending parameter; say which parameter is \
+             missing or invalid and what it expects"
         }
         CheckReason::HonestyCallFailed => {
             "invalid arguments hung the call, closed the connection, or left the session unable \

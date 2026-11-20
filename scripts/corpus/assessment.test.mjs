@@ -33,7 +33,7 @@ test("reviewed assessment flags are launched, retained, and checked during repla
 });
 
 test("assessment must be explicit and tool names bounded, unique, and safe", () => {
-  const document = assessment => ({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets: [target("one", { assessment })] });
+  const document = assessment => ({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/3", targets: [target("one", { assessment })] });
   for (const invalid of [null, {}, { attest_read_only: "yes", skip_tools: [] }, { attest_read_only: true }, { attest_read_only: true, skip_tools: ["duplicate", "duplicate"] }, { attest_read_only: true, skip_tools: ["https://private.invalid"] }, { attest_read_only: false, skip_tools: [], arbitrary: true }]) assert.throws(() => validateTargets(document(invalid)));
   assert.equal(validateTargets(document({ attest_read_only: false, skip_tools: [] })).targets.length, 1);
 });
@@ -49,7 +49,7 @@ test("old v3 reports remain replayable without inventing stored profiles", async
 
 test("declared assessment cannot be credited from a report lacking its profile", () => {
   const value = target("one", { assessment: { attest_read_only: true, skip_tools: [] } });
-  assert.throws(() => observationFrom(JSON.stringify(report("one")), value, { version: "0.4.0", sha256: sha256("fixture") }, "mcpeval-standard/2"));
+  assert.throws(() => observationFrom(JSON.stringify(report("one")), value, { version: "0.4.0", sha256: sha256("fixture") }, "mcpeval-standard/3"));
 });
 
 test("strict release collection and replay reject unresolved runners before execution", async (t) => {
@@ -79,7 +79,7 @@ test("native reviewed assessment calls legacy readers but never explicit or skip
     deployment: { root, executable: runtime, entrypoint: "server.mjs", sha256: await deploymentDigest(root) },
     prerequisites: { environment: ["FIXTURE_MUTATION_MARKER"], checks: [] } });
   const targetsPath = path.join(dir, "targets.json");
-  await writeFile(targetsPath, JSON.stringify({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets: [value] }));
+  await writeFile(targetsPath, JSON.stringify({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/3", targets: [value] }));
   const binary = process.env.MCPEVAL_CORPUS_TEST_BINARY ?? path.join(ROOT, "target/release", process.platform === "win32" ? "mcpeval.exe" : "mcpeval");
   const options = { targetsPath, binary, output: path.join(dir, "corpus.json"), minimum: 1, requireDeployments: true, environment: { PATH: process.env.PATH, FIXTURE_MUTATION_MARKER: marker } };
   const collection = await collectCorpus(options);

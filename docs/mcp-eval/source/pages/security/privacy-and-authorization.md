@@ -42,8 +42,10 @@ tool is read-only and does not authorize mutation.
 
 - HTTP endpoints are loopback-only by default. Remote endpoints require HTTPS
   plus `--allow-remote-http`.
-- Optional authorization is read from `MCPEVAL_HTTP_AUTHORIZATION`, validated,
-  used in memory, and never persisted or printed.
+- Optional authorization is read from `MCPEVAL_HTTP_AUTHORIZATION`, and other
+  credential headers from `MCPEVAL_HTTP_HEADERS` (one `Name: value` per line,
+  never a header mcpeval sets itself). Both are validated, used in memory, and
+  never persisted or printed.
 - The HTTP proxy may relay an incoming `Authorization` value in memory, but it
   does not originate calls or grant mutation permission.
 - `mcpeval serve` refuses requests without a loopback `Host`, with a

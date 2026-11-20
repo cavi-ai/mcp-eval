@@ -50,6 +50,31 @@ fn lost_for(document: &Value, tool: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+fn coverage(document: &Value) -> &Value {
+    document["readiness"]["areas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|area| area["name"] == "coverage")
+        .unwrap()
+}
+
+#[test]
+fn a_tool_the_schema_cannot_feed_is_called_with_an_id_another_tool_returned() {
+    let dir = home();
+    let output = run(&dir, &["score", "--server", "records", "--format", "json"]);
+    assert_eq!(output.status.code(), Some(0));
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(lost_for(&report, "get_record"), vec![], "{report:#}");
+    assert_eq!(
+        coverage(&report)["measurements"]["chained_tools"],
+        1,
+        "{report:#}"
+    );
+    // The harvested value never reaches the report.
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("rec-1"));
+}
+
 #[test]
 fn supplied_arguments_exercise_a_tool_the_schema_cannot_feed() {
     let dir = home();
@@ -57,7 +82,7 @@ fn supplied_arguments_exercise_a_tool_the_schema_cannot_feed() {
     assert_eq!(output.status.code(), Some(0));
     let synthesized: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
-        lost_for(&synthesized, "get_record"),
+        lost_for(&synthesized, "get_archived_record"),
         vec![
             (
                 "reliability.success".into(),
@@ -73,7 +98,7 @@ fn supplied_arguments_exercise_a_tool_the_schema_cannot_feed() {
     let arguments = write(
         &dir,
         "arguments.json",
-        &json!({"get_record": {"id": "rec-1"}}),
+        &json!({"get_archived_record": {"id": "arc-9"}}),
     );
     let output = run(
         &dir,
@@ -89,7 +114,7 @@ fn supplied_arguments_exercise_a_tool_the_schema_cannot_feed() {
     );
     assert_eq!(output.status.code(), Some(0));
     let supplied: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(lost_for(&supplied, "get_record"), vec![]);
+    assert_eq!(lost_for(&supplied, "get_archived_record"), vec![]);
     assert!(
         supplied["readiness"]["score"].as_u64() > synthesized["readiness"]["score"].as_u64(),
         "{supplied:#}"
@@ -99,7 +124,7 @@ fn supplied_arguments_exercise_a_tool_the_schema_cannot_feed() {
         .unwrap();
     assert_eq!(digest.len(), 64);
     // The values never reach the report.
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("rec-1"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("arc-9"));
 
     // Runs with different arguments measure different things.
     let baseline = write(&dir, "synthesized.json", &synthesized);

@@ -19,15 +19,17 @@ use crate::score::{CheckId, CheckReason, Readiness};
 /// round operation durations: a tool that works for exactly 10 s must not
 /// pass or fail on a few milliseconds of scheduling.
 pub const CALL_TIMEOUT: Duration = Duration::from_secs(15);
-/// Calls per exercised tool.
+/// Calls per exercised tool; `--repeats` sets more.
 pub const REPEATS: usize = 3;
+/// The most calls per exercised tool `--repeats` sets.
+pub const MAX_REPEATS: usize = 100;
 /// `tools/list` pages followed before the catalog is taken as complete.
 pub const MAX_PAGES: usize = crate::mcp_client::MAX_TOOL_PAGES;
 /// Server-to-client requests declined during one tool call.
 pub(crate) const MAX_SERVER_REQUESTS: u64 = 8;
 const PAYLOAD_BYTES: u64 = 1_000_000;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct StandardOptions {
     /// Attest that unannotated tools are read-only, so they are called.
     pub confirm_read_only: bool,
@@ -35,15 +37,36 @@ pub struct StandardOptions {
     pub skip_tools: Vec<String>,
     /// Arguments to call named tools with instead of synthesized ones.
     pub arguments: Option<crate::tool_arguments::ToolArguments>,
+    /// The server runs in a write-contained sandbox, so every tool is called.
+    pub sandboxed: bool,
+    /// The sandbox allows network access.
+    pub sandbox_network: bool,
+    /// Calls per exercised tool, from [`REPEATS`] to [`MAX_REPEATS`].
+    pub repeats: usize,
+}
+
+impl Default for StandardOptions {
+    fn default() -> Self {
+        Self {
+            confirm_read_only: false,
+            skip_tools: Vec::new(),
+            arguments: None,
+            sandboxed: false,
+            sandbox_network: false,
+            repeats: REPEATS,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ToolClass {
-    /// `readOnlyHint: false` or `destructiveHint: true`: never called.
+    /// `readOnlyHint: false` or `destructiveHint: true`: called only in a
+    /// sandbox.
     Writer,
     /// `readOnlyHint: true`.
     ReadOnly,
-    /// No deciding annotation: called only under `--confirm-read-only`.
+    /// No deciding annotation: called only under `--confirm-read-only` or in
+    /// a sandbox.
     Unannotated,
 }
 
@@ -55,6 +78,15 @@ impl ToolClass {
             Self::ReadOnly
         } else {
             Self::Unannotated
+        }
+    }
+
+    /// Whether the battery calls a tool of this class.
+    pub fn callable(self, confirm_read_only: bool, sandboxed: bool) -> bool {
+        match self {
+            Self::Writer => sandboxed,
+            Self::Unannotated => confirm_read_only || sandboxed,
+            Self::ReadOnly => true,
         }
     }
 }
@@ -83,6 +115,56 @@ pub struct CatalogFacts {
     pub read_only_declared: bool,
     pub destructive_declared: bool,
     pub output_schema: bool,
+    /// The name breaks the spec's naming rule: 1 to 128 of `A-Z a-z 0-9 _ - .`.
+    pub name_off_spec: bool,
+    /// The input schema's root is not a plain `"type": "object"`, or it
+    /// combines branches with `anyOf`, `oneOf`, `allOf`, or `not`.
+    pub schema_root_unportable: bool,
+    /// The description's words nearly match another tool's.
+    pub description_duplicated: bool,
+    /// Zero-width, bidirectional-control, and tag characters in the entry.
+    pub hidden_characters: u64,
+    /// Matches of [`crate::description_scan::INJECTION_PHRASES`].
+    pub injection_phrases: u64,
+    /// Other tools whose separator-bearing names the entry's text contains.
+    pub cross_tool_references: u64,
+}
+
+/// Word-set overlap (Jaccard) at which two descriptions count as the same.
+pub const DUPLICATE_DESCRIPTION_OVERLAP: f64 = 0.85;
+
+/// Whether two sorted, distinct word-hash sets overlap at
+/// [`DUPLICATE_DESCRIPTION_OVERLAP`] or more; empty sets never do.
+fn near_duplicate(a: &[u64], b: &[u64]) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    let shared = a
+        .iter()
+        .filter(|word| b.binary_search(word).is_ok())
+        .count();
+    let union = a.len() + b.len() - shared;
+    shared as f64 / union as f64 >= DUPLICATE_DESCRIPTION_OVERLAP
+}
+
+/// Facts relating each tool to the rest of the catalog: a nearly matching
+/// description, and the other tools its text names.
+fn mark_catalog_relations(tools: &mut [ToolObservation], catalog: &[ToolDefinition]) {
+    for (index, tool) in catalog.iter().enumerate() {
+        let others = || {
+            catalog
+                .iter()
+                .enumerate()
+                .filter(move |(other, _)| *other != index)
+                .map(|(_, sibling)| sibling)
+        };
+        let facts = &mut tools[index].catalog;
+        facts.description_duplicated = others()
+            .any(|sibling| near_duplicate(&tool.description_words, &sibling.description_words));
+        facts.cross_tool_references = others()
+            .filter(|sibling| tool.text_scan.names(&sibling.name))
+            .count() as u64;
+    }
 }
 
 impl CatalogFacts {
@@ -112,6 +194,21 @@ impl CatalogFacts {
             read_only_declared: tool.read_only_hint.is_some(),
             destructive_declared: tool.destructive_hint.is_some(),
             output_schema: tool.output_schema.is_some(),
+            name_off_spec: tool.name.is_empty()
+                || tool.name.len() > 128
+                || !tool
+                    .name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.')),
+            schema_root_unportable: tool.input_schema.get("type")
+                != Some(&Value::String("object".into()))
+                || ["anyOf", "oneOf", "allOf", "not"]
+                    .iter()
+                    .any(|key| tool.input_schema.get(*key).is_some()),
+            description_duplicated: false,
+            hidden_characters: tool.text_scan.hidden_characters,
+            injection_phrases: tool.text_scan.injection_phrases,
+            cross_tool_references: 0,
         }
     }
 }
@@ -127,8 +224,12 @@ pub struct ToolObservation {
     pub catalog: CatalogFacts,
     /// How the tool refused schema-violating arguments; None for tools
     /// that are not called or whose schema admits every input.
+    /// `exercise` is None for writers outside a sandbox.
     pub honesty: Option<Honesty>,
     pub calls: CallCounts,
+    /// The counted calls used values another tool returned, after the
+    /// arguments built from the schema failed every call.
+    pub chained: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -156,7 +257,10 @@ impl CallCounts {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Honesty {
+    /// An `isError` result whose text names the offending parameter.
     Honest,
+    /// A refusal the model can act on only in part.
+    Partial(CheckReason),
     Dishonest(CheckReason),
 }
 
@@ -165,6 +269,8 @@ pub struct Observations {
     /// Every distinct tool, in catalog order.
     pub tools: Vec<ToolObservation>,
     pub attested_read_only: bool,
+    /// Every tool, writers included, was callable in a sandbox.
+    pub sandboxed: bool,
     /// Contention on the first fully successful tool; None when none.
     pub contention: Option<bool>,
     /// Payload bounds on the first fully successful tool with a string
@@ -207,16 +313,25 @@ pub(crate) fn run(
     target: &ClientTarget,
     options: &StandardOptions,
 ) -> anyhow::Result<(Readiness, CatalogContract)> {
+    if !(REPEATS..=MAX_REPEATS).contains(&options.repeats) {
+        return Err(crate::exit::usage(anyhow::anyhow!(
+            "repeats must be {REPEATS} to {MAX_REPEATS}"
+        )));
+    }
     let (observations, contract) = target.budget.finish(observe(target, options))?;
     let mut readiness = crate::score::fold(&observations);
-    readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
+    let mut profile = crate::measurement::MeasurementProfile::current(
         options.confirm_read_only,
         &options.skip_tools,
         options
             .arguments
             .as_ref()
             .map(crate::tool_arguments::ToolArguments::sha256),
-    ));
+    );
+    profile.sandboxed = options.sandboxed;
+    profile.sandbox_network = options.sandbox_network;
+    profile.repeats = options.repeats;
+    readiness.measurement_profile = Some(profile);
     Ok((readiness, contract))
 }
 
@@ -248,22 +363,21 @@ fn observe(
     }
     if let Some(arguments) = &options.arguments {
         arguments
-            .validate(&catalog, options.confirm_read_only)
+            .validate(&catalog, options.confirm_read_only, options.sandboxed)
             .map_err(crate::exit::usage)?;
     }
     let mut tools = Vec::with_capacity(catalog.tools.len());
-    // Tools whose three calls all succeeded, with the arguments used: the
+    // Tools whose calls all succeeded, with the arguments used: the
     // server-level cases run on the first of them.
     let mut succeeded: Vec<(&ToolDefinition, Value)> = Vec::new();
+    let mut harvest = Harvest::default();
+    // Tools whose synthesized arguments failed every call, by catalog index.
+    let mut unfed: Vec<(usize, Value)> = Vec::new();
     for tool in &catalog.tools {
         target.budget.check()?;
         let mut calls = CallCounts::default();
         let class = ToolClass::of(tool);
-        let callable = match class {
-            ToolClass::Writer => false,
-            ToolClass::Unannotated => options.confirm_read_only,
-            ToolClass::ReadOnly => true,
-        };
+        let callable = class.callable(options.confirm_read_only, options.sandboxed);
         // A skipped tool is never called; it scores as the worst call it
         // could have made (see score.rs), so skipping never pays.
         let skipped = callable && options.skip_tools.contains(&tool.name);
@@ -276,29 +390,42 @@ fn observe(
             None
         };
         let exercise = match class {
-            ToolClass::Writer => None,
-            ToolClass::Unannotated if !options.confirm_read_only => {
+            // Read-only tools are always callable.
+            ToolClass::Writer if !callable => None,
+            ToolClass::Unannotated if !callable => {
                 Some(Exercise::NotExercised(CheckReason::CoverageUnannotated))
             }
-            _ => match options
-                .arguments
-                .as_ref()
-                .and_then(|arguments| arguments.get(&tool.name))
-                .cloned()
-                .or_else(|| synthesize(&tool.input_schema))
-            {
-                Some(_) if skipped => Some(Exercise::NotExercised(CheckReason::CoverageSkipped)),
-                Some(arguments) => {
-                    let (exercise, measured_calls) =
-                        exercise_tool(&mut client, target, tool, &arguments);
-                    calls = measured_calls;
-                    if calls.successful == REPEATS as u64 {
-                        succeeded.push((tool, arguments));
+            _ => {
+                let supplied = options
+                    .arguments
+                    .as_ref()
+                    .and_then(|arguments| arguments.get(&tool.name))
+                    .cloned();
+                let synthesized = supplied.is_none();
+                match supplied.or_else(|| synthesize(&tool.input_schema)) {
+                    Some(_) if skipped => {
+                        Some(Exercise::NotExercised(CheckReason::CoverageSkipped))
                     }
-                    Some(exercise)
+                    Some(arguments) => {
+                        let (exercise, measured_calls) = exercise_tool(
+                            &mut client,
+                            target,
+                            tool,
+                            &arguments,
+                            options.repeats,
+                            &mut harvest,
+                        );
+                        calls = measured_calls;
+                        if calls.successful == options.repeats as u64 {
+                            succeeded.push((tool, arguments));
+                        } else if calls.successful == 0 && synthesized {
+                            unfed.push((tools.len(), arguments));
+                        }
+                        Some(exercise)
+                    }
+                    None => Some(Exercise::NotExercised(CheckReason::CoverageUnsynthesizable)),
                 }
-                None => Some(Exercise::NotExercised(CheckReason::CoverageUnsynthesizable)),
-            },
+            }
         };
         tools.push(ToolObservation {
             name: tool.name.clone(),
@@ -308,7 +435,37 @@ fn observe(
             catalog: CatalogFacts::of(tool),
             honesty,
             calls,
+            chained: false,
         });
+    }
+    mark_catalog_relations(&mut tools, &catalog.tools);
+    // A tool the schema alone cannot feed is called once more with values
+    // other tools returned, such as an ID a list tool printed. The new
+    // calls count only when one succeeds.
+    for (index, synthesized) in unfed {
+        target.budget.check()?;
+        let tool = &catalog.tools[index];
+        let Some(arguments) = harvest.feed(&tool.input_schema, &synthesized) else {
+            continue;
+        };
+        let (exercise, calls) = exercise_tool(
+            &mut client,
+            target,
+            tool,
+            &arguments,
+            options.repeats,
+            &mut harvest,
+        );
+        if calls.successful == 0 {
+            continue;
+        }
+        if calls.successful == options.repeats as u64 {
+            succeeded.push((tool, arguments));
+        }
+        let observation = &mut tools[index];
+        observation.exercise = Some(exercise);
+        observation.calls = calls;
+        observation.chained = true;
     }
     // With a tool skipped, the server-level cases score 0 (score.rs) and
     // are not run.
@@ -357,6 +514,7 @@ fn observe(
         Observations {
             tools,
             attested_read_only: options.confirm_read_only,
+            sandboxed: options.sandboxed,
             contention,
             payload,
             protocol,
@@ -623,11 +781,56 @@ pub fn invalid_arguments(schema: &Value) -> Option<Value> {
         .then(|| json!({"mcpeval_unknown": 1}))
 }
 
-/// Invalid arguments must be refused with -32602, or with an `isError`
-/// result that says why.
-fn honesty_of(response: &ToolResponse) -> Honesty {
+/// The parameters a refusal of `arguments` should name: the required ones
+/// when the call omitted them all, otherwise the ones it sent.
+fn cited_parameters(schema: &Value, arguments: &Value) -> Vec<String> {
+    let sent: Vec<String> = arguments
+        .as_object()
+        .into_iter()
+        .flat_map(|object| object.keys().cloned())
+        .collect();
+    if !sent.is_empty() {
+        return sent;
+    }
+    schema
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect()
+}
+
+/// Whether `message` contains one of `names` as a whole identifier, ASCII
+/// case-insensitively. The message is read in memory and never kept.
+fn names_parameter(message: &str, names: &[String]) -> bool {
+    let haystack = message.to_ascii_lowercase();
+    let identifier = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    names.iter().any(|name| {
+        let needle = name.to_ascii_lowercase();
+        !needle.is_empty()
+            && haystack.match_indices(&needle).any(|(start, _)| {
+                let end = start + needle.len();
+                let before = start
+                    .checked_sub(1)
+                    .and_then(|index| haystack.as_bytes().get(index));
+                let after = haystack.as_bytes().get(end);
+                !before.is_some_and(|byte| identifier(*byte))
+                    && !after.is_some_and(|byte| identifier(*byte))
+            })
+    })
+}
+
+/// Invalid arguments must be refused with an `isError` result whose text
+/// names the offending parameter, so the model can correct its call. A
+/// -32602 protocol error, which most clients do not show the model, or text
+/// that names no parameter earns partial credit.
+fn honesty_of(response: &ToolResponse, cited: &[String]) -> Honesty {
     match response {
-        ToolResponse::Error { code: -32602, .. } => Honesty::Honest,
+        ToolResponse::Error { code: -32602, .. } => {
+            Honesty::Partial(CheckReason::HonestyProtocolError)
+        }
         ToolResponse::Error { payload, .. }
             if payload.get("code").and_then(Value::as_str) == Some("tool-error") =>
         {
@@ -637,8 +840,10 @@ fn honesty_of(response: &ToolResponse) -> Honesty {
                 .unwrap_or_default();
             if message.is_empty() || message == crate::mcp_client::UNTEXTED_TOOL_ERROR {
                 Honesty::Dishonest(CheckReason::HonestyEmptyError)
-            } else {
+            } else if names_parameter(message, cited) {
                 Honesty::Honest
+            } else {
+                Honesty::Partial(CheckReason::HonestyUnnamedParameter)
             }
         }
         ToolResponse::Error { .. } => Honesty::Dishonest(CheckReason::HonestyWrongCode),
@@ -675,27 +880,200 @@ fn probe_honesty(
         *client = connect(target).ok();
         return failed;
     }
-    Some(honesty_of(&response))
+    Some(honesty_of(
+        &response,
+        &cited_parameters(&tool.input_schema, &arguments),
+    ))
 }
 
-/// Three calls with `arguments`. A call that does not complete costs this
-/// tool and the next tool starts on a fresh connection. Returns the
-/// observation and whether all three calls succeeded.
+/// Most values a run keeps from successful results, and the longest one.
+const MAX_HARVEST: usize = 256;
+const MAX_HARVEST_BYTES: usize = 256;
+/// Last words of parameter names a bare value from a result may fill.
+const IDENTIFIER_WORDS: [&str; 7] = ["id", "uri", "url", "path", "name", "key", "slug"];
+
+/// Scalars read from successful results, so a tool the schema alone cannot
+/// feed can be called with a value another tool returned. Held in memory for
+/// one run and never reported.
+#[derive(Debug, Default)]
+struct Harvest {
+    /// The words of the key each value was found under; None for a bare
+    /// value, such as a line of plain text.
+    values: Vec<(Option<Vec<String>>, Value)>,
+}
+
+impl Harvest {
+    /// `structuredContent`, and text content that is a JSON object or array
+    /// or else lines without whitespace.
+    fn collect(&mut self, result: &Value) {
+        if let Some(structured) = result.get("structuredContent") {
+            self.walk(None, structured, 0);
+        }
+        let texts = result
+            .get("content")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.get("text").and_then(Value::as_str));
+        for text in texts {
+            match serde_json::from_str::<Value>(text) {
+                Ok(value @ (Value::Object(_) | Value::Array(_))) => self.walk(None, &value, 0),
+                _ => {
+                    for line in text.lines().map(str::trim) {
+                        self.offer(None, json!(line));
+                    }
+                }
+            }
+        }
+    }
+
+    fn walk(&mut self, key: Option<&str>, value: &Value, depth: usize) {
+        if depth > MAX_SCHEMA_DEPTH {
+            return;
+        }
+        match value {
+            Value::Object(entries) => {
+                for (key, value) in entries {
+                    self.walk(Some(key), value, depth + 1);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    self.walk(key, item, depth + 1);
+                }
+            }
+            Value::String(_) | Value::Number(_) => self.offer(key.map(words), value.clone()),
+            _ => {}
+        }
+    }
+
+    fn offer(&mut self, key: Option<Vec<String>>, value: Value) {
+        let usable = match &value {
+            Value::String(text) => {
+                !text.is_empty()
+                    && text.len() <= MAX_HARVEST_BYTES
+                    && (key.is_some() || !text.contains(char::is_whitespace))
+            }
+            Value::Number(_) => true,
+            _ => false,
+        };
+        if usable
+            && self.values.len() < MAX_HARVEST
+            && !self
+                .values
+                .iter()
+                .any(|(seen, kept)| *seen == key && *kept == value)
+        {
+            self.values.push((key, value));
+        }
+    }
+
+    /// Values for parameter `name`, best first: found under the same key;
+    /// under a key with the same last word when one of the two is that word
+    /// alone (`id` and `record_id`); then bare values, when the name ends in
+    /// an identifier word.
+    fn candidates(&self, name: &str) -> Vec<&Value> {
+        let wanted = words(name);
+        let Some(last) = wanted.last() else {
+            return Vec::new();
+        };
+        let identifier = IDENTIFIER_WORDS.contains(&last.as_str());
+        let mut ranked: Vec<(u8, &Value)> = self
+            .values
+            .iter()
+            .filter_map(|(key, value)| {
+                let rank = match key {
+                    Some(key) if *key == wanted => 0,
+                    Some(key)
+                        if key.last() == Some(last) && (key.len() == 1 || wanted.len() == 1) =>
+                    {
+                        1
+                    }
+                    None if identifier => 2,
+                    _ => return None,
+                };
+                Some((rank, value))
+            })
+            .collect();
+        ranked.sort_by_key(|(rank, _)| *rank);
+        ranked.into_iter().map(|(_, value)| value).collect()
+    }
+
+    /// `synthesized` with each required parameter set to the first harvested
+    /// value the schema accepts there; None when no parameter changed.
+    fn feed(&self, schema: &Value, synthesized: &Value) -> Option<Value> {
+        let validator = crate::schema::compile(schema).ok()?;
+        let mut arguments = synthesized.clone();
+        let mut fed = false;
+        let required = schema
+            .get("required")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str);
+        for name in required {
+            let original = arguments.get(name)?.clone();
+            for candidate in self.candidates(name) {
+                if *candidate == original {
+                    continue;
+                }
+                arguments[name] = candidate.clone();
+                if validator.is_valid(&arguments) {
+                    fed = true;
+                    break;
+                }
+                arguments[name] = original.clone();
+            }
+        }
+        fed.then_some(arguments)
+    }
+}
+
+/// `recordId`, `record_id` and `record-id` all read as `["record", "id"]`.
+fn words(name: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut current = String::new();
+    let mut after_lower = false;
+    for character in name.chars() {
+        if !character.is_alphanumeric() {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+            after_lower = false;
+            continue;
+        }
+        if character.is_uppercase() && after_lower {
+            words.push(std::mem::take(&mut current));
+        }
+        after_lower = character.is_lowercase() || character.is_numeric();
+        current.extend(character.to_lowercase());
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    words
+}
+
+/// `repeats` calls with `arguments`. A call that does not complete costs
+/// this tool and the next tool starts on a fresh connection. Successful
+/// results feed `harvest`.
 fn exercise_tool(
     client: &mut Option<ProbeClient>,
     target: &ClientTarget,
     tool: &ToolDefinition,
     arguments: &Value,
+    repeats: usize,
+    harvest: &mut Harvest,
 ) -> (Exercise, CallCounts) {
     let mut calls = CallCounts::default();
-    let mut outcomes = Vec::with_capacity(REPEATS);
-    let mut latencies = Vec::with_capacity(REPEATS);
+    let mut outcomes = Vec::with_capacity(repeats);
+    let mut latencies = Vec::with_capacity(repeats);
     let validator = tool.declared_output_schema().map(crate::schema::compile);
     let mut output_schema: Option<bool> = None;
     if client.is_none() {
         *client = connect(target).ok();
     }
-    for _ in 0..REPEATS {
+    for _ in 0..repeats {
         let Some(active) = client.as_mut() else {
             return (
                 Exercise::NotExercised(CheckReason::CoverageCallFailed),
@@ -720,6 +1098,9 @@ fn exercise_tool(
         };
         let outcome = Outcome::of(&response);
         calls.observe(outcome);
+        if let ToolResponse::Success(result) = &response {
+            harvest.collect(result);
+        }
         if outcome == Outcome::Rejected {
             return (
                 Exercise::NotExercised(CheckReason::CoverageRejectedArguments),
@@ -742,11 +1123,22 @@ fn exercise_tool(
     (
         Exercise::Exercised {
             consistent,
-            median_latency_ms: latencies[REPEATS / 2],
+            median_latency_ms: median(&latencies),
             output_schema,
         },
         calls,
     )
+}
+
+/// The median of sorted, non-empty `values`: the mean of the two middle
+/// values for an even count.
+fn median(values: &[u64]) -> u64 {
+    let middle = values.len() / 2;
+    if values.len().is_multiple_of(2) {
+        (values[middle - 1] + values[middle]) / 2
+    } else {
+        values[middle]
+    }
 }
 
 /// `structuredContent` must satisfy the complete declared output schema.
@@ -885,6 +1277,68 @@ fn protocol_checks(
             },
         ),
     ));
+    if let Some((endpoint, allow_remote)) = target.http_endpoint() {
+        results.extend(http_checks(target, endpoint, allow_remote));
+    }
+    results
+}
+
+/// The foreign origin a loopback server must refuse.
+const FOREIGN_ORIGIN: &str = "https://mcpeval.invalid";
+
+/// Streamable HTTP transport security, each on a fresh `initialize`:
+/// - a loopback server refuses a foreign `Origin` with 403, against DNS
+///   rebinding;
+/// - when credentials are configured and a request without them gets 401,
+///   the 401 carries a `Bearer` challenge and protected resource metadata
+///   (RFC 9728) names the endpoint and only usable authorization servers.
+fn http_checks(
+    target: &ClientTarget,
+    endpoint: &str,
+    allow_remote: bool,
+) -> Vec<(CheckId, Option<CheckReason>)> {
+    let mut results = Vec::new();
+    let status = |origin, credentials| {
+        target.budget.acquire().ok()?;
+        crate::http_client::initialize_status(
+            endpoint,
+            allow_remote,
+            origin,
+            credentials,
+            target.budget.timeout(CALL_TIMEOUT).ok()?,
+        )
+        .ok()
+    };
+    if crate::http_client::is_loopback_endpoint(endpoint) {
+        let reason = match status(Some(FOREIGN_ORIGIN), true) {
+            Some((403, _)) => None,
+            Some(_) => Some(CheckReason::ProtocolOriginAccepted),
+            None => Some(CheckReason::ProtocolCallFailed),
+        };
+        results.push((CheckId::ProtocolOrigin, reason));
+    }
+    let credentialed =
+        crate::http_client::credential_headers().is_ok_and(|headers| !headers.is_empty());
+    if credentialed {
+        if let Some((401, challenge)) = status(None, false) {
+            let (bearer, metadata) = challenge
+                .as_deref()
+                .map_or((false, None), crate::http_client::bearer_challenge);
+            let reason = if !bearer {
+                Some(CheckReason::ProtocolAuthNoChallenge)
+            } else if !crate::http_client::has_resource_metadata(
+                endpoint,
+                metadata.as_deref(),
+                CALL_TIMEOUT,
+                &target.budget,
+            ) {
+                Some(CheckReason::ProtocolAuthNoMetadata)
+            } else {
+                None
+            };
+            results.push((CheckId::ProtocolAuthChallenge, reason));
+        }
+    }
     results
 }
 
@@ -1089,8 +1543,27 @@ mod tests {
                 read_only_declared: true,
                 destructive_declared: false,
                 output_schema: false,
+                name_off_spec: false,
+                schema_root_unportable: false,
+                description_duplicated: false,
+                hidden_characters: 0,
+                injection_phrases: 0,
+                cross_tool_references: 0,
             }
         );
+    }
+
+    #[test]
+    fn descriptions_count_as_duplicates_from_85_percent_shared_words() {
+        let words = |count: u64| (0..count).collect::<Vec<u64>>();
+        // 11 shared of 12 distinct: 0.92.
+        assert!(near_duplicate(&words(11), &words(12)));
+        // 10 shared of 12 distinct: 0.83.
+        assert!(!near_duplicate(
+            &words(10),
+            &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 99, 100]
+        ));
+        assert!(!near_duplicate(&[], &[]));
     }
 
     #[test]
@@ -1182,18 +1655,34 @@ mod tests {
 
     #[test]
     fn honesty_needs_a_refusal_with_words() {
+        let cited = ["city".to_owned()];
         let judge = |envelope: Value| {
-            honesty_of(&crate::mcp_client::classify_tool_response(&envelope).unwrap())
+            honesty_of(
+                &crate::mcp_client::classify_tool_response(&envelope).unwrap(),
+                &cited,
+            )
         };
         assert_eq!(
-            judge(json!({"error": {"code": -32602, "message": "bad"}})),
+            judge(json!({"error": {"code": -32602, "message": "city must be a string"}})),
+            Honesty::Partial(CheckReason::HonestyProtocolError)
+        );
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [
+                {"type": "text", "text": "City must be a string"}
+            ]}})),
             Honesty::Honest
         );
         assert_eq!(
             judge(json!({"result": {"isError": true, "content": [
-                {"type": "text", "text": "city must be a string"}
+                {"type": "text", "text": "invalid arguments at /city: wrong type"}
             ]}})),
             Honesty::Honest
+        );
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [
+                {"type": "text", "text": "the velocity argument is invalid"}
+            ]}})),
+            Honesty::Partial(CheckReason::HonestyUnnamedParameter)
         );
         assert_eq!(
             judge(json!({"result": {"isError": true, "content": []}})),
@@ -1211,6 +1700,65 @@ mod tests {
             judge(json!({"error": {"code": -32603, "message": "boom"}})),
             Honesty::Dishonest(CheckReason::HonestyWrongCode)
         );
+        // Every text block counts, wherever it sits in the content.
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [
+                {"type": "image", "data": "AAAA", "mimeType": "image/png"},
+                {"type": "text", "text": "City must be a string"}
+            ]}})),
+            Honesty::Honest
+        );
+        assert_eq!(
+            judge(json!({"result": {"isError": true, "content": [
+                {"type": "text", "text": "invalid arguments"},
+                {"type": "text", "text": "city must be a string"}
+            ]}})),
+            Honesty::Honest
+        );
+    }
+
+    #[test]
+    fn median_latency_averages_the_middle_pair_of_an_even_count() {
+        assert_eq!(median(&[0, 0, 180, 180]), 90);
+        assert_eq!(median(&[10, 20, 400]), 20);
+        assert_eq!(median(&[7]), 7);
+    }
+
+    #[test]
+    fn a_refusal_should_name_what_the_call_sent_or_the_required_fields_it_omitted() {
+        let schema = json!({"type": "object", "required": ["a", "b"], "properties": {
+            "a": {"type": "string"}, "b": {"type": "integer"}
+        }});
+        assert_eq!(cited_parameters(&schema, &json!({})), ["a", "b"]);
+        assert_eq!(cited_parameters(&schema, &json!({"b": "x"})), ["b"]);
+        assert!(cited_parameters(&json!({"type": "object"}), &json!({})).is_empty());
+    }
+
+    #[test]
+    fn chained_values_fill_matching_identifiers_the_schema_accepts() {
+        let mut harvest = Harvest::default();
+        harvest.collect(&json!({
+            "content": [{"type": "text", "text": "plain-7\ntwo words"}],
+            "structuredContent": {"items": [{"id": "rec-1", "count": 3}]}
+        }));
+        let schema = |name: &str| {
+            json!({"type": "object", "required": [name], "properties": {
+                name: {"type": "string", "pattern": "^[a-z]+-[0-9]$"}
+            }})
+        };
+        let fed = |name: &str| harvest.feed(&schema(name), &json!({name: "mcpeval"}));
+        // A keyed value beats a bare one; `id` feeds `record_id`/`recordId`.
+        assert_eq!(fed("id"), Some(json!({"id": "rec-1"})));
+        assert_eq!(fed("recordId"), Some(json!({"recordId": "rec-1"})));
+        // Bare lines feed identifier-like names only.
+        assert_eq!(fed("slug"), Some(json!({"slug": "plain-7"})));
+        assert_eq!(fed("query"), None);
+        // A value the schema refuses is never sent.
+        let integer = json!({"type": "object", "required": ["id"], "properties": {
+            "id": {"type": "integer"}
+        }});
+        assert_eq!(harvest.feed(&integer, &json!({"id": 1})), None);
+        assert_eq!(words("recordID_v2-name"), ["record", "id", "v2", "name"]);
     }
 
     #[test]

@@ -99,6 +99,7 @@ pub fn run(options: CompareOptions, format: CompareFormat) -> anyhow::Result<Com
                 confirm_read_only: false,
                 skip_tools: Vec::new(),
                 arguments: None,
+                repeats: crate::standard::REPEATS,
             },
             &mut store,
         )

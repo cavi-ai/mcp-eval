@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `score --sandbox` runs a stdio server on macOS in a disposable directory with writes outside it denied, no inherited credentials, and no network (`--sandbox-network` allows it), and calls every tool, writers included; `--arguments` may name any of them, and the measurement profile records `sandboxed` and `sandbox_network`.
+- The standard battery calls a tool whose synthesized arguments failed once more with values other tools returned, such as a listed ID; coverage reports `chained_tools`.
+- Catalog conformance defects cost the tool that has one: a description nearly repeating another tool's, a name outside the spec's naming rule, or an input schema root that is not a plain object.
+- Catalog measurements count hidden Unicode characters, phrases addressing the model, and references to other tools in each `tools/list` entry (`hidden_characters`, `injection_phrases`, `cross_tool_references`); unscored.
+- `--repeats <N>` on `probe` and `score` (action input `repeats`) calls each tool in the standard battery 3 to 100 times; the measurement profile records the count, and an even count's median latency is the mean of the two middle calls.
+- `mcpeval fleet --config <PATH>` scores every server in an MCP client config's `mcpServers` object and reports the catalog tokens the set costs a session and tool names more than one server lists; a server with an invalid label is listed by ordinal.
+- `mcpeval friction` counts session-path friction in indexed captures: retry storms, corrections, a failed tool followed by a different successful one, and failed calls before the first success; only `ok` and `error` outcomes count, and a session without a recorded call order counts only its calls and successes (`unordered_sessions`).
+- `MCPEVAL_HTTP_HEADERS` sends extra credential headers to HTTP servers, one `Name: value` per line, never persisted or printed.
+- Protocol checks for HTTP servers: a loopback server must refuse a foreign `Origin` with 403 (`protocol.origin`), and with credentials configured a 401 must carry a `Bearer` challenge and RFC 9728 protected resource metadata naming the endpoint and only usable authorization servers (`protocol.auth-challenge`).
+
+### Changed
+
+- Error honesty gives full credit only to an `isError` result whose text, across every text block, names the offending parameter; JSON-RPC `-32602` (`honesty-protocol-error`) and `isError` text naming no parameter (`honesty-unnamed-parameter`) earn half. `mcpeval serve` and `mcpeval-demo` return schema violations as `isError` results naming the parameter.
+- Readiness uses `mcpeval-standard/3`. The readiness corpus is recollected under it from the pinned targets in `data/corpus-targets.json` (13 of 34 targets observed), using evaluator 0.8.0.
+
 ## 0.8.0 - 2026-10-20
 
 ### Added

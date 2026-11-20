@@ -82,8 +82,9 @@ grant mutation permission.
   structured content alongside text. The evaluation tools advertise the
   report's top-level fields; `mcpeval schema report` prints the complete schema.
 - Tool failures return `isError` results.
-- A call naming no listed tool, or with arguments violating a schema-validated
-  tool's input schema, answers JSON-RPC `-32602`.
+- A call naming no listed tool answers JSON-RPC `-32602`. Arguments violating a
+  schema-validated tool's input schema return an `isError` result that names
+  the parameter.
 - The service answers `ping`.
 
 ## Capacity and deadlines

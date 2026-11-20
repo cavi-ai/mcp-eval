@@ -79,6 +79,7 @@ fn options(home: &TestHome, mode: &str, selected_probe: Option<ProbeKind>) -> Pr
         confirm_read_only: false,
         skip_tools: Vec::new(),
         arguments: None,
+        repeats: mcpeval::standard::REPEATS,
     }
 }
 
@@ -183,6 +184,7 @@ fn token_cost_options(
         confirm_read_only: false,
         skip_tools: Vec::new(),
         arguments: None,
+        repeats: mcpeval::standard::REPEATS,
     }
 }
 
@@ -235,6 +237,30 @@ fn token_cost_fails_on_total_and_per_tool_budgets() {
         report.cases[0].reason,
         Some(FailureReason::TokenBudgetExceeded)
     );
+}
+
+#[test]
+fn the_standard_battery_refuses_repeat_counts_outside_its_range() {
+    for repeats in [0, mcpeval::standard::MAX_REPEATS + 1] {
+        let error = mcpeval::probe::score(mcpeval::probe::ScoreOptions {
+            server: "fixture".into(),
+            command: vec!["python3".into(), FIXTURE.into(), "clean".into()],
+            env: Vec::new(),
+            http_url: None,
+            allow_remote_http: false,
+            confirm_read_only: false,
+            skip_tools: Vec::new(),
+            arguments: None,
+            sandbox: false,
+            sandbox_network: false,
+            repeats,
+        })
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("repeats must be 3 to 100"),
+            "{error}"
+        );
+    }
 }
 
 #[test]

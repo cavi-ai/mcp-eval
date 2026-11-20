@@ -75,6 +75,12 @@ pub struct ToolDefinition {
     pub entry_bytes: usize,
     /// Characters in the tool's description; the text itself is never kept.
     pub description_chars: usize,
+    /// Sorted, distinct hashes of the description's lowercased words, for
+    /// comparing descriptions without keeping them. In memory only.
+    pub description_words: Vec<u64>,
+    /// Hidden characters, model directives, and identifiers in the entry's
+    /// text. In memory only.
+    pub text_scan: crate::description_scan::TextScan,
     /// The tool's declared `outputSchema`, when present. Structural
     /// metadata only; never persisted.
     pub output_schema: Option<Value>,
@@ -112,14 +118,17 @@ pub(crate) fn tool_definition(tool: &Value) -> anyhow::Result<ToolDefinition> {
     if !input_schema.is_object() {
         bail!("tool inputSchema is not an object");
     }
+    let description = tool
+        .get("description")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     Ok(ToolDefinition {
         name: name.to_owned(),
         input_schema,
         entry_bytes: serde_json::to_vec(tool)?.len(),
-        description_chars: tool
-            .get("description")
-            .and_then(Value::as_str)
-            .map_or(0, |text| text.chars().count()),
+        description_chars: description.chars().count(),
+        description_words: word_hashes(description),
+        text_scan: crate::description_scan::TextScan::of(tool),
         output_schema: tool
             .get("outputSchema")
             .filter(|schema| schema.is_object())
@@ -127,6 +136,23 @@ pub(crate) fn tool_definition(tool: &Value) -> anyhow::Result<ToolDefinition> {
         read_only_hint: annotation_hint(tool, "readOnlyHint"),
         destructive_hint: annotation_hint(tool, "destructiveHint"),
     })
+}
+
+/// Sorted, distinct hashes of the lowercased alphanumeric words of `text`.
+fn word_hashes(text: &str) -> Vec<u64> {
+    use std::hash::{Hash, Hasher};
+    let mut hashes: Vec<u64> = text
+        .split(|character: char| !character.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(|word| {
+            let mut hasher = std::hash::DefaultHasher::new();
+            word.to_lowercase().hash(&mut hasher);
+            hasher.finish()
+        })
+        .collect();
+    hashes.sort_unstable();
+    hashes.dedup();
+    hashes
 }
 
 /// Maximum `tools/list` pages followed during catalog discovery.
@@ -296,11 +322,29 @@ impl McpClient {
         self.capabilities.clone()
     }
     pub fn spawn(command: &[String]) -> anyhow::Result<Self> {
+        Self::spawn_in(command, &[], None)
+    }
+
+    /// Spawn `command` with `env` added to its environment, inside `sandbox`
+    /// when one is given.
+    pub(crate) fn spawn_in(
+        command: &[String],
+        env: &[(String, String)],
+        sandbox: Option<&crate::sandbox::Sandbox>,
+    ) -> anyhow::Result<Self> {
         let (program, args) = command
             .split_first()
             .ok_or_else(|| anyhow::anyhow!("server command must not be empty"))?;
-        let child = Command::new(program)
-            .args(args)
+        let mut process = match sandbox {
+            Some(sandbox) => sandbox.command(program, args),
+            None => {
+                let mut process = Command::new(program);
+                process.args(args);
+                process
+            }
+        };
+        let child = process
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -964,17 +1008,23 @@ pub(crate) fn tool_result_is_error(result: &Value) -> anyhow::Result<bool> {
     }
 }
 
+/// The text of a `tools/call` result: every content item's `text`, joined
+/// by newlines; None when no item has text.
+pub(crate) fn tool_result_text(result: &Value) -> Option<String> {
+    let texts: Vec<&str> = result
+        .get("content")?
+        .as_array()?
+        .iter()
+        .filter_map(|item| item.get("text").and_then(Value::as_str))
+        .collect();
+    (!texts.is_empty()).then(|| texts.join("\n"))
+}
+
 pub fn classify_tool_response(response: &Value) -> anyhow::Result<ToolResponse> {
     if let Some(result) = response.get("result") {
         if tool_result_is_error(result)? {
-            let message = result
-                .get("content")
-                .and_then(Value::as_array)
-                .and_then(|content| content.first())
-                .and_then(|item| item.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or(UNTEXTED_TOOL_ERROR)
-                .to_owned();
+            let message =
+                tool_result_text(result).unwrap_or_else(|| UNTEXTED_TOOL_ERROR.to_owned());
             return Ok(ToolResponse::Error {
                 code: -32000,
                 // The shim's journal synthesizes the same constant for

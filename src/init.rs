@@ -255,7 +255,7 @@ fn decisions(
 ) -> anyhow::Result<Vec<Decision>> {
     if let Some(supplied) = supplied {
         supplied
-            .validate(catalog, confirm_read_only)
+            .validate(catalog, confirm_read_only, false)
             .map_err(crate::exit::usage)?;
     }
     for name in selected {
@@ -629,6 +629,8 @@ mod tests {
             input_schema,
             entry_bytes: 0,
             description_chars: 0,
+            description_words: Vec::new(),
+            text_scan: Default::default(),
             output_schema: None,
             read_only_hint: None,
             destructive_hint: None,

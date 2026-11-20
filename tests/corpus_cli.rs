@@ -48,7 +48,7 @@ fn provenance_corpus_places_only_observed_targets_and_rejects_inconsistent_popul
         .unwrap();
     assert!(comparable.status.success());
     assert!(String::from_utf8_lossy(&comparable.stdout).contains(
-        "standard corpus (mcpeval-standard/2): above 0, tied 0, below 1 of 1 observed servers"
+        "standard corpus (mcpeval-standard/3): above 0, tied 0, below 1 of 1 observed servers"
     ));
     valid["observations"][0]["provenance"]["deployment_sha256"] = "a".repeat(64).into();
     valid["population"][1]["status"] = "errored".into();

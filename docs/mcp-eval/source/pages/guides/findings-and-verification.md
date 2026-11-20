@@ -133,6 +133,29 @@ when mixed or unreported.
   incomplete index and return no findings before the first index; see
   [Agent loop over MCP](agent-loop.md).
 
+## Session-path friction
+
+`mcpeval friction` reads the indexed real `tools/call` records of each session
+in order and counts, per server:
+
+- failed calls before the session's first successful call, and sessions in
+  which no call succeeded;
+- retry storms: at least three consecutive failed calls to one tool;
+- corrections: failed calls to a tool ended by a successful call to the same
+  tool, with the failed calls they took;
+- switches: a failed call to one tool directly followed by a successful call to
+  another, the sign of a tool the agent mistook for the right one.
+
+Only calls that ended `ok` or `error` count. A call with any other outcome
+ends the current run, so failed calls are never joined across it. A session
+whose call order the index does not record, legacy records sharing a sequence
+number, counts only its calls and whether any succeeded; it is reported as
+`unordered_sessions`.
+
+It needs `mcpeval index`, not `promote`. `--format json` writes
+`mcpeval.friction/v1`. Output holds counts and tool names only: no sessions,
+arguments, or error text.
+
 ## Annotate calls
 
 Add a bounded human observation to a captured call:

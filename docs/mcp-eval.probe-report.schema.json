@@ -656,6 +656,9 @@
             "catalog.read-only-declared",
             "catalog.destructive-declared",
             "catalog.output-schema",
+            "catalog.name-format",
+            "catalog.schema-portable",
+            "catalog.distinct-description",
             "catalog.empty",
             "protocol.negotiation",
             "protocol.unknown-method",
@@ -663,6 +666,8 @@
             "protocol.unknown-tool",
             "protocol.pagination",
             "protocol.surfaces",
+            "protocol.origin",
+            "protocol.auth-challenge",
             "error-honesty.invalid-arguments",
             "error-honesty.untestable"
           ]
@@ -708,6 +713,9 @@
             "catalog-read-only-undeclared",
             "catalog-destructive-undeclared",
             "catalog-no-output-schema",
+            "catalog-name-off-spec",
+            "catalog-schema-root-unportable",
+            "catalog-description-duplicated",
             "catalog-no-tools",
             "protocol-negotiation-echoed-unknown",
             "protocol-negotiation-invalid-version",
@@ -717,10 +725,15 @@
             "protocol-unknown-tool-accepted",
             "protocol-pagination-invalid",
             "protocol-surface-invalid",
+            "protocol-origin-accepted",
+            "protocol-auth-no-challenge",
+            "protocol-auth-no-metadata",
             "protocol-call-failed",
             "honesty-accepted-invalid",
             "honesty-empty-error",
             "honesty-wrong-code",
+            "honesty-protocol-error",
+            "honesty-unnamed-parameter",
             "honesty-call-failed",
             "honesty-untestable"
           ]
@@ -788,6 +801,14 @@
           "type": "string",
           "pattern": "^[0-9a-f]{64}$",
           "description": "SHA-256 of the --arguments file the standard battery called tools with; absent without one."
+        },
+        "sandboxed": {
+          "const": true,
+          "description": "The server ran under score --sandbox and every tool was called; absent otherwise."
+        },
+        "sandbox_network": {
+          "const": true,
+          "description": "The sandbox allowed network access (score --sandbox-network); absent otherwise."
         }
       }
     }

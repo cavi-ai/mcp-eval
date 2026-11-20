@@ -34,8 +34,10 @@ for line in sys.stdin:
     elif method == "tools/call":
         params = message.get("params", {})
         args = params.get("arguments", {})
-        if params.get("name") != "status" or ("x" in args and not isinstance(args["x"], int)):
-            reply["error"] = {"code": -32602, "message": "Invalid arguments"}
+        if params.get("name") != "status":
+            reply["error"] = {"code": -32602, "message": "Unknown tool"}
+        elif "x" in args and not isinstance(args["x"], int):
+            reply["result"] = {"isError": True, "content": [{"type": "text", "text": "x must be an integer"}]}
         else:
             calls += 1
             if mode == "partial-transport" and calls > 1:

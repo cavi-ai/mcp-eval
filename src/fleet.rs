@@ -283,13 +283,14 @@ mod tests {
 
     #[test]
     fn config_entries_expand_variables_and_unlaunchable_entries_say_why() {
-        let home = std::env::var("HOME").unwrap();
+        // PATH is set on every platform; HOME is not set on Windows.
+        let path = std::env::var("PATH").unwrap();
         let entry = |value: Value| parse(&value);
         assert_eq!(
-            entry(json!({"command": "node", "args": ["${HOME}/index.js"],
+            entry(json!({"command": "node", "args": ["${PATH}/index.js"],
                 "env": {"MODE": "${MCPEVAL_FLEET_TEST_UNSET:-read}"}})),
             Ok(Entry::Stdio {
-                command: vec!["node".into(), format!("{home}/index.js")],
+                command: vec!["node".into(), format!("{path}/index.js")],
                 env: vec![("MODE".into(), "read".into())],
             })
         );

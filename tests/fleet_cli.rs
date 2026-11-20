@@ -14,8 +14,8 @@ fn fleet_scores_every_config_server_and_reports_session_cost_and_name_collisions
         json!({"mcpServers": {
             "notes": {"command": "python3", "args": [fixtures.join("poisoned_catalog_server.py")]},
             "notes-env": {
-                "command": "sh",
-                "args": ["-c", "exec python3 \"$NOTES_SERVER\""],
+                "command": "python3",
+                "args": ["-c", "import os, runpy; runpy.run_path(os.environ['NOTES_SERVER'], run_name='__main__')"],
                 "env": {"NOTES_SERVER": "${FLEET_FIXTURES}/poisoned_catalog_server.py"}
             },
             "legacy": {"type": "sse", "url": "http://127.0.0.1:9/sse"}

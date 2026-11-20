@@ -20,6 +20,25 @@ fn prints_version() {
     );
 }
 
+/// Windows gives a process's main thread 1 MiB of stack.
+#[cfg(unix)]
+#[test]
+fn commands_run_within_a_one_mebibyte_main_stack() {
+    let home = std::env::temp_dir().join(format!("mcpeval-stack-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&home).unwrap();
+    let out = Command::new("sh")
+        .args(["-c", "ulimit -s 1024 && exec \"$0\" index", bin()])
+        .env("MCPEVAL_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{:?}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 #[test]
 fn help_orders_the_battery_before_capture_and_shows_start_here() {
     let out = Command::new(bin()).arg("--help").output().unwrap();

@@ -205,10 +205,24 @@ fn render_probe_text(
     }
 }
 
+/// Stack for the command thread, the same on every platform; the main
+/// thread's default is 1 MiB on Windows.
+const STACK_BYTES: usize = 8 * 1024 * 1024;
+
 fn main() {
-    if let Err(error) = run() {
-        eprintln!("Error: {error:?}");
-        std::process::exit(mcpeval::exit::code(&error));
+    let outcome = std::thread::Builder::new()
+        .name("main".into())
+        .stack_size(STACK_BYTES)
+        .spawn(run)
+        .expect("spawn the command thread")
+        .join();
+    match outcome {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            eprintln!("Error: {error:?}");
+            std::process::exit(mcpeval::exit::code(&error));
+        }
+        Err(panic) => std::panic::resume_unwind(panic),
     }
 }
 

@@ -21,7 +21,7 @@ reason's hint prints once, under its first lost point:
 ```text
 literal-status instruction-fidelity pass attempts=1
 demo gate 1/1 passed
-demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/2
+demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/3
   surface: 12 tools, 10 read-only, 2 writers, 10 exercised
   lost catalog.description score=0 tool=describe_status observed=37 reason=catalog-short-description
     hint: describe what the tool does, when to use it, and what it returns in at least 40 characters; agents choose tools from this text
@@ -35,7 +35,7 @@ demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reli
     hint: the same read-only call with the same arguments ended differently across repeated calls; make read paths deterministic, or return a retryable error with a stable code
   lost reliability.latency score=50 tool=slow_read reason=reliability-slow
     hint: median latency is above 100 ms (score 80: up to 300 ms, 50: up to 1 s, 20: up to 3 s, 0: slower); cache or precompute the read, or page large results
-  standard corpus (mcpeval-standard/2): above 9, tied 0, below 4 of 13 observed servers
+  standard corpus (mcpeval-standard/3): above 9, tied 0, below 4 of 13 observed servers
   catalog: 566 tokens over 12 tools, lighter than 12 of 13 observed servers (median 2536 tokens)
 ```
 
@@ -87,7 +87,7 @@ as a baseline or attach to CI artifacts.
   "passed": false,
   "gate": {"passed": 0, "total": 1},
   "readiness": {
-    "standard": "mcpeval-standard/2",
+    "standard": "mcpeval-standard/3",
     "score": 91,
     "badge": "https://img.shields.io/badge/mcpeval-91%2F100-brightgreen",
     "attested_read_only": false,
@@ -135,7 +135,7 @@ ever leaves the report.
 
 Readiness is the weighted mean of the standard's areas, each scored on fixed
 curves that mcpeval defines. The weights, curves, bands, and checks are the
-standard. The report names it (`mcpeval-standard/2` in this build), and any
+standard. The report names it (`mcpeval-standard/3` in this build), and any
 change to them changes the name. No area ever drops out: surface the standard
 could not test counts against the score.
 
@@ -353,10 +353,10 @@ Target deployments and backing state must still be controlled by the operator.
 ## Corpus placement
 
 The shipped corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v3`)
-is collected under `mcpeval-standard/2` from the pinned targets in
+is collected under `mcpeval-standard/3` from the pinned targets in
 `data/corpus-targets.json`, and retains the evaluator, target-file hash, and
 each target's package, version, and outcome. It was measured with evaluator
-0.7.1; readiness placement is unavailable for other evaluator versions unless
+0.8.0; readiness placement is unavailable for other evaluator versions unless
 a matching corpus is supplied. See
 [State of MCP servers](state-of-mcp-servers.md) and
 [Corpus collection and replay](corpus-replay.md).
@@ -367,7 +367,7 @@ explicitly. They place your catalog among servers that recorded
 `catalog_tokens`; the median is the lower middle for an even count:
 
 ```text
-  standard corpus (mcpeval-standard/2): above 9, tied 0, below 4 of 13 observed servers
+  standard corpus (mcpeval-standard/3): above 9, tied 0, below 4 of 13 observed servers
   catalog: 566 tokens over 12 tools, lighter than 12 of 13 observed servers (median 2536 tokens)
 ```
 

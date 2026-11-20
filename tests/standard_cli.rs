@@ -87,7 +87,7 @@ fn the_clean_demo_loses_points_only_for_its_deliberate_fixtures() {
     assert_eq!(document["schema"], "mcpeval.probe-report/v2");
     assert_eq!(document["gate"], Value::Null);
     let readiness = &document["readiness"];
-    assert_eq!(readiness["standard"], "mcpeval-standard/2");
+    assert_eq!(readiness["standard"], "mcpeval-standard/3");
     assert_eq!(
         readiness["surface"],
         json!({"tools": 12, "read_only": 10, "writers": 2, "exercised": 10})
@@ -416,7 +416,7 @@ fn text_output_names_every_lost_point_with_its_hint() {
         .unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(
-        stdout.contains("demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/2"),
+        stdout.contains("demo readiness 91/100 protocol=100 catalog=63 context=100 error-honesty=100 reliability=91 coverage=100 standard=mcpeval-standard/3"),
         "{stdout}"
     );
     assert!(

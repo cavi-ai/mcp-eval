@@ -95,7 +95,7 @@ test("native bundled deployment collects and replays without a package-launch su
   const dir = await mkdtemp(path.join(os.tmpdir(), "mcpeval-locked-collection-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const targetsPath = path.join(dir, "targets.json");
-  await writeFile(targetsPath, JSON.stringify({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets: [value] }));
+  await writeFile(targetsPath, JSON.stringify({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/3", targets: [value] }));
   const options = { targetsPath, binary, output: path.join(dir, "corpus.json"), minimum: 1, environment: process.env };
   const collection = await collectCorpus(options);
   assert.equal(collection.corpus.observations[0].provenance.deployment_sha256, value.deployment.sha256);

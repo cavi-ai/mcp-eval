@@ -188,7 +188,7 @@ fails the build even when every manifest case still passes:
 mcpeval probe --server demo --manifest mcp-eval.manifest.json \
   --min-readiness 85 --min-area error-honesty=90 -- your-mcp-server --flags
 # demo gate 25/25 passed
-# demo readiness 76/100 protocol=100 catalog=63 context=100 error-honesty=0 reliability=91 coverage=100 standard=mcpeval-standard/2
+# demo readiness 76/100 protocol=100 catalog=63 context=100 error-honesty=0 reliability=91 coverage=100 standard=mcpeval-standard/3
 # demo readiness floor failed: score 76 < 85, error-honesty 0 < 90
 ```
 

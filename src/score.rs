@@ -13,7 +13,7 @@ use crate::probe::ProbeReport;
 use crate::standard::{CatalogFacts, Exercise, Honesty, Observations, ToolClass, ToolObservation};
 
 /// The standard this build scores against.
-pub const STANDARD: &str = "mcpeval-standard/2";
+pub const STANDARD: &str = "mcpeval-standard/3";
 
 /// Catalog tokens at or under this earn full marks (1% of a 200k window).
 pub const CATALOG_FULL_TOKENS: u64 = 2_000;

@@ -17,6 +17,7 @@
 ### Changed
 
 - Error honesty gives full credit only to an `isError` result whose text names the offending parameter; JSON-RPC `-32602` (`honesty-protocol-error`) and `isError` text naming no parameter (`honesty-unnamed-parameter`) earn half. `mcpeval serve` and `mcpeval-demo` return schema violations as `isError` results naming the parameter.
+- Readiness uses `mcpeval-standard/3`. The readiness corpus is recollected under it from the pinned targets in `data/corpus-targets.json` (13 of 34 targets observed), using evaluator 0.8.0.
 
 ## 0.8.0 - 2026-10-20
 

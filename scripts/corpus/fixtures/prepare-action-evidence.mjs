@@ -18,7 +18,7 @@ try {
   await chmod(path.join(deployment, "runtime"), 0o755);
   await writeFile(path.join(deployment, "dependency"), "synthetic locked dependency");
   const targetsPath = path.join(root, "targets.json");
-  await writeFile(targetsPath, JSON.stringify({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/2", targets: [{
+  await writeFile(targetsPath, JSON.stringify({ schema: "mcpeval.corpus-targets/v1", standard: "mcpeval-standard/3", targets: [{
     server: "fixture", runtime: "npm", package: "fixture-package", version: "1.2.3", bin: "fixture", args: [],
     prerequisites: { environment: [], checks: [] }, deployment: { root: deployment, sha256: await deploymentDigest(deployment), executable: "runtime" },
   }] }));

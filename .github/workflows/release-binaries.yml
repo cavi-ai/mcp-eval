@@ -219,3 +219,13 @@ jobs:
       version: ${{ needs.release.outputs.version }}
       dry_run: false
     secrets: inherit
+
+  # The committed manifest and formula, here and in the Homebrew tap, follow
+  # the release once its assets and release.json exist.
+  distribution:
+    needs: release
+    uses: ./.github/workflows/publish-distribution.yml
+    with:
+      tag: v${{ needs.release.outputs.version }}
+      dry_run: "false"
+    secrets: inherit

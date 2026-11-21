@@ -2,9 +2,8 @@
 
 One tag ships everything. The pipelines create the GitHub Release, attach the
 binaries and the distribution manifest, publish the crate and the npm package,
-and publish the documentation. The human steps are the version bump, the tag,
-the post-release refresh of the committed distribution files, and the Homebrew
-tap update.
+publish the documentation, and refresh the committed distribution files here
+and in the Homebrew tap. The human steps are the version bump and the tag.
 
 ## What ships on tag push
 
@@ -14,6 +13,7 @@ tap update.
 | [release-binaries.yml](.github/workflows/release-binaries.yml) | `push: tags v*`; manual with `tag` to backfill | `mcpeval` + `mcpeval-demo` for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, each with a `.sha256` companion; the GitHub Release itself, with notes from the CHANGELOG section; `release.json` and `mcpeval.rb` generated from the built bytes; then calls `publish-docs` |
 | [publish-docs.yml](.github/workflows/publish-docs.yml) | called by `release-binaries`; `release: published`; manual (`dry_run` default `true`) | `mcp-eval-docs-vX.Y.Z.tar.gz` + `.sha256` on the release, and the release envelope dispatched to cavi-home, which publishes the documentation at https://cavi-ai.xyz/docs/mcp-eval/ |
 | [publish-crates.yml](.github/workflows/publish-crates.yml) | `push: tags v*`; manual stops at `--dry-run` | `mcpeval` on crates.io |
+| [publish-distribution.yml](.github/workflows/publish-distribution.yml) | called by `release-binaries`; manual with `tag` (`dry_run` default `true`) | verifies the release's `release.json` and `mcpeval.rb` against the published archives, installs and tests the formula through Homebrew, then merges one signed pull request here (`distribution/release.json`, `Formula/mcpeval.rb`) and one in `cavi-ai/homebrew-tap` (`Formula/mcpeval.rb`) |
 | [publish.yml](.github/workflows/publish.yml) | `push: tags v*`; manual publishes the `package.json` version if it is not on npm yet | `@cavi-ai/mcp-eval` on npm through trusted publishing (OIDC) with provenance; waits for `release.json` on the release, verifies every pinned archive byte-for-byte, then publishes |
 
 Asset uploads are idempotent and never overwrite: an asset that already exists
@@ -36,22 +36,21 @@ formula pin the archives by size and SHA-256 through `distribution/release.json`
 3. **Watch.** The release carries 10 binary assets, `release.json`,
    `mcpeval.rb`, and the docs archive with its `.sha256`. `npm view
    @cavi-ai/mcp-eval@X.Y.Z` and `cargo info mcpeval@X.Y.Z` resolve.
-4. **Refresh the committed distribution.** Download `release.json` from the
-   release into `distribution/release.json`, run
-   `node scripts/distribution/render-formula.mjs > Formula/mcpeval.rb`, run
-   `npm run test:distribution && npm run verify:distribution`, and merge via
-   pull request.
-5. **Homebrew tap.** In a checkout of `cavi-ai/homebrew-tap`, run
-   `node scripts/distribution/stage-homebrew.mjs --source <this repo> --tap
-   <tap checkout>`, then commit `mcpeval X.Y.Z` and open the tap pull request.
-   `brew install cavi-ai/tap/mcpeval` resolves once it merges.
-6. **Announce.** Update the README badges if the readiness score changed.
+4. **Distribution and tap.** The `distribution` job of `release-binaries`
+   merges `chore: update X.Y.Z distribution` here and `chore: update mcpeval
+   to X.Y.Z` in `cavi-ai/homebrew-tap`; `brew install cavi-ai/tap/mcpeval`
+   then resolves the release. It needs `HOMEBREW_TAP_TOKEN` or
+   `CONSUMER_DISPATCH_TOKEN` with contents and pull-request writes in both
+   repositories. A rerun of `publish-distribution` with the tag reports each
+   repository that is already current and changes nothing there.
+5. **Announce.** Update the README badges if the readiness score changed.
 
 ## One-time configuration
 
 - Repository secrets: `CARGO_REGISTRY_TOKEN` (crates.io publish rights for
   `mcpeval`), `CONSUMER_DISPATCH_TOKEN` (repository dispatch to
-  `cavi-ai/cavi-home`).
+  `cavi-ai/cavi-home`, and contents and pull-request writes in this repository
+  and `cavi-ai/homebrew-tap` for `publish-distribution`).
 - Environment `production`: no secrets. It is named in the npm trusted
   publisher and is part of the OIDC subject claim.
 - npm trusted publisher for `@cavi-ai/mcp-eval` on npmjs.com: organization

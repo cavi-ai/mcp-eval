@@ -362,7 +362,7 @@ The shipped corpus (`data/readiness-corpus.json`, `mcpeval.readiness-corpus/v3`)
 is collected under `mcpeval-standard/3` from the pinned targets in
 `data/corpus-targets.json`, and retains the evaluator, target-file hash, and
 each target's package, version, and outcome. It was measured with evaluator
-0.8.0; readiness placement is unavailable for other evaluator versions unless
+0.9.0; readiness placement is unavailable for other evaluator versions unless
 a matching corpus is supplied. See
 [State of MCP servers](state-of-mcp-servers.md) and
 [Corpus collection and replay](corpus-replay.md).

@@ -4,6 +4,27 @@ These pages describe MCP Eval {{PRODUCT_VERSION}}, released from tag `{{RELEASE_
 
 MCP Eval is under active development. Before 1.0, the CLI, on-disk schema, and manifest format may change. Keep manifests with the release that validates them and review the repository changelog before upgrading.
 
+## Upgrading to 0.9.0
+
+Readiness uses `mcpeval-standard/3`; scores under `mcpeval-standard/2` are
+historical and not comparable. Error honesty gives full credit only to an
+`isError` result naming the offending parameter, and JSON-RPC `-32602` earns
+half. Catalog conformance defects now cost the tool that has one. Regenerate
+readiness and `diff` baselines with this evaluator.
+
+`--repeats <N>` and `score --sandbox` are recorded in the measurement profile,
+so a score compares only with scores taken under the same conditions. HTTP
+servers face two protocol checks: a loopback server must refuse a foreign
+`Origin` with 403, and with credentials in `MCPEVAL_HTTP_HEADERS` a 401 must
+carry a `Bearer` challenge and protected resource metadata.
+
+`mcpeval serve` returns schema violations as `isError` results naming the
+parameter instead of JSON-RPC `-32602`. New commands: `mcpeval fleet` and
+`mcpeval friction`.
+
+The bundled corpus is collected with 0.9.0 under `mcpeval-standard/3`, so
+reports with the default measurement profile place readiness again.
+
 ## Upgrading to 0.8.0
 
 Readiness still uses `mcpeval-standard/2`, with unchanged scoring policy.

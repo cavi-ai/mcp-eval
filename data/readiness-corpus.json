@@ -4,8 +4,8 @@
   "standard": "mcpeval-standard/3",
   "platform": "darwin",
   "evaluator": {
-    "version": "0.8.0",
-    "sha256": "28c90b7f92c9ad8fe3bf3ac911d6e078697e23ac2e14ce42aa6d4f380a1fcb2f"
+    "version": "0.9.0",
+    "sha256": "bcf1af62e6be8f894dc38a8afc12d5206ab45963604c8c50ac3e719ccb80be74"
   },
   "targets_sha256": "24202982af051454186ad3c3e313ece8f2c3c020f9b1a1addbf14531642e8cb9",
   "population": [
@@ -186,7 +186,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -206,7 +206,7 @@
         "version": "4.1.9",
         "bin": "mcp-server-kubernetes",
         "launch_sha256": "0b3efe03ddc9879c99d4a228ba4e29d49471e95b41c0676f536c46b08ddad1ed",
-        "report_sha256": "16aa79ab1f1d7fb20318bba613efaa90d3d3f5b66742e265c5f21c13b3700e95",
+        "report_sha256": "b2bc9d5432ed32b9d366135762757cf5c248cf2ac0f6e4abd3477890b6cb3591",
         "prerequisites": []
       }
     },
@@ -228,7 +228,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -248,7 +248,7 @@
         "version": "2026.10.19",
         "bin": "mcp-server-git",
         "launch_sha256": "26014fa25dc81170cc2e0561d838f86344281e29ea66e6c5421b137d89246737",
-        "report_sha256": "25b234a75d01f81e76871eda6813764e03b667382960a0824bbf6abd1a9afbbb",
+        "report_sha256": "c16a2b319a8ceda24a347edf0b155470c54abc0e4851964ad1690f9c1c86c714",
         "prerequisites": []
       }
     },
@@ -270,7 +270,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -290,7 +290,7 @@
         "version": "2026.10.19",
         "bin": "mcp-server-time",
         "launch_sha256": "6754440fafb54a0341cf81ac509fcc4eb2cecebf343b7f867cc131abe4fc8997",
-        "report_sha256": "538c3883dc6bd1d67768f6c4d57ea47ab929be62f59b890fa08de9cc7ebf7a1b",
+        "report_sha256": "c0e514625bb64954dbd3f7d003299a2d4c31b7095b74fb67abf3db006e452da8",
         "prerequisites": []
       }
     },
@@ -312,7 +312,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -332,19 +332,19 @@
         "version": "2.5.2",
         "bin": "notion-mcp-server",
         "launch_sha256": "7f6625d387d64c318528aa4f681fd954cda02bb52ee68ce47b189f0ae68967b4",
-        "report_sha256": "3b0b13b0a89dcbf1d4f195f380de1636d9483c00a05462d9ed19e453619c79a2",
+        "report_sha256": "a134d6868b6150d936cb1f7dbd44088f0832a04dab226ccbff149ab4a8b9c1f7",
         "prerequisites": []
       }
     },
     {
       "server": "arxiv",
-      "score": 70,
+      "score": 69,
       "areas": {
         "protocol": 83,
         "catalog": 76,
         "context": 80,
         "error-honesty": 91,
-        "reliability": 48,
+        "reliability": 47,
         "coverage": 45
       },
       "tool_count": 19,
@@ -354,7 +354,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -374,7 +374,7 @@
         "version": "0.8.2",
         "bin": "arxiv-mcp-server",
         "launch_sha256": "0cda9ec3f859370a0fb79bbf3d1e307a3029d56cebc884f712e71165cab498d2",
-        "report_sha256": "115df2e7bf2daaaf70b983b125a4eb7be725dca54043257dc663ce7a5ae352f6",
+        "report_sha256": "468c9b5b1ec96aae88048708e64620299de0a4eaba5828a4290ab534f2b765f6",
         "prerequisites": []
       }
     },
@@ -386,7 +386,7 @@
         "catalog": 64,
         "context": 39,
         "error-honesty": 62,
-        "reliability": 87,
+        "reliability": 86,
         "coverage": 85
       },
       "tool_count": 25,
@@ -396,7 +396,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -416,7 +416,7 @@
         "version": "0.3.0",
         "bin": "desktop-commander",
         "launch_sha256": "59f20fde4498fd892b2f61905d97bd401aa111d1d7312986f01499d348ac55c9",
-        "report_sha256": "6636f4116110f7bcc8ead47d06329d1c5d72a9d91543ebdb5b434eb88ba71d38",
+        "report_sha256": "44cc8ba7dddfe904a4df61ac5303de709c4b479455f1dd20f0054227b8d70894",
         "prerequisites": []
       }
     },
@@ -438,7 +438,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -458,7 +458,7 @@
         "version": "2.7.0",
         "bin": "mcp-searxng",
         "launch_sha256": "a01056ba000d9083cc37339d20aee5898702df697004a3f59410282b0b2a3a46",
-        "report_sha256": "a917bd73a08c6e1762300b0babd79ba36128f88ab208327d6ef974c7355b11ce",
+        "report_sha256": "d70bacd8ce5c69609ee386e537b8056d7a099502a94224b682e68f7238c9ad8f",
         "prerequisites": []
       }
     },
@@ -480,7 +480,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -500,7 +500,7 @@
         "version": "4.4.4",
         "bin": "context7-mcp",
         "launch_sha256": "52621810f9b9da2457eb8512a0088b7db6c0d599677e08e8a2aa6ebe10bd883a",
-        "report_sha256": "85998ea3982734b5abd7600a24bb9bb641732e602b2d52d577830476738c3dce",
+        "report_sha256": "c275e8dede735a13735f65882190cfc4096418a4926b4485e118ad526655972d",
         "prerequisites": []
       }
     },
@@ -522,7 +522,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -542,7 +542,7 @@
         "version": "2.0.0",
         "bin": "mcp-server-filesystem",
         "launch_sha256": "6614d8cc7cac2ab4f5e20bde54183a356608cbbf16c23b416dfda023917b9449",
-        "report_sha256": "dc71af457ee2fb28a2057e38d618a84d68fa99416acc5780893e03cedf8f91aa",
+        "report_sha256": "e66e0fdca2619b1acf0619f3945f42acd4a10f3c7167d8476d3043967dc69e41",
         "prerequisites": []
       }
     },
@@ -564,7 +564,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -584,7 +584,7 @@
         "version": "2.0.0",
         "bin": "mcp-server-everything",
         "launch_sha256": "20953c12deec06051b446a029f204fba18cb807502d52394e1e3762819202396",
-        "report_sha256": "1ae69c88f434ffe6eb1aca8be5b64ad46d562604d0cbbf99e9264772b4e55da2",
+        "report_sha256": "48de3a359ef5a78a4824204e9f50ef247fcdc56b283820f69c7f095046480e3d",
         "prerequisites": []
       }
     },
@@ -606,7 +606,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -626,7 +626,7 @@
         "version": "2026.10.19",
         "bin": "mcp-server-fetch",
         "launch_sha256": "bc1190c2621ef5cc0b71321d06e5a7b5a7e93cccd3cc48fefb8275f9a4b8a3d3",
-        "report_sha256": "e09dbc1dbfa0e30cca887bcc0fbc9ef3d64e83c6fdec3d5dce3e4dba1a686bf7",
+        "report_sha256": "a7822d454cedade60b378b0ca32ebbc5f75a9c813a0beca364a61c474fb55eda",
         "prerequisites": []
       }
     },
@@ -648,7 +648,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -668,7 +668,7 @@
         "version": "2.0.0",
         "bin": "mcp-server-memory",
         "launch_sha256": "492baceadefbcde9b8e5eb9dad7d41690fa8ffbee8f8b2ae79630c71c0fdfc6c",
-        "report_sha256": "5f9449fcc80053d7a810ddf97ba530cd6b64fdd107a9e0da31deb7755683ce0e",
+        "report_sha256": "5139d6d12cb8285c6f50d471abe23fc149a2b683d5177205cbf6a4773dcb0742",
         "prerequisites": []
       }
     },
@@ -680,7 +680,7 @@
         "catalog": 85,
         "context": 100,
         "error-honesty": 100,
-        "reliability": 98,
+        "reliability": 99,
         "coverage": 100
       },
       "tool_count": 8,
@@ -690,7 +690,7 @@
         "attested_read_only": false,
         "call_timeout_ms": 15000,
         "client_capabilities": "none",
-        "evaluator_version": "0.8.0",
+        "evaluator_version": "0.9.0",
         "platform": "macos",
         "repeats": 3,
         "schema": "mcpeval.measurement-profile/v1",
@@ -710,7 +710,7 @@
         "version": "0.5.5",
         "bin": "mcp-server-wikipedia",
         "launch_sha256": "af0fe400514759dc6a46de663def69878307a0081017bacd36a34be2c7259875",
-        "report_sha256": "288e6e2adcb3e8f635b6b4d72ddbd71f658729c77d1649de00c12c9b9f2ad093",
+        "report_sha256": "5ee1d807c3d9f9d7dd2bceb81c861323d8b54b4d4ddff5f5f58a00ff4e995bb2",
         "prerequisites": []
       }
     }

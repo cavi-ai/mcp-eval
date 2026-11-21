@@ -3,7 +3,7 @@
 This page reports popular public MCP servers scored with mcpeval's read-only
 standard battery (`mcpeval score`) under readiness standard
 `mcpeval-standard/3`. The corpus behind it, `data/readiness-corpus.json`, was
-collected with MCP Eval 0.8.0 on macOS from the pinned target file `data/corpus-targets.json` and
+collected with MCP Eval 0.9.0 on macOS from the pinned target file `data/corpus-targets.json` and
 records the evaluator, the target file's SHA-256, and each target's package,
 version, and outcome.
 
@@ -31,14 +31,14 @@ holds **13 public MCP servers** observed under the standard.
 | Server | Readiness | Protocol | Catalog | Context | Error honesty | Reliability | Coverage | Tools | Catalog tokens |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `memory` | 97 | 100 | 89 | 92 | 100 | 100 | 100 | 9 | 2699 |
-| `wikipedia-uvx` | 97 | 100 | 85 | 100 | 100 | 98 | 100 | 8 | 1142 |
+| `wikipedia-uvx` | 97 | 100 | 85 | 100 | 100 | 99 | 100 | 8 | 1142 |
 | `fetch` | 94 | 100 | 80 | 100 | 100 | 92 | 100 | 1 | 287 |
 | `everything` | 93 | 100 | 74 | 94 | 100 | 97 | 100 | 16 | 2536 |
 | `context7` | 82 | 100 | 80 | 95 | 100 | 69 | 50 | 2 | 1305 |
 | `filesystem` | 82 | 100 | 82 | 89 | 100 | 65 | 60 | 14 | 3139 |
 | `searxng` | 75 | 100 | 80 | 93 | 63 | 67 | 50 | 4 | 1745 |
-| `desktop-commander` | 73 | 100 | 64 | 39 | 62 | 87 | 85 | 25 | 13341 |
-| `arxiv` | 70 | 83 | 76 | 80 | 91 | 48 | 45 | 19 | 4463 |
+| `desktop-commander` | 73 | 100 | 64 | 39 | 62 | 86 | 85 | 25 | 13341 |
+| `arxiv` | 69 | 83 | 76 | 80 | 91 | 47 | 45 | 19 | 4463 |
 | `notion` | 66 | 100 | 64 | 32 | 0 | 91 | 100 | 24 | 19057 |
 | `time` | 61 | 100 | 80 | 100 | 100 | 0 | 0 | 2 | 575 |
 | `git` | 56 | 100 | 54 | 100 | 100 | 0 | 0 | 12 | 1515 |

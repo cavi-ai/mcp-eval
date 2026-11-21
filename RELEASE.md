@@ -12,7 +12,7 @@ and in the Homebrew tap. The human steps are the version bump and the tag.
 | [ci.yml](.github/workflows/ci.yml) | push to `main`, pull requests, manual | fmt, clippy, build, tests on Linux/macOS/Windows, version agreement, docs artifact, distribution contract, npm install and Homebrew install end-to-end |
 | [release-binaries.yml](.github/workflows/release-binaries.yml) | `push: tags v*`; manual with `tag` to backfill | `mcpeval` + `mcpeval-demo` for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, each with a `.sha256` companion; the GitHub Release itself, with notes from the CHANGELOG section; `release.json` and `mcpeval.rb` generated from the built bytes; then calls `publish-docs` |
 | [publish-docs.yml](.github/workflows/publish-docs.yml) | called by `release-binaries`; `release: published`; manual (`dry_run` default `true`) | `mcp-eval-docs-vX.Y.Z.tar.gz` + `.sha256` on the release, and the release envelope dispatched to cavi-home, which publishes the documentation at https://cavi-ai.xyz/docs/mcp-eval/ |
-| [publish-crates.yml](.github/workflows/publish-crates.yml) | `push: tags v*`; manual stops at `--dry-run` | `mcpeval` on crates.io |
+| [publish-crates.yml](.github/workflows/publish-crates.yml) | `push: tags v*`; manual with `tag` publishes that tag, without it stops at `--dry-run` | `mcpeval` on crates.io through trusted publishing (OIDC) |
 | [publish-distribution.yml](.github/workflows/publish-distribution.yml) | called by `release-binaries`; manual with `tag` (`dry_run` default `true`) | verifies the release's `release.json` and `mcpeval.rb` against the published archives, installs and tests the formula through Homebrew, then merges one signed pull request here (`distribution/release.json`, `Formula/mcpeval.rb`) and one in `cavi-ai/homebrew-tap` (`Formula/mcpeval.rb`) |
 | [publish.yml](.github/workflows/publish.yml) | `push: tags v*`; manual publishes the `package.json` version if it is not on npm yet | `@cavi-ai/mcp-eval` on npm through trusted publishing (OIDC) with provenance; waits for `release.json` on the release, verifies every pinned archive byte-for-byte, then publishes |
 
@@ -47,19 +47,22 @@ formula pin the archives by size and SHA-256 through `distribution/release.json`
 
 ## One-time configuration
 
-- Repository secrets: `CARGO_REGISTRY_TOKEN` (crates.io publish rights for
-  `mcpeval`), `CONSUMER_DISPATCH_TOKEN` (repository dispatch to
+- Repository secret: `CONSUMER_DISPATCH_TOKEN` (repository dispatch to
   `cavi-ai/cavi-home`, and contents and pull-request writes in this repository
   and `cavi-ai/homebrew-tap` for `publish-distribution`).
-- Environment `production`: no secrets. It is named in the npm trusted
-  publisher and is part of the OIDC subject claim.
+- Environment `production`: no secrets. It is named in the npm and crates.io
+  trusted publishers and is part of the OIDC subject claim.
+- crates.io trusted publisher for `mcpeval` (crate *Settings*, *Trusted
+  Publishing*, GitHub): repository owner `cavi-ai`, repository `mcp-eval`,
+  workflow filename `publish-crates.yml`, environment `production`.
 - npm trusted publisher for `@cavi-ai/mcp-eval` on npmjs.com: organization
   `cavi-ai`, repository `mcp-eval`, workflow filename `publish.yml`,
   environment `production`, with `npm publish` allowed (configurations created
   after 2026-09-03 default to `npm stage publish` only). Under *Publishing
   access*, require two-factor authentication and disallow tokens.
-- No npm token is stored anywhere; `scripts/distribution/publish-auth.test.mjs`
-  fails if one returns to the workflow.
+- No npm or crates.io token is stored anywhere;
+  `scripts/distribution/publish-auth.test.mjs` fails if one returns to a
+  workflow.
 
 ## Verification after release
 

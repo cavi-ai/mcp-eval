@@ -2,12 +2,18 @@ name: Publish crates
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z) to publish; empty stops at the dry run
+        required: false
+        default: ""
+        type: string
   push:
     tags:
       - "v*"
 
 concurrency:
-  group: publish-crates-${{ github.ref }}
+  group: publish-crates-${{ inputs.tag || github.ref }}
   cancel-in-progress: false
 
 permissions: {}
@@ -15,8 +21,19 @@ permissions: {}
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # crates.io trusted publishing: the trusted publisher names this
+    # repository, `publish-crates.yml`, and this environment.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG || github.ref }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
@@ -29,30 +46,35 @@ jobs:
           python3 scripts/check-version-agreement.py
 
       - name: Tag matches the crate version
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.TAG != ''
         run: |
           set -euo pipefail
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
           CRATE_VERSION="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
-          test "${GITHUB_REF_NAME#v}" = "$CRATE_VERSION"
+          test "${TAG#v}" = "$CRATE_VERSION"
 
-      # Pre-flight on every trigger, including workflow_dispatch, so a broken
-      # manifest is caught without claiming a name on crates.io.
+      # Pre-flight on every trigger, so a broken manifest is caught without
+      # claiming a name on crates.io.
       - name: Dry-run publish
         run: |
           set -euo pipefail
           cargo publish --dry-run --locked
 
-      # Only on a version tag. `workflow_dispatch` stops at the dry run, so the
-      # manual trigger stays a safe rehearsal — publishing to crates.io is
-      # irreversible and a name cannot be reclaimed. A re-run of a published
-      # tag exits cleanly instead of failing on the duplicate.
+      - name: Exchange the OIDC token for a crates.io publish token
+        if: env.TAG != ''
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      # Only with a tag: a manual run without one stays a rehearsal, because
+      # publishing to crates.io is irreversible. A run for a published tag
+      # exits cleanly instead of failing on the duplicate.
       - name: Publish
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.TAG != ''
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${TAG#v}"
           if curl -fsS -A "mcp-eval release automation (github.com/cavi-ai/mcp-eval)" \
               "https://crates.io/api/v1/crates/mcpeval/${VERSION}" >/dev/null 2>&1; then
             echo "mcpeval ${VERSION} already on crates.io"

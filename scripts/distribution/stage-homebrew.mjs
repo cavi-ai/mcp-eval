@@ -15,7 +15,7 @@ async function readOptional(file) {
   }
 }
 
-function updateFormulaIndex(readme) {
+export function updateFormulaIndex(readme) {
   const lines = readme.split("\n");
   const existing = lines.findIndex((line) => line.startsWith("| `mcpeval` |"));
   if (existing !== -1) {

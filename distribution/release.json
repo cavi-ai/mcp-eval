@@ -2,39 +2,39 @@
   "schemaVersion": 1,
   "package": "@cavi-ai/mcp-eval",
   "repository": "cavi-ai/mcp-eval",
-  "version": "0.9.0",
-  "tag": "v0.9.0",
-  "commit": "742b6d22d7a01ce066af2597d52b5695d6af8b8d",
+  "version": "0.9.1",
+  "tag": "v0.9.1",
+  "commit": "7e6a75b98d9c1475551b77e24bd82ef77de414db",
   "assets": {
     "darwin-arm64": {
       "target": "aarch64-apple-darwin",
       "archive": "mcpeval-aarch64-apple-darwin.tar.gz",
-      "size": 5909289,
-      "sha256": "6034302dc0777fea085eeb4de9adb8be41f6c51ac59a29f8291fde3bdd9941ff"
+      "size": 5907858,
+      "sha256": "190a0329c4b6b7f75112a20085880172a7de13cbf0fbf5682cf3acc20d2f651f"
     },
     "darwin-x64": {
       "target": "x86_64-apple-darwin",
       "archive": "mcpeval-x86_64-apple-darwin.tar.gz",
-      "size": 6346683,
-      "sha256": "991724940b0fcf152d816a7fd4c408a2918e645296e47cab28c0bd77e86eadf9"
+      "size": 6340025,
+      "sha256": "d0d0b40fe3ea0339f52a21193a2cf6a34d8305782f3baf3f11216bfde5a689d5"
     },
     "linux-arm64": {
       "target": "aarch64-unknown-linux-gnu",
       "archive": "mcpeval-aarch64-unknown-linux-gnu.tar.gz",
-      "size": 6173921,
-      "sha256": "d4838c00966f926237e89a67a038556c0a0d41b2c5feef16e1ed60e93f00fe0f"
+      "size": 6159029,
+      "sha256": "f4e7c983ab2f18c06805e4802564f7b33f15f29c4565ef79ea3f149dbb5d7cbf"
     },
     "linux-x64": {
       "target": "x86_64-unknown-linux-gnu",
       "archive": "mcpeval-x86_64-unknown-linux-gnu.tar.gz",
-      "size": 6774731,
-      "sha256": "16929b9ebbc244ee40f714adac7f7ae741fe1f111c36a7d364076ff1dc83b2b9"
+      "size": 6777000,
+      "sha256": "1bdfcad5432f5e26991a79aee4324d801aff36804817f4832408a54683bc3a90"
     },
     "win32-x64": {
       "target": "x86_64-pc-windows-msvc",
       "archive": "mcpeval-x86_64-pc-windows-msvc.zip",
-      "size": 6553081,
-      "sha256": "5c08b7213c8cb57a11644c26b9446dc6194db2bfc1753bd6bdbc72ae1c5e3892"
+      "size": 6560548,
+      "sha256": "c17119c06d8fa72530110d6d54c681e35445cf0ec1140b357151779f0baf507d"
     }
   }
 }

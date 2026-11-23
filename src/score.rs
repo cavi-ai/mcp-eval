@@ -10,7 +10,9 @@
 use serde_json::{json, Value};
 
 use crate::probe::ProbeReport;
-use crate::standard::{CatalogFacts, Exercise, Honesty, Observations, ToolClass, ToolObservation};
+use crate::standard::{
+    CatalogFacts, Exercise, Honesty, Observations, ServerCase, ToolClass, ToolObservation,
+};
 
 /// The standard this build scores against.
 pub const STANDARD: &str = "mcpeval-standard/3";
@@ -784,12 +786,11 @@ fn error_honesty(observations: &Observations) -> AreaScore {
 fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore {
     let mut entries: Vec<f64> = Vec::new();
     let mut checks = Vec::new();
-    // A skipped tool the battery would have called scores 0, and so do the
-    // server-level cases it could have carried: skipping never pays.
+    // A skipped tool the battery recorded scores 0. Server-level cases
+    // carry the battery's own decision.
     let skipped = |tool: &&ToolObservation| {
         tool.exercise == Some(Exercise::NotExercised(CheckReason::CoverageSkipped))
     };
-    let any_skipped = observations.tools.iter().any(|tool| skipped(&tool));
     for tool in &observations.tools {
         let name = Some(tool.name.as_str());
         if skipped(&tool) {
@@ -885,13 +886,20 @@ fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore 
             CheckReason::ReliabilityPayloadUnhandled,
         ),
     ] {
-        if any_skipped {
-            entries.push(0.0);
-            checks.extend(lost(id, None, 0.0, None, CheckReason::CoverageSkipped));
-        } else if let Some(passed) = outcome {
-            let value = if passed { 100.0 } else { 0.0 };
-            entries.push(value);
-            checks.extend(lost(id, None, value, None, reason));
+        match outcome {
+            ServerCase::NotRun => {}
+            ServerCase::Skipped => {
+                entries.push(0.0);
+                checks.extend(lost(id, None, 0.0, None, CheckReason::CoverageSkipped));
+            }
+            ServerCase::Passed => {
+                entries.push(100.0);
+                checks.extend(lost(id, None, 100.0, None, reason));
+            }
+            ServerCase::Failed => {
+                entries.push(0.0);
+                checks.extend(lost(id, None, 0.0, None, reason));
+            }
         }
     }
     let score = if exercised == 0 {
@@ -1337,8 +1345,8 @@ mod tests {
             ],
             attested_read_only: false,
             sandboxed: false,
-            contention: Some(true),
-            payload: Some(true),
+            contention: ServerCase::Passed,
+            payload: ServerCase::Passed,
             protocol: [
                 CheckId::ProtocolUnknownMethod,
                 CheckId::ProtocolPing,
@@ -1725,7 +1733,7 @@ mod tests {
     fn skipping_a_tool_never_raises_the_score() {
         // Ten read-only tools; `bad` fails both reliability checks and
         // accepts invalid input. Skipping it must not pay off.
-        let base = |bad: Option<Exercise>, honesty| {
+        let base = |bad: Option<Exercise>, honesty, server: ServerCase| {
             let mut tools: Vec<ToolObservation> = (0..9)
                 .map(|index| ToolObservation {
                     honesty: Some(Honesty::Honest),
@@ -1743,18 +1751,20 @@ mod tests {
             });
             Observations {
                 tools,
-                contention: Some(true),
-                payload: Some(true),
+                contention: server,
+                payload: server,
                 ..clean_demo()
             }
         };
         let called = fold(&base(
             exercised(false, 5_000),
             Some(Honesty::Dishonest(CheckReason::HonestyAcceptedInvalid)),
+            ServerCase::Passed,
         ));
         let skipped = fold(&base(
             Some(Exercise::NotExercised(CheckReason::CoverageSkipped)),
             Some(Honesty::Dishonest(CheckReason::CoverageSkipped)),
+            ServerCase::Skipped,
         ));
         assert!(
             skipped.score <= called.score,
@@ -1869,9 +1879,14 @@ mod tests {
             .measurement_profile
             .is_none());
         readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
-            readiness.attested_read_only,
-            &[],
-            None,
+            crate::measurement::MeasurementConditions {
+                attested_read_only: readiness.attested_read_only,
+                skip_tools: &[],
+                arguments_sha256: None,
+                sandboxed: false,
+                sandbox_network: false,
+                repeats: crate::standard::REPEATS,
+            },
         ));
         let document = readiness.to_json();
         assert_eq!(Readiness::from_json(&document).unwrap(), readiness);
@@ -1880,9 +1895,14 @@ mod tests {
             .is_none());
         let digest = "0".repeat(64);
         readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
-            readiness.attested_read_only,
-            &[],
-            Some(&digest),
+            crate::measurement::MeasurementConditions {
+                attested_read_only: readiness.attested_read_only,
+                skip_tools: &[],
+                arguments_sha256: Some(&digest),
+                sandboxed: false,
+                sandbox_network: false,
+                repeats: crate::standard::REPEATS,
+            },
         ));
         assert_eq!(
             Readiness::from_json(&readiness.to_json()).unwrap(),

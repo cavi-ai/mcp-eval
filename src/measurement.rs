@@ -24,13 +24,20 @@ pub struct MeasurementProfile {
     pub sandbox_network: bool,
 }
 
+/// The conditions of one readiness run. The profile is this value; nothing
+/// fills a field in afterwards.
+pub struct MeasurementConditions<'a> {
+    pub attested_read_only: bool,
+    pub skip_tools: &'a [String],
+    pub arguments_sha256: Option<&'a str>,
+    pub sandboxed: bool,
+    pub sandbox_network: bool,
+    pub repeats: usize,
+}
+
 impl MeasurementProfile {
-    pub fn current(
-        attested_read_only: bool,
-        skip_tools: &[String],
-        arguments_sha256: Option<&str>,
-    ) -> Self {
-        let mut skip_tools = skip_tools.to_vec();
+    pub fn current(conditions: MeasurementConditions<'_>) -> Self {
+        let mut skip_tools = conditions.skip_tools.to_vec();
         skip_tools.sort();
         skip_tools.dedup();
         Self {
@@ -39,13 +46,13 @@ impl MeasurementProfile {
             platform: std::env::consts::OS.into(),
             architecture: std::env::consts::ARCH.into(),
             client_capabilities: "none".into(),
-            attested_read_only,
+            attested_read_only: conditions.attested_read_only,
             skip_tools,
             call_timeout_ms: crate::standard::CALL_TIMEOUT.as_millis() as u64,
-            repeats: crate::standard::REPEATS,
-            arguments_sha256: arguments_sha256.map(str::to_owned),
-            sandboxed: false,
-            sandbox_network: false,
+            repeats: conditions.repeats,
+            arguments_sha256: conditions.arguments_sha256.map(str::to_owned),
+            sandboxed: conditions.sandboxed,
+            sandbox_network: conditions.sandbox_network,
         }
     }
 
@@ -90,5 +97,28 @@ impl MeasurementProfile {
             "invalid measurement arguments digest"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_records_the_run_it_was_given() {
+        let profile = MeasurementProfile::current(MeasurementConditions {
+            attested_read_only: true,
+            skip_tools: &["b".into(), "a".into(), "a".into()],
+            arguments_sha256: Some("ab"),
+            sandboxed: true,
+            sandbox_network: true,
+            repeats: 7,
+        });
+        assert!(profile.attested_read_only);
+        assert_eq!(profile.skip_tools, ["a", "b"]);
+        assert_eq!(profile.arguments_sha256.as_deref(), Some("ab"));
+        assert!(profile.sandboxed);
+        assert!(profile.sandbox_network);
+        assert_eq!(profile.repeats, 7);
     }
 }

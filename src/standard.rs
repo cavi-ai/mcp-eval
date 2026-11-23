@@ -1,7 +1,8 @@
-//! The mcpeval standard battery: read-only observations of a server's
-//! whole catalog, folded into readiness by [`crate::score`]. It runs on
-//! its own connection, never calls a tool declared a writer, and journals
-//! nothing: its deliberate calls must not become promoted findings.
+//! The mcpeval standard battery: observations of a server's whole catalog,
+//! folded into readiness by [`crate::score`]. It runs on its own connection
+//! and journals nothing: its deliberate calls must not become promoted
+//! findings. A tool declared a writer is called only when the target is
+//! confined.
 
 use std::time::{Duration, Instant};
 
@@ -37,10 +38,6 @@ pub struct StandardOptions {
     pub skip_tools: Vec<String>,
     /// Arguments to call named tools with instead of synthesized ones.
     pub arguments: Option<crate::tool_arguments::ToolArguments>,
-    /// The server runs in a write-contained sandbox, so every tool is called.
-    pub sandboxed: bool,
-    /// The sandbox allows network access.
-    pub sandbox_network: bool,
     /// Calls per exercised tool, from [`REPEATS`] to [`MAX_REPEATS`].
     pub repeats: usize,
 }
@@ -51,8 +48,6 @@ impl Default for StandardOptions {
             confirm_read_only: false,
             skip_tools: Vec::new(),
             arguments: None,
-            sandboxed: false,
-            sandbox_network: false,
             repeats: REPEATS,
         }
     }
@@ -219,7 +214,7 @@ pub struct ToolObservation {
     /// `estimate_tokens` of the tool's `tools/list` entry.
     pub tokens: u64,
     pub class: ToolClass,
-    /// None for writers, which are never called.
+    /// None for a writer whose target is not confined.
     pub exercise: Option<Exercise>,
     pub catalog: CatalogFacts,
     /// How the tool refused schema-violating arguments; None for tools
@@ -269,15 +264,27 @@ pub struct Observations {
     /// Every distinct tool, in catalog order.
     pub tools: Vec<ToolObservation>,
     pub attested_read_only: bool,
-    /// Every tool, writers included, was callable in a sandbox.
+    /// Every tool, writers included, was callable because the target is confined.
     pub sandboxed: bool,
-    /// Contention on the first fully successful tool; None when none.
-    pub contention: Option<bool>,
-    /// Payload bounds on the first fully successful tool with a string
-    /// property; None when none.
-    pub payload: Option<bool>,
+    /// What the battery decided for the contention case.
+    pub contention: ServerCase,
+    /// What the battery decided for the payload-bounds case.
+    pub payload: ServerCase,
     /// Each applicable protocol check and, when it failed, why.
     pub protocol: Vec<(CheckId, Option<CheckReason>)>,
+}
+
+/// The battery's decision for one server-level case. Fold scores this
+/// decision; it does not decide whether the case ran.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum ServerCase {
+    /// Nothing could carry the case.
+    #[default]
+    NotRun,
+    /// A skipped tool blocked the case.
+    Skipped,
+    Passed,
+    Failed,
 }
 
 /// How one call ended.
@@ -320,19 +327,49 @@ pub(crate) fn run(
     }
     let (observations, contract) = target.budget.finish(observe(target, options))?;
     let mut readiness = crate::score::fold(&observations);
-    let mut profile = crate::measurement::MeasurementProfile::current(
-        options.confirm_read_only,
-        &options.skip_tools,
-        options
-            .arguments
-            .as_ref()
-            .map(crate::tool_arguments::ToolArguments::sha256),
-    );
-    profile.sandboxed = options.sandboxed;
-    profile.sandbox_network = options.sandbox_network;
-    profile.repeats = options.repeats;
-    readiness.measurement_profile = Some(profile);
+    let arguments_sha256 = options
+        .arguments
+        .as_ref()
+        .map(crate::tool_arguments::ToolArguments::sha256);
+    let (sandboxed, sandbox_network) = confinement(target);
+    readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
+        crate::measurement::MeasurementConditions {
+            attested_read_only: options.confirm_read_only,
+            skip_tools: &options.skip_tools,
+            arguments_sha256,
+            sandboxed,
+            sandbox_network,
+            repeats: options.repeats,
+        },
+    ));
     Ok((readiness, contract))
+}
+
+/// Whether the target is confined, and whether that confinement allows
+/// network access. Writer calls follow this, not a separate flag.
+fn confinement(target: &ClientTarget) -> (bool, bool) {
+    match target.confinement() {
+        Some(confinement) => (true, confinement.network),
+        None => (false, false),
+    }
+}
+
+/// A skipped tool the battery could have called, and the honesty judgment
+/// that skip earns. One decision: coverage, reliability, and error honesty
+/// read it back.
+fn skip_facts(schema: &Value) -> (Exercise, Option<Honesty>) {
+    (
+        Exercise::NotExercised(CheckReason::CoverageSkipped),
+        invalid_arguments(schema).map(|_| Honesty::Dishonest(CheckReason::CoverageSkipped)),
+    )
+}
+
+fn server_outcome(ran: Option<bool>) -> ServerCase {
+    match ran {
+        None => ServerCase::NotRun,
+        Some(true) => ServerCase::Passed,
+        Some(false) => ServerCase::Failed,
+    }
 }
 
 /// A fresh, initialized connection. The handshake keeps the transport's
@@ -361,9 +398,10 @@ fn observe(
             "--skip-tool {name} is not a tool the server lists"
         )));
     }
+    let (sandboxed, _) = confinement(target);
     if let Some(arguments) = &options.arguments {
         arguments
-            .validate(&catalog, options.confirm_read_only, options.sandboxed)
+            .validate(&catalog, options.confirm_read_only, sandboxed)
             .map_err(crate::exit::usage)?;
     }
     let mut tools = Vec::with_capacity(catalog.tools.len());
@@ -377,24 +415,17 @@ fn observe(
         target.budget.check()?;
         let mut calls = CallCounts::default();
         let class = ToolClass::of(tool);
-        let callable = class.callable(options.confirm_read_only, options.sandboxed);
+        let callable = class.callable(options.confirm_read_only, sandboxed);
         // A skipped tool is never called; it scores as the worst call it
-        // could have made (see score.rs), so skipping never pays.
+        // could have made, so skipping never pays.
         let skipped = callable && options.skip_tools.contains(&tool.name);
-        let honesty = if skipped {
-            invalid_arguments(&tool.input_schema)
-                .map(|_| Honesty::Dishonest(CheckReason::CoverageSkipped))
-        } else if callable {
-            probe_honesty(&mut client, target, tool)
-        } else {
-            None
-        };
-        let exercise = match class {
+        let (exercise, honesty) = match class {
             // Read-only tools are always callable.
-            ToolClass::Writer if !callable => None,
-            ToolClass::Unannotated if !callable => {
-                Some(Exercise::NotExercised(CheckReason::CoverageUnannotated))
-            }
+            ToolClass::Writer if !callable => (None, None),
+            ToolClass::Unannotated if !callable => (
+                Some(Exercise::NotExercised(CheckReason::CoverageUnannotated)),
+                None,
+            ),
             _ => {
                 let supplied = options
                     .arguments
@@ -404,9 +435,18 @@ fn observe(
                 let synthesized = supplied.is_none();
                 match supplied.or_else(|| synthesize(&tool.input_schema)) {
                     Some(_) if skipped => {
-                        Some(Exercise::NotExercised(CheckReason::CoverageSkipped))
+                        let (exercise, honesty) = skip_facts(&tool.input_schema);
+                        (Some(exercise), honesty)
+                    }
+                    None if skipped => {
+                        let (_, honesty) = skip_facts(&tool.input_schema);
+                        (
+                            Some(Exercise::NotExercised(CheckReason::CoverageUnsynthesizable)),
+                            honesty,
+                        )
                     }
                     Some(arguments) => {
+                        let honesty = probe_honesty(&mut client, target, tool);
                         let (exercise, measured_calls) = exercise_tool(
                             &mut client,
                             target,
@@ -421,9 +461,12 @@ fn observe(
                         } else if calls.successful == 0 && synthesized {
                             unfed.push((tools.len(), arguments));
                         }
-                        Some(exercise)
+                        (Some(exercise), honesty)
                     }
-                    None => Some(Exercise::NotExercised(CheckReason::CoverageUnsynthesizable)),
+                    None => (
+                        Some(Exercise::NotExercised(CheckReason::CoverageUnsynthesizable)),
+                        probe_honesty(&mut client, target, tool),
+                    ),
                 }
             }
         };
@@ -467,54 +510,63 @@ fn observe(
         observation.calls = calls;
         observation.chained = true;
     }
-    // With a tool skipped, the server-level cases score 0 (score.rs) and
-    // are not run.
+    // A skipped tool blocks both server-level cases. The decision is
+    // recorded here; fold scores it and does not derive it again.
     let any_skipped = tools
         .iter()
         .any(|tool| tool.exercise == Some(Exercise::NotExercised(CheckReason::CoverageSkipped)));
-    if any_skipped {
-        succeeded.clear();
-    }
-    let contention = succeeded.first().map(|(tool, arguments)| {
-        server_case(
-            &mut client,
-            target,
-            &catalog,
-            &ProbeCase::Contention {
-                id: "standard-contention".into(),
-                tool: tool.name.clone(),
-                access: Access::ReadOnly,
-                sandbox: None,
-                arguments: arguments.clone(),
-            },
-        )
-    });
-    let payload = succeeded
-        .iter()
-        .find_map(|(tool, arguments)| string_property(tool).map(|field| (tool, arguments, field)))
-        .map(|(tool, arguments, field)| {
+    let contention = if any_skipped {
+        ServerCase::Skipped
+    } else {
+        server_outcome(succeeded.first().map(|(tool, arguments)| {
             server_case(
                 &mut client,
                 target,
                 &catalog,
-                &ProbeCase::PayloadBounds {
-                    id: "standard-payload".into(),
+                &ProbeCase::Contention {
+                    id: "standard-contention".into(),
                     tool: tool.name.clone(),
                     access: Access::ReadOnly,
                     sandbox: None,
                     arguments: arguments.clone(),
-                    field,
-                    size_bytes: PAYLOAD_BYTES,
-                    expect_handled: false,
                 },
             )
-        });
+        }))
+    };
+    let payload = if any_skipped {
+        ServerCase::Skipped
+    } else {
+        server_outcome(
+            succeeded
+                .iter()
+                .find_map(|(tool, arguments)| {
+                    string_property(tool).map(|field| (tool, arguments, field))
+                })
+                .map(|(tool, arguments, field)| {
+                    server_case(
+                        &mut client,
+                        target,
+                        &catalog,
+                        &ProbeCase::PayloadBounds {
+                            id: "standard-payload".into(),
+                            tool: tool.name.clone(),
+                            access: Access::ReadOnly,
+                            sandbox: None,
+                            arguments: arguments.clone(),
+                            field,
+                            size_bytes: PAYLOAD_BYTES,
+                            expect_handled: false,
+                        },
+                    )
+                }),
+        )
+    };
     let protocol = protocol_checks(&mut client, target, &catalog);
     Ok((
         Observations {
             tools,
             attested_read_only: options.confirm_read_only,
-            sandboxed: options.sandboxed,
+            sandboxed,
             contention,
             payload,
             protocol,

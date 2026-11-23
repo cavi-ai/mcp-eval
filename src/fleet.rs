@@ -191,13 +191,14 @@ pub fn run(path: &Path, allow_remote_http: bool) -> anyhow::Result<Fleet> {
             repeats: crate::standard::REPEATS,
         }) {
             Ok(report) => report,
-            Err(_) => {
+            Err(error) if crate::exit::code(&error) == crate::exit::USAGE => {
                 skipped.push(Skipped {
                     server,
                     reason: "invalid-entry",
                 });
                 continue;
             }
+            Err(error) => return Err(error),
         };
         let mut names: Vec<&str> = report
             .catalog

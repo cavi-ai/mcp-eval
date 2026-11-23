@@ -30,6 +30,13 @@ pub(crate) enum ProbeClient {
     Http(HttpMcpClient),
 }
 
+/// A stdio server confined by a [`crate::sandbox::Sandbox`]. Writer calls
+/// are allowed only when a target reports this.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Confinement {
+    pub(crate) network: bool,
+}
+
 impl ClientTarget {
     pub(crate) fn new(
         command: Vec<String>,
@@ -65,6 +72,20 @@ impl ClientTarget {
             TargetTransport::Http { .. } => bail!("--sandbox applies to stdio servers only"),
         }
         Ok(self)
+    }
+
+    /// The confinement of a stdio target launched inside a sandbox.
+    /// Absent unless [`Self::sandboxed`] attached one.
+    pub(crate) fn confinement(&self) -> Option<Confinement> {
+        match &self.transport {
+            TargetTransport::Stdio {
+                sandbox: Some(sandbox),
+                ..
+            } => Some(Confinement {
+                network: sandbox.network(),
+            }),
+            TargetTransport::Stdio { sandbox: None, .. } | TargetTransport::Http { .. } => None,
+        }
     }
 
     /// Add `env` to every stdio connection's environment; HTTP targets refuse.
@@ -188,17 +209,6 @@ impl ProbeClient {
         match self {
             Self::Stdio(client) => client.raw_request(method, params),
             Self::Http(client) => client.raw_request(method, params),
-        }
-    }
-
-    pub(super) fn call_tool_allowing_frame_rejection(
-        &mut self,
-        tool: &str,
-        arguments: &Value,
-    ) -> anyhow::Result<ToolResponse> {
-        match self {
-            Self::Stdio(client) => client.call_tool_allowing_frame_rejection(tool, arguments),
-            Self::Http(client) => client.call_tool(tool, arguments),
         }
     }
 

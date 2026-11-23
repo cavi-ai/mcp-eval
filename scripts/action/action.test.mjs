@@ -12,7 +12,8 @@ const ROOT = path.resolve(import.meta.dirname, "../..");
 const INSTALL = path.join(ROOT, "scripts/action/install.sh");
 const RUN = path.join(ROOT, "scripts/action/run.sh");
 const COMMENT = path.join(ROOT, "scripts/action/comment.sh");
-const RELEASE_BIN = path.join(ROOT, "target/release");
+const customBin = process.env.MCPEVAL_TEST_BIN_DIR;
+const TEST_BIN = path.resolve(ROOT, customBin ?? "target/release");
 const TAG = "v9.9.9";
 const LINUX_ARCHIVE = "mcpeval-x86_64-unknown-linux-gnu.tar.gz";
 const WINDOWS_ARCHIVE = "mcpeval-x86_64-pc-windows-msvc.zip";
@@ -296,12 +297,13 @@ test("install extracts the Windows zip archive", { skip: !bsdtar && "needs a tar
   assert.ok(existsSync(path.join(entry, "mcpeval-demo.exe")));
 });
 
-const built = existsSync(path.join(RELEASE_BIN, "mcpeval")) && existsSync(path.join(RELEASE_BIN, "mcpeval-demo"));
+const built = existsSync(path.join(TEST_BIN, "mcpeval")) && existsSync(path.join(TEST_BIN, "mcpeval-demo"));
+if (customBin !== undefined) assert.ok(built, "MCPEVAL_TEST_BIN_DIR must contain mcpeval and mcpeval-demo");
 const needsBuild = !built && "run `cargo build --release --locked` first";
 
 async function actionWorkspace() {
   const directory = await mkdtemp(path.join(os.tmpdir(), "mcpeval-action-run-"));
-  const pathValue = [RELEASE_BIN, await pathWithoutMcpeval(directory)].join(path.delimiter);
+  const pathValue = [TEST_BIN, await pathWithoutMcpeval(directory)].join(path.delimiter);
   const init = spawnSync(
     "mcpeval",
     ["init", "--server", "demo", "--confirm-read-only", "--output", "mcp-eval.manifest.json", "--", "mcpeval-demo"],

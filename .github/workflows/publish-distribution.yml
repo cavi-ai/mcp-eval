@@ -7,8 +7,8 @@ on:
         required: true
         type: string
       dry_run:
-        default: "false"
-        type: string
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       tag:
@@ -17,10 +17,9 @@ on:
         type: string
       dry_run:
         description: Verify the release files and a Homebrew install without publishing
-        default: "true"
+        default: true
         required: true
-        type: choice
-        options: ["true", "false"]
+        type: boolean
 
 permissions:
   contents: read
@@ -35,13 +34,19 @@ jobs:
     timeout-minutes: 30
     env:
       TAG: ${{ inputs.tag }}
+      RELEASE_ROOT: release-source
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
-      - uses: actions/checkout@v7
+      - name: Check out workflow tooling
+        uses: actions/checkout@v7
         with:
-          # verify.mjs resolves the tag's commit and compares the tag's
-          # source version with the manifest.
-          ref: ${{ inputs.tag }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check out tagged source
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          path: ${{ env.RELEASE_ROOT }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v7
@@ -54,30 +59,30 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern release.json --output distribution/release.json --clobber
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern mcpeval.rb --output Formula/mcpeval.rb --clobber
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern release.json --output "$RELEASE_ROOT/distribution/release.json" --clobber
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern mcpeval.rb --output "$RELEASE_ROOT/Formula/mcpeval.rb" --clobber
 
       - name: Verify the files against the published archives
-        run: node scripts/distribution/verify.mjs --online --strict
+        run: node scripts/distribution/verify.mjs --root "$RELEASE_ROOT" --online --strict
 
       - name: Install and test the formula through Homebrew
         run: |
           set -euo pipefail
           brew tap-new --no-git cavi-ai/mcpeval-release
-          cp Formula/mcpeval.rb "$(brew --repository cavi-ai/mcpeval-release)/Formula/mcpeval.rb"
+          cp "$RELEASE_ROOT/Formula/mcpeval.rb" "$(brew --repository cavi-ai/mcpeval-release)/Formula/mcpeval.rb"
           brew trust --formula cavi-ai/mcpeval-release/mcpeval
           brew install cavi-ai/mcpeval-release/mcpeval
           brew test cavi-ai/mcpeval-release/mcpeval
           test "$(mcpeval --version)" = "mcpeval ${TAG#v}"
 
       - name: Plan the distribution and tap pull requests
-        if: ${{ inputs.dry_run == 'true' }}
+        if: ${{ inputs.dry_run }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node scripts/distribution/publish-pins.mjs --tag "$TAG" --dry-run
+        run: node scripts/distribution/publish-pins.mjs --root "$RELEASE_ROOT" --tag "$TAG" --dry-run
 
       - name: Merge the distribution and tap pull requests
-        if: ${{ inputs.dry_run != 'true' }}
+        if: ${{ !inputs.dry_run }}
         env:
           GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN || secrets.CONSUMER_DISPATCH_TOKEN }}
         run: |
@@ -86,4 +91,4 @@ jobs:
             echo "::error::HOMEBREW_TAP_TOKEN or CONSUMER_DISPATCH_TOKEN must allow contents and pull-request writes in mcp-eval and homebrew-tap"
             exit 1
           fi
-          node scripts/distribution/publish-pins.mjs --tag "$TAG"
+          node scripts/distribution/publish-pins.mjs --root "$RELEASE_ROOT" --tag "$TAG"

@@ -58,6 +58,31 @@ async function sourceTreeWithVersion(version) {
   return temporary;
 }
 
+test("the verifier CLI reads source version and tag from the supplied release tree", async (context) => {
+  const release = await sourceTreeWithVersion(MANIFEST.version);
+  context.after(() => rm(release, { recursive: true, force: true }));
+  const git = (...args) => {
+    const result = spawnSync("git", args, { cwd: release, encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  git("init", "--quiet");
+  git("fetch", "--quiet", "--depth=1", "--no-tags", ROOT, `refs/tags/${MANIFEST.tag}:refs/tags/${MANIFEST.tag}`);
+
+  const verify = () => spawnSync(
+    process.execPath,
+    [path.join(ROOT, "scripts/distribution/verify.mjs"), "--root", release, "--strict"],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  const valid = verify();
+  assert.equal(valid.status, 0, valid.stderr);
+  assert.equal(JSON.parse(valid.stdout).commit, MANIFEST.commit);
+
+  git("tag", "-d", MANIFEST.tag);
+  const missingTag = verify();
+  assert.equal(missingTag.status, 1, missingTag.stderr);
+  assert.match(missingTag.stderr, /ambiguous argument|unknown revision/u);
+});
+
 test("a bumped source version is accepted until the post-release refresh, but never for publishing", async (context) => {
   const { verifyDistribution } = await import("./verify.mjs");
   const next = MANIFEST.version.replace(/\d+$/u, (patch) => String(Number(patch) + 1));

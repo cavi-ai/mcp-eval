@@ -19,15 +19,44 @@ test("a tag publishes the distribution and the tap through publish-distribution"
   const job = /\n  distribution:\n([\s\S]*?)(?=\n  [a-z-]+:\n|$)/u.exec(release)?.[1] ?? "";
   assert.match(job, /needs: release/u);
   assert.match(job, /uses: \.\/\.github\/workflows\/publish-distribution\.yml/u);
-  assert.match(job, /dry_run: "false"/u);
+  assert.match(job, /dry_run: false/u);
   assert.match(job, /secrets: inherit/u);
 
   const publish = await read(".github/workflows/publish-distribution.yml");
-  assert.match(publish, /workflow_dispatch:[\s\S]*dry_run:[\s\S]*default: "true"/u, "a manual run defaults to a dry run");
-  assert.match(publish, /node scripts\/distribution\/verify\.mjs --online --strict/u);
+  assert.match(publish, /workflow_call:[\s\S]*dry_run:\n\s+default: false\n\s+type: boolean/u);
+  assert.match(publish, /workflow_dispatch:[\s\S]*dry_run:[\s\S]*default: true\n\s+required: true\n\s+type: boolean/u, "a manual run defaults to a dry run");
+  assert.match(publish, /node scripts\/distribution\/verify\.mjs --root "\$RELEASE_ROOT" --online --strict/u);
   assert.match(publish, /brew install [^\n]*mcpeval/u);
   assert.match(publish, /brew test [^\n]*mcpeval/u);
-  assert.match(publish, /if: \$\{\{ inputs\.dry_run != 'true' \}\}\n[\s\S]*node scripts\/distribution\/publish-pins\.mjs --tag "\$TAG"/u);
+  assert.match(publish, /if: \$\{\{ !inputs\.dry_run \}\}\n[\s\S]*node scripts\/distribution\/publish-pins\.mjs --root "\$RELEASE_ROOT" --tag "\$TAG"/u);
+});
+
+test("a manual binary backfill resolves its tag once for building and publishing", async () => {
+  const release = await read(".github/workflows/release-binaries.yml");
+  const [, source, build, publish] = /\n  source:\n([\s\S]+?)\n  build:\n([\s\S]+?)\n  release:\n([\s\S]+?)\n  docs:/u.exec(release) ?? [];
+  assert.ok(source && build && publish, "source, build and release jobs must be present");
+  assert.match(source, /ref: \$\{\{ inputs\.tag && format\('refs\/tags\/\{0\}', inputs\.tag\) \|\| github\.sha \}\}/u);
+  assert.match(source, /git rev-parse HEAD/u);
+  assert.match(build, /needs: source/u);
+  assert.match(build, /ref: \$\{\{ needs\.source\.outputs\.commit \}\}/u);
+  assert.match(publish, /needs: \[source, build\]/u);
+  assert.match(publish, /ref: \$\{\{ needs\.source\.outputs\.commit \}\}/u);
+  const docs = /\n  docs:\n([\s\S]+?)\n  distribution:/u.exec(release)?.[1] ?? "";
+  assert.match(docs, /needs: \[source, release\]/u);
+  assert.match(docs, /source_ref: \$\{\{ needs\.source\.outputs\.commit \}\}/u);
+
+  const docsWorkflow = await read(".github/workflows/publish-docs.yml");
+  assert.match(docsWorkflow, /ref: \$\{\{ inputs\.source_ref \|\| github\.sha \}\}/u);
+});
+
+test("distribution uses current tooling against a separate tag checkout", async () => {
+  const publish = await read(".github/workflows/publish-distribution.yml");
+  const checkouts = [...publish.matchAll(/uses: actions\/checkout@\S+\n        with:\n((?: {10}[^\n]+\n)+)/gu)];
+  assert.equal(checkouts.length, 2);
+  assert.match(checkouts[0][1], /ref: \$\{\{ github\.sha \}\}/u);
+  assert.match(checkouts[1][1], /ref: refs\/tags\/\$\{\{ inputs\.tag \}\}/u);
+  assert.match(checkouts[1][1], /path: \$\{\{ env\.RELEASE_ROOT \}\}/u);
+  assert.match(publish, /node scripts\/distribution\/publish-pins\.mjs --root "\$RELEASE_ROOT" --tag "\$TAG" --dry-run/u);
 });
 
 test("the version a manifest or formula describes", () => {

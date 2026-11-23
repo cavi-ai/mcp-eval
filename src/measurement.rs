@@ -24,13 +24,36 @@ pub struct MeasurementProfile {
     pub sandbox_network: bool,
 }
 
+/// The conditions of one readiness run. The profile is this value; nothing
+/// fills a field in afterwards.
+pub struct MeasurementConditions<'a> {
+    pub attested_read_only: bool,
+    pub skip_tools: &'a [String],
+    pub arguments_sha256: Option<&'a str>,
+    pub sandboxed: bool,
+    pub sandbox_network: bool,
+    pub repeats: usize,
+}
+
 impl MeasurementProfile {
+    /// Build a profile with the standard repeat count and no sandbox.
     pub fn current(
         attested_read_only: bool,
         skip_tools: &[String],
         arguments_sha256: Option<&str>,
     ) -> Self {
-        let mut skip_tools = skip_tools.to_vec();
+        Self::from_conditions(MeasurementConditions {
+            attested_read_only,
+            skip_tools,
+            arguments_sha256,
+            sandboxed: false,
+            sandbox_network: false,
+            repeats: crate::standard::REPEATS,
+        })
+    }
+
+    pub fn from_conditions(conditions: MeasurementConditions<'_>) -> Self {
+        let mut skip_tools = conditions.skip_tools.to_vec();
         skip_tools.sort();
         skip_tools.dedup();
         Self {
@@ -39,13 +62,13 @@ impl MeasurementProfile {
             platform: std::env::consts::OS.into(),
             architecture: std::env::consts::ARCH.into(),
             client_capabilities: "none".into(),
-            attested_read_only,
+            attested_read_only: conditions.attested_read_only,
             skip_tools,
             call_timeout_ms: crate::standard::CALL_TIMEOUT.as_millis() as u64,
-            repeats: crate::standard::REPEATS,
-            arguments_sha256: arguments_sha256.map(str::to_owned),
-            sandboxed: false,
-            sandbox_network: false,
+            repeats: conditions.repeats,
+            arguments_sha256: conditions.arguments_sha256.map(str::to_owned),
+            sandboxed: conditions.sandboxed,
+            sandbox_network: conditions.sandbox_network,
         }
     }
 
@@ -90,5 +113,28 @@ impl MeasurementProfile {
             "invalid measurement arguments digest"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn from_conditions_records_the_run_it_was_given() {
+        let profile = MeasurementProfile::from_conditions(MeasurementConditions {
+            attested_read_only: true,
+            skip_tools: &["b".into(), "a".into(), "a".into()],
+            arguments_sha256: Some("ab"),
+            sandboxed: true,
+            sandbox_network: true,
+            repeats: 7,
+        });
+        assert!(profile.attested_read_only);
+        assert_eq!(profile.skip_tools, ["a", "b"]);
+        assert_eq!(profile.arguments_sha256.as_deref(), Some("ab"));
+        assert!(profile.sandboxed);
+        assert!(profile.sandbox_network);
+        assert_eq!(profile.repeats, 7);
     }
 }

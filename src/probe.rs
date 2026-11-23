@@ -419,9 +419,8 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
                 confirm_read_only: options.confirm_read_only,
                 skip_tools: options.skip_tools,
                 arguments: options.arguments,
-                sandboxed: false,
-                sandbox_network: false,
                 repeats: options.repeats,
+                ..Default::default()
             },
         )?;
     }
@@ -473,9 +472,8 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
             confirm_read_only: options.confirm_read_only,
             skip_tools: options.skip_tools,
             arguments: options.arguments,
-            sandboxed: options.sandbox,
-            sandbox_network: options.sandbox && options.sandbox_network,
             repeats: options.repeats,
+            ..Default::default()
         },
     )?;
     Ok(report)
@@ -1399,10 +1397,13 @@ fn run_payload_bounds(
         Value::String("a".repeat(size_bytes as usize)),
     );
     let started = Instant::now();
-    let outcome = context.client.call_tool_allowing_frame_rejection(
-        case.tool().expect("payload case has a tool"),
-        &arguments,
-    );
+    let tool = case.tool().expect("payload case has a tool");
+    // A null-id frame rejection is a stdio stream fact. HTTP has no framed
+    // session, so that call is an ordinary tool call.
+    let outcome = match context.client {
+        ProbeClient::Stdio(client) => client.call_tool_allowing_frame_rejection(tool, &arguments),
+        ProbeClient::Http(client) => client.call_tool(tool, &arguments),
+    };
     let latency_ms = started.elapsed().as_millis() as u64;
     let (response, reason) = match outcome {
         // The transport died: crash, hang, or non-JSON output under load.

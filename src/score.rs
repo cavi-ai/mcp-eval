@@ -414,6 +414,15 @@ pub struct Readiness {
 /// Fold the standard battery's observations into readiness. Every area in
 /// [`Area::ALL`] is always scored: none drops out of the denominator.
 pub fn fold(observations: &Observations) -> Readiness {
+    // Public observations express skips through their tool outcomes.
+    let server_cases_skipped = observations.tools.iter().any(ToolObservation::was_skipped);
+    fold_with_server_cases(observations, server_cases_skipped)
+}
+
+pub(crate) fn fold_with_server_cases(
+    observations: &Observations,
+    server_cases_skipped: bool,
+) -> Readiness {
     let mut areas: Vec<AreaScore> = Area::ALL
         .iter()
         .map(|area| match area {
@@ -421,11 +430,12 @@ pub fn fold(observations: &Observations) -> Readiness {
             Area::Catalog => catalog(&observations.tools),
             Area::Context => context(&observations.tools),
             Area::ErrorHonesty => error_honesty(observations),
-            Area::Reliability => reliability(observations, Latency::Banded),
+            Area::Reliability => reliability(observations, Latency::Banded, server_cases_skipped),
             Area::Coverage => coverage(observations),
         })
         .collect();
-    let reliability_without_latency = reliability(observations, Latency::FullMarks).score;
+    let reliability_without_latency =
+        reliability(observations, Latency::FullMarks, server_cases_skipped).score;
     let score = weighted_score(&areas, None);
     let score_without_latency = weighted_score(&areas, Some(reliability_without_latency));
     if let Some(area) = areas.iter_mut().find(|area| area.area == Area::Reliability) {
@@ -781,18 +791,16 @@ fn error_honesty(observations: &Observations) -> AreaScore {
     }
 }
 
-fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore {
+fn reliability(
+    observations: &Observations,
+    latency_mode: Latency,
+    server_cases_skipped: bool,
+) -> AreaScore {
     let mut entries: Vec<f64> = Vec::new();
     let mut checks = Vec::new();
-    // A skipped tool the battery would have called scores 0, and so do the
-    // server-level cases it could have carried: skipping never pays.
-    let skipped = |tool: &&ToolObservation| {
-        tool.exercise == Some(Exercise::NotExercised(CheckReason::CoverageSkipped))
-    };
-    let any_skipped = observations.tools.iter().any(|tool| skipped(&tool));
     for tool in &observations.tools {
         let name = Some(tool.name.as_str());
-        if skipped(&tool) {
+        if tool.was_skipped() {
             entries.push(0.0);
             checks.extend(lost(
                 CheckId::ReliabilitySkipped,
@@ -885,7 +893,7 @@ fn reliability(observations: &Observations, latency_mode: Latency) -> AreaScore 
             CheckReason::ReliabilityPayloadUnhandled,
         ),
     ] {
-        if any_skipped {
+        if server_cases_skipped {
             entries.push(0.0);
             checks.extend(lost(id, None, 0.0, None, CheckReason::CoverageSkipped));
         } else if let Some(passed) = outcome {
@@ -1743,8 +1751,6 @@ mod tests {
             });
             Observations {
                 tools,
-                contention: Some(true),
-                payload: Some(true),
                 ..clean_demo()
             }
         };

@@ -238,14 +238,9 @@ fn calibration_context_appears_when_the_corpus_resolves() {
     )
     .unwrap();
     let here = serde_json::to_value(mcpeval::measurement::MeasurementProfile::current(
-        mcpeval::measurement::MeasurementConditions {
-            attested_read_only: false,
-            skip_tools: &[],
-            arguments_sha256: None,
-            sandboxed: false,
-            sandbox_network: false,
-            repeats: mcpeval::standard::REPEATS,
-        },
+        false,
+        &[],
+        None,
     ))
     .unwrap();
     let placed = corpus["observations"]
@@ -263,14 +258,9 @@ fn calibration_context_appears_when_the_corpus_resolves() {
     // A home corpus overrides the repository default; its catalog
     // measurements drive the catalog line.
     let profile = serde_json::to_string(&mcpeval::measurement::MeasurementProfile::current(
-        mcpeval::measurement::MeasurementConditions {
-            attested_read_only: false,
-            skip_tools: &[],
-            arguments_sha256: None,
-            sandboxed: false,
-            sandbox_network: false,
-            repeats: mcpeval::standard::REPEATS,
-        },
+        false,
+        &[],
+        None,
     ))
     .unwrap();
     std::fs::write(

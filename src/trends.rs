@@ -196,14 +196,9 @@ mod tests {
             manifest_sha256: Some(manifest.into()),
             standard: standard.map(str::to_owned),
             measurement_profile: Some(crate::measurement::MeasurementProfile::current(
-                crate::measurement::MeasurementConditions {
-                    attested_read_only: false,
-                    skip_tools: &[],
-                    arguments_sha256: None,
-                    sandboxed: false,
-                    sandbox_network: false,
-                    repeats: crate::standard::REPEATS,
-                },
+                false,
+                &[],
+                None,
             )),
         }
     }

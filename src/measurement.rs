@@ -36,7 +36,23 @@ pub struct MeasurementConditions<'a> {
 }
 
 impl MeasurementProfile {
-    pub fn current(conditions: MeasurementConditions<'_>) -> Self {
+    /// Build a profile with the standard repeat count and no sandbox.
+    pub fn current(
+        attested_read_only: bool,
+        skip_tools: &[String],
+        arguments_sha256: Option<&str>,
+    ) -> Self {
+        Self::from_conditions(MeasurementConditions {
+            attested_read_only,
+            skip_tools,
+            arguments_sha256,
+            sandboxed: false,
+            sandbox_network: false,
+            repeats: crate::standard::REPEATS,
+        })
+    }
+
+    pub fn from_conditions(conditions: MeasurementConditions<'_>) -> Self {
         let mut skip_tools = conditions.skip_tools.to_vec();
         skip_tools.sort();
         skip_tools.dedup();
@@ -105,8 +121,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_records_the_run_it_was_given() {
-        let profile = MeasurementProfile::current(MeasurementConditions {
+    fn from_conditions_records_the_run_it_was_given() {
+        let profile = MeasurementProfile::from_conditions(MeasurementConditions {
             attested_read_only: true,
             skip_tools: &["b".into(), "a".into(), "a".into()],
             arguments_sha256: Some("ab"),

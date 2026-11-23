@@ -773,25 +773,19 @@ mod tests {
 
     #[test]
     fn readiness_moves_only_within_one_standard() {
-        let scored = |score: u64, standard: &str| {
-            let mut readiness = crate::score::fold(&crate::standard::Observations::default());
-            readiness.score = score;
-            readiness.standard = standard.into();
-            readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
-                crate::measurement::MeasurementConditions {
-                    attested_read_only: false,
-                    skip_tools: &[],
-                    arguments_sha256: None,
-                    sandboxed: false,
-                    sandbox_network: false,
-                    repeats: crate::standard::REPEATS,
-                },
-            ));
-            ProbeReport {
-                readiness: Some(readiness),
-                ..ProbeReport::default()
-            }
-        };
+        let scored =
+            |score: u64, standard: &str| {
+                let mut readiness = crate::score::fold(&crate::standard::Observations::default());
+                readiness.score = score;
+                readiness.standard = standard.into();
+                readiness.measurement_profile = Some(
+                    crate::measurement::MeasurementProfile::current(false, &[], None),
+                );
+                ProbeReport {
+                    readiness: Some(readiness),
+                    ..ProbeReport::default()
+                }
+            };
         let same = diff(
             &scored(90, "mcpeval-standard/1"),
             &scored(85, "mcpeval-standard/1"),

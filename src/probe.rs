@@ -420,6 +420,7 @@ pub fn run(options: ProbeOptions, store: &mut Store) -> anyhow::Result<ProbeRepo
                 skip_tools: options.skip_tools,
                 arguments: options.arguments,
                 repeats: options.repeats,
+                ..Default::default()
             },
         )?;
     }
@@ -472,6 +473,7 @@ pub fn score(options: ScoreOptions) -> anyhow::Result<ProbeReport> {
             skip_tools: options.skip_tools,
             arguments: options.arguments,
             repeats: options.repeats,
+            ..Default::default()
         },
     )?;
     Ok(report)

@@ -38,6 +38,12 @@ pub struct StandardOptions {
     pub skip_tools: Vec<String>,
     /// Arguments to call named tools with instead of synthesized ones.
     pub arguments: Option<crate::tool_arguments::ToolArguments>,
+    /// Retained for callers constructing this type. The battery reads
+    /// confinement from the target.
+    pub sandboxed: bool,
+    /// Retained for callers constructing this type. The battery reads
+    /// network access from the target's sandbox.
+    pub sandbox_network: bool,
     /// Calls per exercised tool, from [`REPEATS`] to [`MAX_REPEATS`].
     pub repeats: usize,
 }
@@ -48,6 +54,8 @@ impl Default for StandardOptions {
             confirm_read_only: false,
             skip_tools: Vec::new(),
             arguments: None,
+            sandboxed: false,
+            sandbox_network: false,
             repeats: REPEATS,
         }
     }
@@ -227,6 +235,12 @@ pub struct ToolObservation {
     pub chained: bool,
 }
 
+impl ToolObservation {
+    pub(crate) fn was_skipped(&self) -> bool {
+        self.exercise == Some(Exercise::NotExercised(CheckReason::CoverageSkipped))
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct CallCounts {
     pub successful: u64,
@@ -266,25 +280,13 @@ pub struct Observations {
     pub attested_read_only: bool,
     /// Every tool, writers included, was callable because the target is confined.
     pub sandboxed: bool,
-    /// What the battery decided for the contention case.
-    pub contention: ServerCase,
-    /// What the battery decided for the payload-bounds case.
-    pub payload: ServerCase,
+    /// Contention on the first fully successful tool, if run.
+    pub contention: Option<bool>,
+    /// Payload bounds on the first fully successful tool with a string
+    /// property, if run.
+    pub payload: Option<bool>,
     /// Each applicable protocol check and, when it failed, why.
     pub protocol: Vec<(CheckId, Option<CheckReason>)>,
-}
-
-/// The battery's decision for one server-level case. Fold scores this
-/// decision; it does not decide whether the case ran.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum ServerCase {
-    /// Nothing could carry the case.
-    #[default]
-    NotRun,
-    /// A skipped tool blocked the case.
-    Skipped,
-    Passed,
-    Failed,
 }
 
 /// How one call ended.
@@ -325,14 +327,15 @@ pub(crate) fn run(
             "repeats must be {REPEATS} to {MAX_REPEATS}"
         )));
     }
-    let (observations, contract) = target.budget.finish(observe(target, options))?;
-    let mut readiness = crate::score::fold(&observations);
+    let (observations, server_cases_skipped, contract) =
+        target.budget.finish(observe(target, options))?;
+    let mut readiness = crate::score::fold_with_server_cases(&observations, server_cases_skipped);
     let arguments_sha256 = options
         .arguments
         .as_ref()
         .map(crate::tool_arguments::ToolArguments::sha256);
     let (sandboxed, sandbox_network) = confinement(target);
-    readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::current(
+    readiness.measurement_profile = Some(crate::measurement::MeasurementProfile::from_conditions(
         crate::measurement::MeasurementConditions {
             attested_read_only: options.confirm_read_only,
             skip_tools: &options.skip_tools,
@@ -364,14 +367,6 @@ fn skip_facts(schema: &Value) -> (Exercise, Option<Honesty>) {
     )
 }
 
-fn server_outcome(ran: Option<bool>) -> ServerCase {
-    match ran {
-        None => ServerCase::NotRun,
-        Some(true) => ServerCase::Passed,
-        Some(false) => ServerCase::Failed,
-    }
-}
-
 /// A fresh, initialized connection. The handshake keeps the transport's
 /// default timeout (cold starts); the standard's per-call timeout applies
 /// from the first request after it.
@@ -385,7 +380,7 @@ fn connect(target: &ClientTarget) -> anyhow::Result<ProbeClient> {
 fn observe(
     target: &ClientTarget,
     options: &StandardOptions,
-) -> anyhow::Result<(Observations, CatalogContract)> {
+) -> anyhow::Result<(Observations, bool, CatalogContract)> {
     let mut client = Some(connect(target).context("connecting for the standard battery")?);
     let catalog = list_catalog(client.as_mut().expect("just connected"))
         .context("listing tools for the standard battery")?;
@@ -510,57 +505,46 @@ fn observe(
         observation.calls = calls;
         observation.chained = true;
     }
-    // A skipped tool blocks both server-level cases. The decision is
-    // recorded here; fold scores it and does not derive it again.
-    let any_skipped = tools
+    // A skipped tool blocks both server-level cases. Pass that decision
+    // to scoring alongside the results of any cases that did run.
+    let server_cases_skipped = tools.iter().any(ToolObservation::was_skipped);
+    if server_cases_skipped {
+        succeeded.clear();
+    }
+    let contention = succeeded.first().map(|(tool, arguments)| {
+        server_case(
+            &mut client,
+            target,
+            &catalog,
+            &ProbeCase::Contention {
+                id: "standard-contention".into(),
+                tool: tool.name.clone(),
+                access: Access::ReadOnly,
+                sandbox: None,
+                arguments: arguments.clone(),
+            },
+        )
+    });
+    let payload = succeeded
         .iter()
-        .any(|tool| tool.exercise == Some(Exercise::NotExercised(CheckReason::CoverageSkipped)));
-    let contention = if any_skipped {
-        ServerCase::Skipped
-    } else {
-        server_outcome(succeeded.first().map(|(tool, arguments)| {
+        .find_map(|(tool, arguments)| string_property(tool).map(|field| (tool, arguments, field)))
+        .map(|(tool, arguments, field)| {
             server_case(
                 &mut client,
                 target,
                 &catalog,
-                &ProbeCase::Contention {
-                    id: "standard-contention".into(),
+                &ProbeCase::PayloadBounds {
+                    id: "standard-payload".into(),
                     tool: tool.name.clone(),
                     access: Access::ReadOnly,
                     sandbox: None,
                     arguments: arguments.clone(),
+                    field,
+                    size_bytes: PAYLOAD_BYTES,
+                    expect_handled: false,
                 },
             )
-        }))
-    };
-    let payload = if any_skipped {
-        ServerCase::Skipped
-    } else {
-        server_outcome(
-            succeeded
-                .iter()
-                .find_map(|(tool, arguments)| {
-                    string_property(tool).map(|field| (tool, arguments, field))
-                })
-                .map(|(tool, arguments, field)| {
-                    server_case(
-                        &mut client,
-                        target,
-                        &catalog,
-                        &ProbeCase::PayloadBounds {
-                            id: "standard-payload".into(),
-                            tool: tool.name.clone(),
-                            access: Access::ReadOnly,
-                            sandbox: None,
-                            arguments: arguments.clone(),
-                            field,
-                            size_bytes: PAYLOAD_BYTES,
-                            expect_handled: false,
-                        },
-                    )
-                }),
-        )
-    };
+        });
     let protocol = protocol_checks(&mut client, target, &catalog);
     Ok((
         Observations {
@@ -571,6 +555,7 @@ fn observe(
             payload,
             protocol,
         },
+        server_cases_skipped,
         CatalogContract::of(&catalog),
     ))
 }

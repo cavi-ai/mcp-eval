@@ -5,6 +5,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
 
 const MODULE_PATH = fileURLToPath(import.meta.url);
 const DEFAULT_ROOT = path.resolve(path.dirname(MODULE_PATH), "../..");
@@ -134,7 +135,7 @@ export async function verifyDistribution({ root = DEFAULT_ROOT, gitRoot = root, 
       `Cargo.toml version ${cargoVersion} is behind the published distribution ${manifest.version}`,
     );
   }
-  assert.equal(git(gitRoot, "rev-list", "-n", "1", manifest.tag), manifest.commit);
+  assert.equal(git(gitRoot, "rev-list", "-n", "1", `refs/tags/${manifest.tag}`), manifest.commit);
   assert.deepEqual(Object.keys(manifest.assets).sort(), Object.keys(TARGETS).sort());
 
   for (const [key, [target, extension]] of Object.entries(TARGETS)) {
@@ -169,9 +170,17 @@ export async function verifyDistribution({ root = DEFAULT_ROOT, gitRoot = root, 
 }
 
 async function main() {
+  const { values } = parseArgs({
+    options: {
+      root: { type: "string" },
+      online: { type: "boolean" },
+      strict: { type: "boolean" },
+    },
+  });
   const result = await verifyDistribution({
-    online: process.argv.includes("--online"),
-    strict: process.argv.includes("--strict"),
+    root: values.root === undefined ? DEFAULT_ROOT : path.resolve(values.root),
+    online: values.online,
+    strict: values.strict,
   });
   console.log(JSON.stringify(result, null, 2));
 }

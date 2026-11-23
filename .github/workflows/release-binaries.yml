@@ -12,14 +12,33 @@ on:
       - "v*"
 
 concurrency:
-  group: release-binaries-${{ github.ref }}
+  group: release-binaries-${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: write
 
 jobs:
+  source:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag && format('refs/tags/{0}', inputs.tag) || github.sha }}
+          persist-credentials: false
+      - name: Record source commit
+        id: source
+        run: |
+          set -euo pipefail
+          commit="$(git rev-parse HEAD)"
+          printf 'commit=%s\n' "$commit" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: source
     strategy:
       fail-fast: false
       matrix:
@@ -44,6 +63,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.source.outputs.commit }}
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -98,7 +120,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [source, build]
     if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.tag != '' }}
     runs-on: ubuntu-latest
     # Uploading assets needs write here even though the workflow already
@@ -111,10 +133,22 @@ jobs:
       - uses: actions/checkout@v7
         with:
           # The distribution manifest records the tag's commit.
+          ref: ${{ needs.source.outputs.commit }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v7
         with:
           node-version: 24.18.1
+      - name: Verify tag and package version match the build
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+          COMMIT: ${{ needs.source.outputs.commit }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          test "$(git rev-parse --verify "refs/tags/$TAG^{commit}")" = "$COMMIT"
+          python3 scripts/check-version-agreement.py
+          test "$(node -p "require('./package.json').version")" = "${TAG#v}"
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -187,9 +221,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.release.outputs.tag }}
+          COMMIT: ${{ needs.source.outputs.commit }}
         run: |
           set -euo pipefail
-          COMMIT="$(git rev-list -n 1 "$TAG")"
           node scripts/distribution/release-manifest.mjs --dist dist --tag "$TAG" --commit "$COMMIT" > "$RUNNER_TEMP/release.json"
           node scripts/distribution/render-formula.mjs --manifest "$RUNNER_TEMP/release.json" > "$RUNNER_TEMP/mcpeval.rb"
           for name in release.json mcpeval.rb; do
@@ -209,7 +243,7 @@ jobs:
   # A release created with GITHUB_TOKEN does not fire `on: release`, so the
   # documentation artifact is invoked directly rather than left to the event.
   docs:
-    needs: release
+    needs: [source, release]
     # A called workflow can only use permissions the caller grants: its
     # `release` job writes release assets.
     permissions:
@@ -217,6 +251,7 @@ jobs:
     uses: ./.github/workflows/publish-docs.yml
     with:
       version: ${{ needs.release.outputs.version }}
+      source_ref: ${{ needs.source.outputs.commit }}
       dry_run: false
     secrets: inherit
 
@@ -227,5 +262,5 @@ jobs:
     uses: ./.github/workflows/publish-distribution.yml
     with:
       tag: v${{ needs.release.outputs.version }}
-      dry_run: "false"
+      dry_run: false
     secrets: inherit

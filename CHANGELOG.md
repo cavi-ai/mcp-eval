@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.1 - 2026-11-23
+
+### Fixed
+
+- Readiness records sandbox and network settings from the target used for the run. The same confinement determines whether the battery can call writer tools.
+- The battery records when a skipped tool blocks the contention and payload checks so scoring applies the corresponding penalties.
+- HTTP payload probes use HTTP response handling. Stdio payload probes can recover from an oversized frame rejected by the transport.
+- Manual binary backfills build the requested tag. Distribution recovery verifies the tagged release with the workflow's tooling.
+
+### Upgrade notes
+
+- Regenerate readiness baselines with 0.9.1 before using the readiness drop gate. The bundled corpus was measured with 0.9.0. Readiness placement requires a corpus measured with 0.9.1 under matching conditions.
+
 ## 0.9.0 - 2026-11-21
 
 ### Added

@@ -12,6 +12,10 @@ on:
         description: Exact stable version to publish
         required: true
         type: string
+      source_ref:
+        description: Exact commit used to build the release binaries
+        required: false
+        type: string
       dry_run:
         description: Build and verify without upload or dispatch
         required: false
@@ -48,6 +52,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ inputs.source_ref || github.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@v7

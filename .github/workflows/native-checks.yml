@@ -1,0 +1,55 @@
+name: Native checks
+
+on:
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: Platform for native tests, release timing, and package installation
+        type: choice
+        required: true
+        default: macos-latest
+        options:
+          - macos-latest
+          - windows-latest
+          - ubuntu-latest
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.x"
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24.18.1
+      - name: Set up Rust from rust-toolchain.toml
+        run: rustup show
+      - uses: Swatinem/rust-cache@v2
+      - name: Native tests
+        run: cargo test --all-targets --locked -- --test-threads=1
+      - name: Release shim timing budgets
+        run: cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
+      - name: Install and launch the npm package
+        run: node scripts/distribution/package-e2e.mjs
+      - name: Install and run the release pinned by the composite action
+        id: pinned
+        uses: ./
+        with:
+          server: demo
+          manifest: tests/fixtures/action-sarif.manifest.json
+          command: mcpeval-demo
+      - name: Verify the pinned action install
+        shell: bash
+        env:
+          PASSED: ${{ steps.pinned.outputs.passed }}
+        run: |
+          test "$PASSED" = true
+          test "$(mcpeval --version)" = "mcpeval $(jq -r .version distribution/release.json)"

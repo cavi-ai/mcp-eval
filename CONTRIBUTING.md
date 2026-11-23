@@ -23,12 +23,16 @@ cargo test --all-targets --locked -- --test-threads=1
 - Use synthetic fixtures. Privacy canaries must be obviously fictitious and must
   be asserted absent from persisted output.
 
-Before opening a pull request, run every command in [`.pr-gates`](.pr-gates)
-and the full release suite. The native test lanes include:
+Run the checks in [`.pr-gates`](.pr-gates) before opening a pull request.
+GitHub runs one Ubuntu job for each pull request and push to `main`. The
+action and corpus tests use the binaries Cargo built for the Rust test suite.
+
+For platform-specific changes, dispatch **Native checks** and choose the
+affected runner. It runs the native suite and optimized timing tests, then
+exercises the npm and composite action installers. Run the optimized suite
+locally before releasing:
 
 ```sh
-cargo test --all-targets --locked -- --test-threads=1
-cargo test --release --locked --test overhead -- --test-threads=1 --nocapture
 cargo test --release --locked -- --test-threads=1
 ```
 

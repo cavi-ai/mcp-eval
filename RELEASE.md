@@ -9,7 +9,8 @@ and in the Homebrew tap. The human steps are the version bump and the tag.
 
 | Pipeline | Trigger | Produces |
 | --- | --- | --- |
-| [ci.yml](.github/workflows/ci.yml) | push to `main`, pull requests, manual | fmt, clippy, build, tests on Linux/macOS/Windows, version agreement, docs artifact, distribution contract, npm install and Homebrew install end-to-end |
+| [ci.yml](.github/workflows/ci.yml) | push to `main`, pull requests | Ubuntu Rust tests, lint, version agreement, docs and distribution contracts, and a composite action smoke test |
+| [native-checks.yml](.github/workflows/native-checks.yml) | manual | native tests, optimized timing, and npm and action installation on the selected platform |
 | [release-binaries.yml](.github/workflows/release-binaries.yml) | `push: tags v*`; manual with `tag` to backfill | `mcpeval` + `mcpeval-demo` for `x86_64-unknown-linux-gnu`, `aarch64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, `x86_64-pc-windows-msvc`, each with a `.sha256` companion; the GitHub Release itself, with notes from the CHANGELOG section; `release.json` and `mcpeval.rb` generated from the built bytes; then calls `publish-docs` |
 | [publish-docs.yml](.github/workflows/publish-docs.yml) | called by `release-binaries`; `release: published`; manual (`dry_run` default `true`) | `mcp-eval-docs-vX.Y.Z.tar.gz` + `.sha256` on the release, and the release envelope dispatched to cavi-home, which publishes the documentation at https://cavi-ai.xyz/docs/mcp-eval/ |
 | [publish-crates.yml](.github/workflows/publish-crates.yml) | `push: tags v*`; manual with `tag` publishes that tag, without it stops at `--dry-run` | `mcpeval` on crates.io through trusted publishing (OIDC) |
@@ -27,7 +28,8 @@ formula pin the archives by size and SHA-256 through `distribution/release.json`
    `Cargo.lock` follows (every `--locked` gate refuses a stale lockfile), and
    move the `## Unreleased` CHANGELOG entries under `## X.Y.Z - YYYY-MM-DD`.
    Run `python3 scripts/check-version-agreement.py` and the gates in
-   [`.pr-gates`](.pr-gates). Merge on `main` via pull request. The committed
+   [`.pr-gates`](.pr-gates), then run the optimized suite from
+   [CONTRIBUTING.md](CONTRIBUTING.md). Merge on `main` via pull request. The committed
    `distribution/release.json` and `Formula/mcpeval.rb` still describe the
    previous release at this point; CI accepts that lag.
 2. **Tag.** `git tag vX.Y.Z && git push origin vX.Y.Z` on the merge commit.
